@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ExecuteMsg",
+  "description": "This structure describes the execute messages available in the contract.",
+  "oneOf": [
+    {
+      "description": "Deposits ORO in exchange for xORO The receiver is optional. If not set, the sender will receive the xORO.",
+      "type": "object",
+      "required": [
+        "enter"
+      ],
+      "properties": {
+        "enter": {
+          "type": "object",
+          "properties": {
+            "receiver": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Deposits ORO in exchange for xORO and passes **all resulting xORO** to defined contract along with an executable message.",
+      "type": "object",
+      "required": [
+        "enter_with_hook"
+      ],
+      "properties": {
+        "enter_with_hook": {
+          "type": "object",
+          "required": [
+            "contract_address",
+            "msg"
+          ],
+          "properties": {
+            "contract_address": {
+              "type": "string"
+            },
+            "msg": {
+              "$ref": "#/definitions/Binary"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Burns xORO in exchange for ORO. The receiver is optional. If not set, the sender will receive the ORO.",
+      "type": "object",
+      "required": [
+        "leave"
+      ],
+      "properties": {
+        "leave": {
+          "type": "object",
+          "properties": {
+            "receiver": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "definitions": {
+    "Binary": {
+      "description": "Binary is a wrapper around Vec<u8> to add base64 de/serialization with serde. It also adds some helper methods to help encode inline.\n\nThis is only needed as serde-json-{core,wasm} has a horrible encoding for Vec<u8>. See also <https://github.com/CosmWasm/cosmwasm/blob/main/docs/MESSAGE_TYPES.md>.",
+      "type": "string"
+    }
+  }
+}

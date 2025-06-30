@@ -1,0 +1,55 @@
+[package]
+name = "oroswap-pair-stable"
+version = "1.0.0"
+authors = ["Oroswap"]
+edition = "2021"
+description = "The Oroswap stableswap pair contract implementation"
+license = "GPL-3.0-only"
+repository = "https://gitlab.com/zig-dex/oro-contracts"
+homepage = "https://www.oroswap.org"
+metadata = { build_variants = ["zigchain"] }
+
+exclude = [
+    # Those files are rust-optimizer artifacts. You might want to commit them for convenience but they should not be part of the source code publication.
+    "contract.wasm",
+    "hash.txt",
+]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# for quicker tests, cargo test --lib
+# for more explicit tests, cargo test --features=backtraces
+backtraces = ["cosmwasm-std/backtraces"]
+injective = ["oroswap/injective"]
+sei = ["oroswap/sei"]
+library = []
+zigchain = ["oroswap/zigchain"]
+
+[dependencies]
+oroswap.workspace = true
+cw2.workspace = true
+cw20 = "1.1"
+cosmwasm-std = { workspace = true, features = ["cosmwasm_1_1", "stargate"] }
+cw-storage-plus.workspace = true
+thiserror.workspace = true
+itertools.workspace = true
+cosmwasm-schema.workspace = true
+cw-utils.workspace = true
+oroswap-circular-buffer = { path = "../../packages/circular_buffer", version = "1.0.0" }
+
+[dev-dependencies]
+anyhow = "1.0"
+# proptest = "1.0.0"  # Commented out since proptest test is commented out
+# TODO: Update with correct sim repository URL
+# sim = { git = "https://github.com/astroport-fi/astroport-sims", branch = "main", package = "sim" }
+cw20-base = "1.1"
+oroswap-factory = { path = "../factory" }
+derivative = "2.2"
+prost = "0.11.5"
+oroswap-native-coin-registry = { path = "../periphery/native_coin_registry" }
+oroswap-incentives = { path = "../tokenomics/incentives" }
+oroswap-test = { path = "../../packages/oroswap_test" }

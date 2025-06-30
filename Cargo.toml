@@ -1,0 +1,43 @@
+[workspace]
+resolver = "2"
+members = [
+    "packages/*",
+    "contracts/factory",
+    "contracts/pair",
+    "contracts/pair_stable",
+    "contracts/pair_concentrated",
+    "contracts/router",
+    "contracts/tokenomics/*",
+    "contracts/periphery/*"
+    #   "contracts/pair_astro_converter",
+    #   "contracts/pair_transmuter",
+    #   "contracts/pair_concentrated_duality",
+    #  "contracts/pair_concentrated_inj", TODO: rewrite OB liquidity deployment
+    #   "contracts/pair_xastro",
+    #   "contracts/pair_xyk_sale_tax",
+    #   "contracts/whitelist",
+    #   "contracts/tokenomics/*",
+]
+
+[workspace.dependencies]
+cosmwasm-std = "1.5"
+cw-storage-plus = "1.2"
+cw2 = "1"
+thiserror = "1.0"
+itertools = "0.12"
+cosmwasm-schema = "1.5"
+cw-utils = "1"
+oroswap = { package = "oroswap-core", path = "./packages/oroswap-core", version = "1.0.0" }
+
+[profile.release]
+opt-level = "z"
+debug = false
+rpath = false
+lto = true
+debug-assertions = false
+codegen-units = 1
+panic = 'abort'
+incremental = false
+overflow-checks = true
+strip = true
+

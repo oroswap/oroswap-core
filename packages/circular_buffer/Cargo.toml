@@ -1,0 +1,15 @@
+[package]
+name = "oroswap-circular-buffer"
+version = "1.0.0"
+authors = ["Timofei Epanchintsev <5527315+epanchee@users.noreply.github.com>", "Oroswap"]
+edition = "2021"
+description = "Circular buffer to store time series data in CosmWasm contracts"
+license = "Apache-2.0"
+repository = "https://gitlab.com/zig-dex/oro-contracts"
+homepage = "https://www.oroswap.org"
+
+[dependencies]
+cw-storage-plus.workspace = true
+cosmwasm-schema.workspace = true
+cosmwasm-std.workspace = true
+thiserror.workspace = true

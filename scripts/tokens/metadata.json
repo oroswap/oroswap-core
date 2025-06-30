@@ -1,0 +1,21 @@
+{
+  "description": "Fin1 – A test token for OroSwap",
+  "denom_units": [
+    {
+      "denom":    "coin.zig18sytwc03z5j3wge5egf4rdue6gxkzzyf4658vq.ufin1",
+      "exponent": 0,
+      "aliases":  ["ufin1"]
+    },
+    {
+      "denom":    "fin1",
+      "exponent": 4,
+      "aliases":  []
+    }
+  ],
+  "base":    "coin.zig18sytwc03z5j3wge5egf4rdue6gxkzzyf4658vq.ufin1",
+  "display": "fin1",
+  "name":    "FIN1 Token",
+  "symbol":  "FIN1SYMBOL",
+  "uri":     "https://blue-careful-carp-364.mypinata.cloud/ipfs/bafkreibwdtu3ro4j3jekmbfauningf4txw2aw6epzj66o7ph6jbsagahbu",
+  "uri_hash":"6773355f18ff945c337a96bd6f66f27dba8a6c1b848824b14b0b2cd464a95261"
+}

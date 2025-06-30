@@ -1,0 +1,21 @@
+{
+  "description": "Fin1 Token - devnet",
+  "denom_units": [
+    {
+      "denom": "coin.zig18sytwc03z5j3wge5egf4rdue6gxkzzyf4658vq.ufin1",
+      "exponent": 0,
+      "aliases": ["ufin1"]
+    },
+    {
+      "denom": "fin1",
+      "exponent": 4,
+      "aliases": []
+    }
+  ],
+  "base": "coin.zig18sytwc03z5j3wge5egf4rdue6gxkzzyf4658vq.ufin1",
+  "display": "fin1",
+  "name": "fin1 Token",
+  "symbol": "FIN1",
+  "uri": "https://blue-careful-carp-364.mypinata.cloud/ipfs/bafkreifhxwnh36zccf7nl7yb2tv57gcpcqjtrpeidhzwbeyxz23skvdnv4",
+  "uri_hash": "bd60a61c9adcc649991c825b654c1b6807f29ee6883d72f2efdb63f69edeb9da"
+}

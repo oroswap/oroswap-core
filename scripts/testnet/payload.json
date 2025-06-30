@@ -1,0 +1,21 @@
+{
+  "description": "Oroswap Protocol Token- Testnet",
+  "denom_units": [
+    {
+      "denom": "coin.zig18sytwc03z5j3wge5egf4rdue6gxkzzyf4658vq.uoro",
+      "exponent": 0,
+      "aliases": ["uoro"]
+    },
+    {
+      "denom": "oro",
+      "exponent": 6,
+      "aliases": []
+    }
+  ],
+  "base": "coin.zig18sytwc03z5j3wge5egf4rdue6gxkzzyf4658vq.uoro",
+  "display": "oro",
+  "name": "Oroswap Token",
+  "symbol": "ORO",
+  "uri": "https://blue-careful-carp-364.mypinata.cloud/ipfs/bafkreifhxwnh36zccf7nl7yb2tv57gcpcqjtrpeidhzwbeyxz23skvdnv4",
+  "uri_hash": "bd60a61c9adcc649991c825b654c1b6807f29ee6883d72f2efdb63f69edeb9da"
+}

@@ -1,0 +1,32 @@
+[package]
+name = "oroswap-tokenfactory-tracker"
+version = "1.0.0"
+authors = ["Oroswap"]
+edition = "2021"
+description = "Cosmos Bank hook for tokenfactory tokens"
+license = "GPL-3.0-only"
+repository = "https://gitlab.com/zig-dex/oro-contracts"
+homepage = "https://www.oroswap.org"
+
+[features]
+library = []
+tests-tube = ["test-tube", "neutron-test-tube"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+cw2.workspace = true
+cosmwasm-std = { workspace = true, features = ["cosmwasm_1_1"] }
+cw-storage-plus.workspace = true
+cosmwasm-schema.workspace = true
+thiserror.workspace = true
+oroswap.workspace = true
+
+# Optional dependencies
+neutron-test-tube = { git = "https://github.com/j0nl1/neutron-test-tube", optional = true }
+test-tube = { git = "https://github.com/j0nl1/neutron-test-tube", optional = true }
+
+[dev-dependencies]
+cw-multi-test = { git = "https://github.com/astroport-fi/cw-multi-test", branch = "feat/bank_with_send_hooks", features = ["cosmwasm_1_1"] }
+neutron-sdk = "0.8.0"

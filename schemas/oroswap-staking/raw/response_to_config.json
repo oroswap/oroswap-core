@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Config",
+  "description": "This structure stores the main parameters for the staking contract.",
+  "type": "object",
+  "required": [
+    "oro_denom",
+    "xoro_denom"
+  ],
+  "properties": {
+    "oro_denom": {
+      "description": "The ORO token denom",
+      "type": "string"
+    },
+    "xoro_denom": {
+      "description": "The xORO token denom",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

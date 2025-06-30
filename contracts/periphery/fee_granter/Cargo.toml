@@ -1,0 +1,27 @@
+[package]
+name = "oroswap-fee-granter"
+version = "0.1.0"
+edition = "2021"
+description = "Oroswap contract responsable for setting up fee grants"
+license = "GPL-3.0-only"
+repository = "https://gitlab.com/zig-dex/oro-contracts"
+homepage = "https://www.oroswap.org"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+library = []
+
+[dependencies]
+oroswap.workspace = true
+cosmos-sdk-proto = { version = "0.19.0", default-features = false }
+cosmwasm-std = { workspace = true, features = ["stargate"] }
+cw-storage-plus.workspace = true
+cw-utils.workspace = true
+cosmwasm-schema.workspace = true
+thiserror.workspace = true
+cw2.workspace = true
+
+[dev-dependencies]
+cw-multi-test = "1.0.0"

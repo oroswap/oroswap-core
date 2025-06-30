@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ConfigResponse",
+  "description": "This structure describes a custom struct to return a query response containing the base contract configuration.",
+  "type": "object",
+  "required": ["oroswap_factory"],
+  "properties": {
+    "oroswap_factory": {
+      "description": "The Oroswap factory contract address",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}
