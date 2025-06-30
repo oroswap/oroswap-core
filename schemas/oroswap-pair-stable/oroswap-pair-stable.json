@@ -1,5 +1,5 @@
 {
-  "contract_name": "astroport-pair-stable",
+  "contract_name": "oroswap-pair-stable",
   "contract_version": "4.1.1",
   "idl_version": "1.0.0",
   "instantiate": {
@@ -53,7 +53,7 @@
         "type": "string"
       },
       "AssetInfo": {
-        "description": "This enum describes available Token types. ## Examples ``` # use cosmwasm_std::Addr; # use astroport::asset::AssetInfo::{NativeToken, Token}; Token { contract_addr: Addr::unchecked(\"stake...\") }; NativeToken { denom: String::from(\"uluna\") }; ```",
+        "description": "This enum describes available Token types. ## Examples ``` # use cosmwasm_std::Addr; # use oroswap::asset::AssetInfo::{NativeToken, Token}; Token { contract_addr: Addr::unchecked(\"stake...\") }; NativeToken { denom: String::from(\"uluna\") }; ```",
         "oneOf": [
           {
             "description": "Non-native Token",
@@ -98,7 +98,7 @@
         "type": "string"
       },
       "PairType": {
-        "description": "This enum describes available pair types. ## Available pool types ``` # use astroport::factory::PairType::{Custom, Stable, Xyk}; Xyk {}; Stable {}; Custom(String::from(\"Custom\")); ```",
+        "description": "This enum describes available pair types. ## Available pool types ``` # use oroswap::factory::PairType::{Custom, Stable, Xyk}; Xyk {}; Stable {}; Custom(String::from(\"Custom\")); ```",
         "oneOf": [
           {
             "description": "XYK pair type",
@@ -393,7 +393,7 @@
         "additionalProperties": false
       },
       "AssetInfo": {
-        "description": "This enum describes available Token types. ## Examples ``` # use cosmwasm_std::Addr; # use astroport::asset::AssetInfo::{NativeToken, Token}; Token { contract_addr: Addr::unchecked(\"stake...\") }; NativeToken { denom: String::from(\"uluna\") }; ```",
+        "description": "This enum describes available Token types. ## Examples ``` # use cosmwasm_std::Addr; # use oroswap::asset::AssetInfo::{NativeToken, Token}; Token { contract_addr: Addr::unchecked(\"stake...\") }; NativeToken { denom: String::from(\"uluna\") }; ```",
         "oneOf": [
           {
             "description": "Non-native Token",
@@ -728,7 +728,7 @@
         "additionalProperties": false
       },
       "AssetInfo": {
-        "description": "This enum describes available Token types. ## Examples ``` # use cosmwasm_std::Addr; # use astroport::asset::AssetInfo::{NativeToken, Token}; Token { contract_addr: Addr::unchecked(\"stake...\") }; NativeToken { denom: String::from(\"uluna\") }; ```",
+        "description": "This enum describes available Token types. ## Examples ``` # use cosmwasm_std::Addr; # use oroswap::asset::AssetInfo::{NativeToken, Token}; Token { contract_addr: Addr::unchecked(\"stake...\") }; NativeToken { denom: String::from(\"uluna\") }; ```",
         "oneOf": [
           {
             "description": "Non-native Token",
@@ -947,7 +947,7 @@
           "additionalProperties": false
         },
         "AssetInfo": {
-          "description": "This enum describes available Token types. ## Examples ``` # use cosmwasm_std::Addr; # use astroport::asset::AssetInfo::{NativeToken, Token}; Token { contract_addr: Addr::unchecked(\"stake...\") }; NativeToken { denom: String::from(\"uluna\") }; ```",
+          "description": "This enum describes available Token types. ## Examples ``` # use cosmwasm_std::Addr; # use oroswap::asset::AssetInfo::{NativeToken, Token}; Token { contract_addr: Addr::unchecked(\"stake...\") }; NativeToken { denom: String::from(\"uluna\") }; ```",
           "oneOf": [
             {
               "description": "Non-native Token",
@@ -1063,7 +1063,7 @@
           "type": "string"
         },
         "AssetInfo": {
-          "description": "This enum describes available Token types. ## Examples ``` # use cosmwasm_std::Addr; # use astroport::asset::AssetInfo::{NativeToken, Token}; Token { contract_addr: Addr::unchecked(\"stake...\") }; NativeToken { denom: String::from(\"uluna\") }; ```",
+          "description": "This enum describes available Token types. ## Examples ``` # use cosmwasm_std::Addr; # use oroswap::asset::AssetInfo::{NativeToken, Token}; Token { contract_addr: Addr::unchecked(\"stake...\") }; NativeToken { denom: String::from(\"uluna\") }; ```",
           "oneOf": [
             {
               "description": "Non-native Token",
@@ -1104,7 +1104,7 @@
           ]
         },
         "PairType": {
-          "description": "This enum describes available pair types. ## Available pool types ``` # use astroport::factory::PairType::{Custom, Stable, Xyk}; Xyk {}; Stable {}; Custom(String::from(\"Custom\")); ```",
+          "description": "This enum describes available pair types. ## Available pool types ``` # use oroswap::factory::PairType::{Custom, Stable, Xyk}; Xyk {}; Stable {}; Custom(String::from(\"Custom\")); ```",
           "oneOf": [
             {
               "description": "XYK pair type",
@@ -1199,7 +1199,7 @@
           "additionalProperties": false
         },
         "AssetInfo": {
-          "description": "This enum describes available Token types. ## Examples ``` # use cosmwasm_std::Addr; # use astroport::asset::AssetInfo::{NativeToken, Token}; Token { contract_addr: Addr::unchecked(\"stake...\") }; NativeToken { denom: String::from(\"uluna\") }; ```",
+          "description": "This enum describes available Token types. ## Examples ``` # use cosmwasm_std::Addr; # use oroswap::asset::AssetInfo::{NativeToken, Token}; Token { contract_addr: Addr::unchecked(\"stake...\") }; NativeToken { denom: String::from(\"uluna\") }; ```",
           "oneOf": [
             {
               "description": "Non-native Token",
@@ -1328,7 +1328,7 @@
           "additionalProperties": false
         },
         "AssetInfo": {
-          "description": "This enum describes available Token types. ## Examples ``` # use cosmwasm_std::Addr; # use astroport::asset::AssetInfo::{NativeToken, Token}; Token { contract_addr: Addr::unchecked(\"stake...\") }; NativeToken { denom: String::from(\"uluna\") }; ```",
+          "description": "This enum describes available Token types. ## Examples ``` # use cosmwasm_std::Addr; # use oroswap::asset::AssetInfo::{NativeToken, Token}; Token { contract_addr: Addr::unchecked(\"stake...\") }; NativeToken { denom: String::from(\"uluna\") }; ```",
           "oneOf": [
             {
               "description": "Non-native Token",
@@ -1417,7 +1417,7 @@
           "additionalProperties": false
         },
         "AssetInfo": {
-          "description": "This enum describes available Token types. ## Examples ``` # use cosmwasm_std::Addr; # use astroport::asset::AssetInfo::{NativeToken, Token}; Token { contract_addr: Addr::unchecked(\"stake...\") }; NativeToken { denom: String::from(\"uluna\") }; ```",
+          "description": "This enum describes available Token types. ## Examples ``` # use cosmwasm_std::Addr; # use oroswap::asset::AssetInfo::{NativeToken, Token}; Token { contract_addr: Addr::unchecked(\"stake...\") }; NativeToken { denom: String::from(\"uluna\") }; ```",
           "oneOf": [
             {
               "description": "Non-native Token",
