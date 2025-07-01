@@ -16,10 +16,22 @@ rustup install nightly
 rustup default nightly
 rustup target add wasm32-unknown-unknown
 
-# ── 2) Find all contract Cargo.toml files ─────────────────────────────────
+# ── 2) Set deterministic build environment ────────────────────────────────
+export RUSTFLAGS="-C target-cpu=generic -C codegen-units=1 -C target-feature=+crt-static"
+export CARGO_PROFILE_RELEASE_OPT_LEVEL=3
+export CARGO_PROFILE_RELEASE_LTO=true
+export CARGO_PROFILE_RELEASE_PANIC="abort"
+export CARGO_PROFILE_RELEASE_STRIP=true
+export CARGO_PROFILE_RELEASE_DEBUG=false
+export CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=false
+
+# Remove any existing build artifacts to ensure clean build
+rm -rf "$project_root/target"
+
+# ── 3) Find all contract Cargo.toml files ─────────────────────────────────
 contract_manifests=($(find "$project_root/contracts" -name "Cargo.toml"))
 
-# ── 3) Build each contract ────────────────────────────────────────────────
+# ── 4) Build each contract ────────────────────────────────────────────────
 for manifest_path in "${contract_manifests[@]}"; do
   # Get package name from manifest
   pkg_name=$(awk -F '"' '/^\[package\]/{p=1} p && /^name =/ {print $2; exit}' "$manifest_path")
@@ -43,14 +55,19 @@ for manifest_path in "${contract_manifests[@]}"; do
 
   echo "🔍 Found raw Wasm: $raw_wasm"
 
-  # Optimize & validate
+  # Optimize & validate with deterministic settings
   final_wasm="$OUTPUT_DIR/${pkg_name//-/_}.wasm"
   echo "🔎 Optimizing & lowering bulk-memory → $final_wasm"
   wasm-opt -Os --enable-bulk-memory --llvm-memory-copy-fill-lowering --signext-lowering \
+    --strip-debug --strip-producers --strip-target-features \
     "$raw_wasm" -o "$final_wasm"
 
   echo "✅ Validating with cosmwasm-check"
   cosmwasm-check "$final_wasm"
+
+  # Generate and display hash for verification
+  echo "🔐 Generating SHA-256 hash for verification:"
+  shasum -a 256 "$final_wasm"
 
   echo "🎉 Build complete for $pkg_name — optimized Wasm at $final_wasm"
 done

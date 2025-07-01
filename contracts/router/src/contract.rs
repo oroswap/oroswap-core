@@ -7,6 +7,7 @@ use cw2::{get_contract_version, set_contract_version};
 use cw20::Cw20ReceiveMsg;
 
 use oroswap::asset::{addr_opt_validate, Asset, AssetInfo, AssetInfoExt};
+use oroswap::factory::PairType;
 use oroswap::pair::{QueryMsg as PairQueryMsg, ReverseSimulationResponse, SimulationResponse};
 use oroswap::querier::query_pair_info;
 use oroswap::router::{
