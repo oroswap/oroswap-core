@@ -5,7 +5,7 @@ authors = ["Timofei Epanchintsev <5527315+epanchee@users.noreply.github.com>", "
 edition = "2021"
 description = "Circular buffer to store time series data in CosmWasm contracts"
 license = "Apache-2.0"
-repository = "https://gitlab.com/zig-dex/oro-contracts"
+repository = "https://github.com/oroswap/oroswap-core"
 homepage = "https://www.oroswap.org"
 
 [dependencies]

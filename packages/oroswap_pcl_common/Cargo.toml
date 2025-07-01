@@ -4,7 +4,7 @@ version = "1.0.0"
 edition = "2021"
 description = "Common package contains math tools and utils for Oroswap PCL pairs"
 license = "GPL-3.0-only"
-repository = "https://gitlab.com/zig-dex/oro-contracts"
+repository = "https://github.com/oroswap/oroswap-core"
 homepage = "https://www.oroswap.org"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

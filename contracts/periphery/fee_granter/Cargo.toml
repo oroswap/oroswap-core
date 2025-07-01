@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Oroswap contract responsable for setting up fee grants"
 license = "GPL-3.0-only"
-repository = "https://gitlab.com/zig-dex/oro-contracts"
+repository = "https://github.com/oroswap/oroswap-core"
 homepage = "https://www.oroswap.org"
 
 [lib]

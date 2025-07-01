@@ -1,7 +1,7 @@
 # Oroswap Incentives (formerly Generator)
 
 The Oroswap Incentives contract allocates token rewards for various LP tokens and distributes them pro-rata to LP stakers.
-This is completely reworked version of the original [Generator](https://gitlab.com/zig-dex/oro-contracts-core/tree/main/contracts/tokenomics/generator) contract.
+This is completely reworked version of the original [Generator](https://github.com/oroswap/oroswap-core-core/tree/main/contracts/tokenomics/generator) contract.
 In this version we support both cw20 and native LP tokens. New generator also got rid of proxy contracts and made it much easier to add incentives (permissonless!).
 However, generator could require incentivization fee to be paid to add new reward schedule which is exclusively needed to prevent spamming.
 One more improvement is that ORO emissions are counted by seconds instead of blocks which makes more sense since Oroswap is multichain protocol.

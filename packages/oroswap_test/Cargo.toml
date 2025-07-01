@@ -5,7 +5,7 @@ authors = ["Oroswap"]
 edition = "2021"
 description = "Oroswap Test used for integration testing"
 license = "GPL-3.0-only"
-repository = "https://gitlab.com/zig-dex/oro-contracts-core"
+repository = "https://github.com/oroswap/oroswap-core-core"
 homepage = "https://www.oroswap.org"
 
 [features]
