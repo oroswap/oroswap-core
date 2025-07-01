@@ -7,6 +7,7 @@ use cosmwasm_std::{
     coin, coins, to_json_binary, Addr, Api, BankMsg, Binary, BlockInfo, CustomMsg, CustomQuery,
     Empty, Querier, Storage, SubMsgResponse,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use cw_multi_test::{
     AppResponse, BankSudo, CosmosRouter, Module, Stargate, StargateMsg, StargateQuery, SudoMsg,
 };
@@ -23,19 +24,23 @@ use oroswap::token_factory::{
     MsgBurn, MsgCreateDenom, MsgCreateDenomResponse, MsgMint, MsgSetBeforeSendHook,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Default)]
 pub struct NeutronStargate {
     // user -> tranche_key -> limit_order
     orders: RefCell<HashMap<String, HashMap<String, MsgPlaceLimitOrder>>>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl NeutronStargate {
     const ESCROW_ADDR: &'static str =
         "cosmwasm1ypz7dakxd9umutjtxpk7md3ja5shk84qlj7cv0f6yqkj2naef00q4rdsps";
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Stargate for NeutronStargate {}
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Module for NeutronStargate {
     type ExecT = StargateMsg;
     type QueryT = StargateQuery;

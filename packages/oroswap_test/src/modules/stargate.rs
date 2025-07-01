@@ -6,6 +6,8 @@ use cosmwasm_std::{
     Addr, Api, BankMsg, Binary, BlockInfo, CustomMsg, CustomQuery, Empty, Querier, Storage,
     SubMsgResponse,
 };
+
+#[cfg(not(target_arch = "wasm32"))]
 use cw_multi_test::{
     App, AppResponse, BankKeeper, BankSudo, CosmosRouter, DistributionKeeper, FailingModule,
     GovFailingModule, IbcFailingModule, Module, StakeKeeper, Stargate, StargateMsg, StargateQuery,
@@ -17,6 +19,7 @@ use oroswap::token_factory::{
     MsgBurn, MsgCreateDenom, MsgCreateDenomResponse, MsgMint, MsgSetBeforeSendHook,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
 pub type StargateApp<ExecC = Empty, QueryC = Empty> = App<
     BankKeeper,
     MockApi,
@@ -30,11 +33,14 @@ pub type StargateApp<ExecC = Empty, QueryC = Empty> = App<
     MockStargate,
 >;
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Default)]
 pub struct MockStargate {}
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Stargate for MockStargate {}
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Module for MockStargate {
     type ExecT = StargateMsg;
     type QueryT = StargateQuery;

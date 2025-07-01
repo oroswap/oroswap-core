@@ -7,7 +7,33 @@ project_root="$(cd "$script_dir/.." && pwd)"
 OUTPUT_DIR="$project_root/opt-artifacts"
 mkdir -p "$OUTPUT_DIR"
 
-# ── 1) Ensure nightly + wasm32 target ─────────────────────────────────────
+# ── 1) Check wasm-opt version for consistency ─────────────────────────────
+if ! command -v wasm-opt &>/dev/null; then
+  echo "❌ wasm-opt not found; install Binaryen tools" >&2
+  exit 1
+fi
+
+WASM_OPT_VERSION=$(wasm-opt --version | cut -d' ' -f3)
+EXPECTED_WASM_OPT_VERSION="123"
+
+if [[ "$WASM_OPT_VERSION" != "$EXPECTED_WASM_OPT_VERSION" ]]; then
+  echo "❌ Error: wasm-opt version mismatch!" >&2
+  echo "   Expected: $EXPECTED_WASM_OPT_VERSION" >&2
+  echo "   Found: $WASM_OPT_VERSION" >&2
+  echo "   This will cause different SHA hashes across environments." >&2
+  echo "   Please install wasm-opt version $EXPECTED_WASM_OPT_VERSION for reproducible builds." >&2
+  exit 1
+fi
+
+# Display toolchain versions for reproducibility
+echo "📦 Toolchain Versions:"
+echo "  rustc        : $(rustc --version)"
+echo "  cargo        : $(cargo --version)"
+echo "  wasm-opt     : $(wasm-opt --version)"
+echo "  cosmwasm-check: $(cosmwasm-check --version || echo 'not installed')"
+echo ""
+
+# ── 2) Ensure nightly + wasm32 target ─────────────────────────────────────
 if ! command -v rustup &>/dev/null; then
   echo "❌ rustup not found; install from https://rustup.rs/" >&2
   exit 1
@@ -16,7 +42,7 @@ rustup install nightly
 rustup default nightly
 rustup target add wasm32-unknown-unknown
 
-# ── 2) Set deterministic build environment ────────────────────────────────
+# ── 3) Set deterministic build environment ────────────────────────────────
 export RUSTFLAGS="-C target-cpu=generic -C codegen-units=1 -C target-feature=+crt-static"
 export CARGO_PROFILE_RELEASE_OPT_LEVEL=3
 export CARGO_PROFILE_RELEASE_LTO=true
@@ -28,10 +54,10 @@ export CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=false
 # Remove any existing build artifacts to ensure clean build
 rm -rf "$project_root/target"
 
-# ── 3) Find all contract Cargo.toml files ─────────────────────────────────
+# ── 4) Find all contract Cargo.toml files ─────────────────────────────────
 contract_manifests=($(find "$project_root/contracts" -name "Cargo.toml"))
 
-# ── 4) Build each contract ────────────────────────────────────────────────
+# ── 5) Build each contract ────────────────────────────────────────────────
 for manifest_path in "${contract_manifests[@]}"; do
   # Get package name from manifest
   pkg_name=$(awk -F '"' '/^\[package\]/{p=1} p && /^name =/ {print $2; exit}' "$manifest_path")
