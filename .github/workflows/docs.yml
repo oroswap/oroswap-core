@@ -28,7 +28,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-          cache: 'npm'
 
       - name: Install dependencies
         run: |
@@ -78,13 +77,8 @@ jobs:
                   <li><a href="contracts/router.html">Router Contract</a></li>
                   <li><a href="contracts/incentives.html">Incentives Contract</a></li>
                   <li><a href="events/factory-events.html">Factory Events</a></li>
-                  <li><a href="events/pair-events.html">Pair Events</a></li>
-                  <li><a href="events/router-events.html">Router Events</a></li>
                   <li><a href="transactions/swap-examples.html">Swap Examples</a></li>
-                  <li><a href="transactions/liquidity-examples.html">Liquidity Examples</a></li>
-                  <li><a href="transactions/testnet-examples.html">Testnet Examples</a></li>
                   <li><a href="deployment/testnet.html">Testnet Deployment</a></li>
-                  <li><a href="deployment/environment.html">Environment Setup</a></li>
                 </ul>
               </div>
               <div class="content">
@@ -93,7 +87,6 @@ jobs:
                 
                 <h2>Quick Start</h2>
                 <ol>
-                  <li><a href="deployment/environment.html">Setup Environment</a></li>
                   <li><a href="deployment/testnet.html">Deploy Contracts</a></li>
                   <li><a href="contracts/factory.html">Create Pairs</a></li>
                   <li><a href="transactions/swap-examples.html">Start Trading</a></li>
@@ -110,7 +103,6 @@ jobs:
                 <h2>Useful Links</h2>
                 <ul>
                   <li><a href="https://github.com/oroswap/oroswap-core">GitHub Repository</a></li>
-                  <li><a href="https://testnet.oroswap.org/">Testnet Frontend</a></li>
                   <li><a href="https://explorer.zigchain.com/">Zigchain Explorer</a></li>
                 </ul>
               </div>
@@ -160,13 +152,8 @@ jobs:
                       <li><a href=\"../contracts/router.html\">Router Contract</a></li>
                       <li><a href=\"../contracts/incentives.html\">Incentives Contract</a></li>
                       <li><a href=\"../events/factory-events.html\">Factory Events</a></li>
-                      <li><a href=\"../events/pair-events.html\">Pair Events</a></li>
-                      <li><a href=\"../events/router-events.html\">Router Events</a></li>
                       <li><a href=\"../transactions/swap-examples.html\">Swap Examples</a></li>
-                      <li><a href=\"../transactions/liquidity-examples.html\">Liquidity Examples</a></li>
-                      <li><a href=\"../transactions/testnet-examples.html\">Testnet Examples</a></li>
                       <li><a href=\"../deployment/testnet.html\">Testnet Deployment</a></li>
-                      <li><a href=\"../deployment/environment.html\">Environment Setup</a></li>
                     </ul>
                   </div>
                   <div class=\"content\">
