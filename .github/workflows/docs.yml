@@ -127,31 +127,4 @@ jobs:
         with:
           name: documentation
           path: _site/
-          retention-days: 30
-
-      - name: Comment on PR
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `## 📚 Documentation Build Complete
-            
-            Documentation has been built successfully! 
-            
-            **To enable GitHub Pages:**
-            1. Go to Settings > Pages
-            2. Select "GitHub Actions" as source
-            3. The documentation will be deployed automatically on merge to main
-            
-            **Files included:**
-            - Contract documentation (Factory, Router, Pairs, Incentives)
-            - Deployment guides (Testnet)
-            - Transaction examples (Swap examples)
-            - Event documentation (Factory events)
-            
-            Documentation artifact is available for download.`
-            }) 
+          retention-days: 30 
