@@ -1,3 +1,8 @@
+---
+layout: default
+title: Configuration
+---
+
 # Configuration
 
 This document contains all the configuration parameters for the Oroswap testnet deployment.
