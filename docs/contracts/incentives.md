@@ -2,8 +2,6 @@
 
 The Incentives contract manages liquidity mining rewards, staking mechanisms, and token distribution for the Oroswap ecosystem.
 
-> 📋 **Quick Reference**: See the [Transaction Index](../transactions.md#incentives-contract) for all incentives operations.
-
 ## 📋 Overview
 
 **Contract Address**: `zig1sq7mu45and7htxdjwe9htl0q3y33qlnt6cded6z299303pya5d0qda8sg7` (Testnet)
@@ -179,7 +177,7 @@ zigchaind query wasm contract-store <incentives_address> '{
 
 ### Transaction Index
 
-- **[Complete Transaction Index](../transactions.md)** - All transaction examples in one place
+- **[Complete Transaction Index](../transactions/)** - All transaction examples in one place
 
 ## 🚨 Important Considerations
 
