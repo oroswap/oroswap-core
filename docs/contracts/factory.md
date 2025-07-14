@@ -2,8 +2,6 @@
 
 The Factory contract is the central hub of the Oroswap DEX, responsible for creating and managing all trading pairs.
 
-> 📋 **Quick Reference**: See the [Transaction Index](../transactions.md#factory-contract) for all factory operations.
-
 ## 📋 Overview
 
 **Contract Address**: `zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30` (Testnet)
@@ -169,7 +167,7 @@ zigchaind query wasm contract-store zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrs
 
 ### Transaction Index
 
-- **[Complete Transaction Index](../transactions.md)** - All transaction examples in one place
+- **[Complete Transaction Index](../transactions/)** - All transaction examples in one place
 
 ## 🚨 Important Notes
 

@@ -2,8 +2,6 @@
 
 The Router contract enables complex trading operations including multi-hop swaps, optimal routing, and batch operations across multiple pairs.
 
-> 📋 **Quick Reference**: See the [Transaction Index](../transactions.md#router-contract) for all router operations.
-
 ## 📋 Overview
 
 **Contract Address**: `zig1g00t6pxg3xn7vk0vt29zu9vztm3wsq5t5wegutlg94uddju0yr5sye3r3a` (Testnet)
@@ -245,7 +243,7 @@ zigchaind query wasm contract-store <router_address> '{"config": {}}' --node htt
 - **[Claim Rewards](./incentives.md#claim-rewards)** - Claim earned ORO tokens
 
 ### Transaction Index
-- **[Complete Transaction Index](../transactions.md)** - All transaction examples in one place
+- **[Complete Transaction Index](../transactions/)** - All transaction examples in one place
 
 ## 🚨 Important Considerations
 

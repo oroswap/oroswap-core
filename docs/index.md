@@ -1,3 +1,8 @@
+---
+layout: default
+title: Oroswap Documentation
+---
+
 # Oroswap Documentation
 
 Welcome to the Oroswap DEX documentation! This guide will help you understand, deploy, and interact with the Oroswap decentralized exchange on Zigchain.
@@ -19,7 +24,7 @@ Welcome to the Oroswap DEX documentation! This guide will help you understand, d
 
 ### [Transactions](./transactions/)
 
-- **[Transaction Index](./transactions.md)** - Complete reference of all transactions
+- **[Transaction Index](./transactions/)** - Complete reference of all transactions
 - [Swap Examples](./transactions/swap-examples.md) - How to perform token swaps
 - [Liquidity Examples](./transactions/liquidity-examples.md) - Adding/removing liquidity
 - [Pair Creation](./transactions/pair-create.md) - Creating XYK, Stable, and Concentrated pairs
@@ -27,15 +32,14 @@ Welcome to the Oroswap DEX documentation! This guide will help you understand, d
 ### [Deployment](./deployment/)
 
 - [Testnet Deployment](./deployment/testnet.md) - Deploying to testnet
-- [Environment Setup](./deployment/environment.md) - Setting up development environment
 - [Configuration](./configuration.md) - Network and contract configuration
 
 ## 🚀 Quick Start
 
-1. **Setup Environment** - [Environment Setup](./deployment/environment.md)
+1. **Setup Environment** - [Deployment Guide](./deployment/)
 2. **Deploy Contracts** - [Testnet Deployment](./deployment/testnet.md)
 3. **Create Pairs** - [Pair Creation](./transactions/pair-create.md) or [Factory Contract](./contracts/factory.md)
-4. **Start Trading** - [Transaction Index](./transactions.md) or [Swap Examples](./transactions/swap-examples.md)
+4. **Start Trading** - [Transaction Index](./transactions/) or [Swap Examples](./transactions/swap-examples.md)
 
 ## 🔗 Useful Links
 
@@ -89,7 +93,7 @@ Oroswap is built on a modular architecture with specialized contracts:
 - **Configurable Rewards**: Adjustable reward rates per pool
 - **Time-based Distribution**: Rewards distributed over time periods
 
-```## 📊 Monitoring
+## 📊 Monitoring
 
 ### Key Metrics
 
