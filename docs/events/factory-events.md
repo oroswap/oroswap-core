@@ -31,7 +31,7 @@ Emitted when a new trading pair is created.
 }
 ```
 
-**Pool Creation Fee**: The event includes the pool creation fee (1,000,000 uzig) that was paid to create the pair.
+**Pool Creation Fee**: The event includes the pool creation fee (1,000,000 uzig) and LP token creation fee (100,000,000 uzig) that were paid to create the pair.
 
 **Example Query**:
 ```bash

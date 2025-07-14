@@ -41,13 +41,13 @@ cd oroswap-core
 ./scripts/build_release.sh
 
 # Verify artifacts are created
-ls -la artifacts/
+ls -la opt-artifacts/
 ```
 
 ### 2. Store Contract Code
 ```bash
 # Store all contracts
-./scripts/store_code_devnet.sh
+./scripts/store_code_testnet.sh
 
 # Verify code storage
 zigchaind query wasm list-code --node https://rpc.zigscan.net
@@ -124,7 +124,7 @@ zigchaind tx wasm execute $FACTORY_CONTRACT '{
 }' --from testnet-key --gas auto --fees 1000uzig --amount 1000000uzig
 ```
 
-**Note**: Each pair creation requires a pool creation fee of 1,000,000 uzig (1 ZIG) sent via the `--amount` flag.
+**Note**: Each pair creation requires a pool creation fee of 1,000,000 uzig (1 ZIG) and an LP token creation fee of 100,000,000 uzig (100 ZIG) sent via the `--amount` flag.
 
 ## 🔧 Configuration Files
 

@@ -39,6 +39,8 @@ pub fn create_pair(
 
 **Pool Creation Fee**: 1,000,000 uzig (1 ZIG) must be sent with the transaction
 
+**LP Token Creation Fee**: 100,000,000 uzig (100 ZIG) must be sent with the transaction as well. (This is a requirement to create a token on ZIGChain)
+
 **Example**:
 
 ```bash
@@ -53,7 +55,7 @@ zigchaind tx wasm execute zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv2
 }' --from user --gas auto --fees 1000uzig --amount 101000000uzig
 ```
 
-**Note**: The `--amount 1000000uzig` flag sends the required pool creation fee to the factory contract.
+**Note**: The `--amount 101000000uzig` flag sends the required pool creation fee + token creation fee to the factory contract.
 
 ### Update Config
 
@@ -135,34 +137,45 @@ zigchaind query wasm contract-store zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrs
     "asset_infos": [
       {"native_token": {"denom": "uzig"}},
       {"native_token": {"denom": "usdc"}}
-    ]
+    ],
+    "pair_type": {"xyk": {}}
   }
 }' --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
 ```
 
+**Parameters**:
+
+- `asset_infos`: Array of two assets to query pair for
+- `pair_type`: Type of pair to query (XYK, Stable, or Concentrated)
+
 ## 🔗 Related Examples
 
 ### Pair Creation
+
 - **[Create XYK Pair](./pairs.md#create-xyk-pair)** - Create constant product pairs
 - **[Create Stable Pair](./pairs.md#create-stable-pair)** - Create stable pairs with amplification
 - **[Create Concentrated Pair](./pairs.md#create-concentrated-pair)** - Create concentrated liquidity pairs
 
 ### Pair Operations
+
 - **[Add Liquidity](./pairs.md#provide-liquidity)** - Add liquidity to created pairs
 - **[Swap Tokens](./pairs.md#swap)** - Trade tokens on pairs
 - **[Remove Liquidity](./pairs.md#withdraw-liquidity)** - Withdraw liquidity from pairs
 
 ### Advanced Operations
+
 - **[Multi-hop Swaps](./router.md#execute-swap-operations)** - Route through multiple pairs
 - **[Stake LP Tokens](./incentives.md#deposit)** - Earn rewards for providing liquidity
 
 ### Transaction Index
+
 - **[Complete Transaction Index](../transactions.md)** - All transaction examples in one place
 
 ## 🚨 Important Notes
 
 1. **Pool Creation Fee**: 1 ZIG (1,000,000 uzig) required when creating pairs
-2. **Admin Only**: Configuration updates require owner privileges
-3. **Pair Types**: Support for XYK, Stable, and Concentrated pairs
-4. **Fee Structure**: Configurable fees per pair type
-5. **Integration**: Factory coordinates with incentives and coin registry contracts
+2. LP Token Creation Fee : 100 ZIG required by ZIGChain to create a token
+3. **Admin Only**: Configuration updates require owner privileges
+4. **Pair Types**: Support for XYK, Stable, and Concentrated pairs
+5. **Fee Structure**: Configurable fees per pair type
+6. **Integration**: Factory coordinates with incentives and coin registry contracts
