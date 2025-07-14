@@ -221,6 +221,6 @@ zigchaind query wasm contract-state smart zig1g00t6pxg3xn7vk0vt29zu9vztm3wsq5t5w
 ## 🔗 Related Examples
 
 - **[Liquidity Examples](./liquidity-examples.md)** - Adding/removing liquidity
-- **[Testnet Examples](./testnet-examples.md)** - Real testnet transaction examples
+- **[Pair Creation](./pair-create.md)** - Creating XYK, Stable, and Concentrated pairs
 - **[Transaction Index](../transactions.md)** - Complete transaction reference
 
