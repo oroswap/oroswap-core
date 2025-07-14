@@ -51,14 +51,14 @@ zigchaind tx wasm execute zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv2
 
 Stable pairs are optimized for trading between assets with similar values (like stablecoins).
 
-**Step 1: Create Init Params**
+#### Step 1: Create Init Params
 ```bash
 # Create the init_params JSON and encode to base64
 echo '{"amp": 100}' | base64
 # Output: eyJhbXAiOjEwMH0=
 ```
 
-**Step 2: Create the Pair**
+#### Step 2: Create the Pair
 ```bash
 zigchaind tx wasm execute zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30 '{
   "create_pair": {
@@ -99,7 +99,7 @@ zigchaind tx wasm execute zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv2
 
 Concentrated liquidity pairs allow LPs to concentrate their capital within specific price ranges.
 
-**Step 1: Create Init Params**
+#### Step 1: Create Init Params
 ```bash
 # Create the init_params JSON and encode to base64
 echo '{
@@ -117,7 +117,7 @@ echo '{
 # Output: eyJhbXAiOiI0MC4wIiwiZ2FtbWEiOiIwLjAwMDEiLCJtaWRfZmVlIjoiMC4wMDUiLCJvdXRfZmVlIjoiMC4wMSIsImZlZV9nYW1tYSI6IjAuMDAxIiwicmVwZWdfcHJvZml0X3RocmVzaG9sZCI6IjAuMDAwMSIsIm1pbl9wcmljZV9zY2FsZV9kZWx0YSI6IjAuMDAwMDAxIiwicHJpY2Vfc2NhbGUiOiIxLjUiLCJtYV9oYWxmX3RpbWUiOjYwMCwidHJhY2tfYXNzZXRfYmFsYW5jZXMiOmZhbHNlfQ==
 ```
 
-**Step 2: Create the Pair**
+#### Step 2: Create the Pair
 ```bash
 zigchaind tx wasm execute zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30 '{
   "create_pair": {
