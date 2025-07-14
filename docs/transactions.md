@@ -50,7 +50,6 @@ This document provides a quick reference to all main transactions available in t
 ### Pool Management (Admin)
 - **[Setup Pools](incentives.md#setup-pools)** - Configure staking pools
 - **[Incentivize](incentives.md#incentivize)** - Add reward schedules to pools
-- **[Remove Reward](incentives.md#remove-reward)** - Remove rewards from pools
 
 ### Queries
 - **[Get Config](incentives.md#get-configuration)** - Query contract configuration

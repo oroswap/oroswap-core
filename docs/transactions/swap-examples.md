@@ -209,3 +209,18 @@ zigchaind query wasm contract-state smart zig1g00t6pxg3xn7vk0vt29zu9vztm3wsq5t5w
 }'
 ```
 
+## 🚨 Important Notes
+
+1. **Amount Format**: Always use the full denomination (e.g., `1000000uzig` not just `1000000`) in the `--amount` flag
+2. **Amount in JSON**: Use the raw number (e.g., `"1000000"`) in the JSON message body
+3. **Slippage Protection**: Use `minimum_receive` or `max_spread` to prevent front-running
+4. **Gas Costs**: Multi-hop swaps require more gas
+5. **Token Approval**: CW20 tokens require approval before swapping
+6. **Price Impact**: Large swaps may have significant price impact
+
+## 🔗 Related Examples
+
+- **[Liquidity Examples](./liquidity-examples.md)** - Adding/removing liquidity
+- **[Testnet Examples](./testnet-examples.md)** - Real testnet transaction examples
+- **[Transaction Index](../transactions.md)** - Complete transaction reference
+
