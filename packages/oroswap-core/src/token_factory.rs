@@ -33,19 +33,19 @@ pub struct MsgCreateDenomResponse {
     #[prost(string, tag = "1")]
     pub creator: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
-    pub bankAdmin: ::prost::alloc::string::String,
+    pub bank_admin: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
-    pub metadataAdmin: ::prost::alloc::string::String,
+    pub metadata_admin: ::prost::alloc::string::String,
     #[prost(string, tag = "4")]
     pub denom: ::prost::alloc::string::String,
     #[prost(string, tag = "5")]
-    pub maxSupply: ::prost::alloc::string::String,
+    pub minting_cap: ::prost::alloc::string::String,
     #[prost(bool, tag = "6")]
-    pub canChangeMaxSupply: bool,
+    pub can_change_minting_cap: bool,
     #[prost(string, tag = "7")]
-    pub uri: ::prost::alloc::string::String,
+    pub URI: ::prost::alloc::string::String,
     #[prost(string, tag = "8")]
-    pub uriHash: ::prost::alloc::string::String,
+    pub URI_hash: ::prost::alloc::string::String,
 }
 
 impl MsgCreateDenomResponse {
@@ -101,15 +101,15 @@ pub struct MsgCreateDenom {
 pub struct MsgCreateDenom {
     #[prost(string, tag = "1")]
     pub creator: ::prost::alloc::string::String,
-    /// subDenom can be up to 44 "alphanumeric" characters long.
+    /// sub_denom can be up to 44 "alphanumeric" characters long.
     #[prost(string, tag = "2")]
-    pub subDenom: ::prost::alloc::string::String,
-    /// maxSupply is the maximum supply of the token that can be minted. set it to be 1 by default.
+    pub sub_denom: ::prost::alloc::string::String,
+    /// minting_cap is the maximum supply of the token that can be minted. set it to be 1 by default.
     #[prost(string, tag = "3")]
-    pub maxSupply: ::prost::alloc::string::String,
-    /// canChangeMaxSupply is the mintable status of the token. set it to be true by default.
+    pub minting_cap: ::prost::alloc::string::String,
+    /// can_change_minting_cap is the mintable status of the token. set it to be true by default.
     #[prost(bool, tag = "4")]
-    pub canChangeMaxSupply: bool,
+    pub can_change_minting_cap: bool,
 }
 
 impl MsgCreateDenom {
@@ -277,10 +277,10 @@ where
 
     #[cfg(feature = "zigchain")]
     let create_denom_msg = MsgCreateDenom {
-        subDenom: denom.into(),
+        sub_denom: denom.into(),
         creator: sender.into(),
-        maxSupply: LP_MAX_SUPPLY.to_string(),
-        canChangeMaxSupply: false,
+        minting_cap: LP_MAX_SUPPLY.to_string(),
+        can_change_minting_cap: false,
     };
 
     CosmosMsg::Stargate {
