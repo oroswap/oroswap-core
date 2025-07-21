@@ -6,13 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- Comprehensive documentation for all Oroswap contracts and operations
-- GitHub Pages workflow for automatic documentation deployment
+- Initial comprehensive documentation for contracts, deployment, and transactions.
+- GitHub Pages workflow for documentation.
 
 ### Changed
 
-### Fixed
+- Convert token factory message fields from camelCase to snake_case for ZIGChain compatibility
 
+### Fixed
 
 ## [1.0.0] – 2025-07-10
 
