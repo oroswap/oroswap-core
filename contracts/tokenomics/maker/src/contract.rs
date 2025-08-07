@@ -7,7 +7,7 @@ use cosmwasm_std::{
     Decimal, Deps, DepsMut, Env, MessageInfo, Order, ReplyOn, Response, StdError, StdResult,
     SubMsg, Uint128, Uint64,
 };
-use cw2::{get_contract_version, set_contract_version};
+use cw2::set_contract_version;
 
 use oroswap::asset::{addr_opt_validate, Asset, AssetInfo, AssetInfoExt};
 use oroswap::common::{claim_ownership, drop_ownership_proposal, propose_new_owner};
@@ -20,7 +20,7 @@ use oroswap::maker::{
 use oroswap::pair::MAX_ALLOWED_SLIPPAGE;
 
 use crate::error::ContractError;
-use crate::migration::migrate_from_v120_plus;
+// Migration function is simplified for new codebase
 use crate::reply::PROCESS_DEV_FUND_REPLY_ID;
 use crate::state::{BRIDGES, CONFIG, LAST_COLLECT_TS, OWNERSHIP_PROPOSAL, SEIZE_CONFIG};
 use crate::utils::{
@@ -96,6 +96,7 @@ pub fn instantiate(
         second_receiver_cfg: None,
         collect_cooldown: msg.collect_cooldown,
         dev_fund_conf: None,
+        authorized_keepers: vec![],  // Initialize with empty list
     };
 
     update_second_receiver_cfg(deps.as_ref(), &mut cfg, &msg.second_receiver_params)?;
@@ -193,7 +194,7 @@ pub fn execute(
     msg: ExecuteMsg,
 ) -> Result<Response, ContractError> {
     match msg {
-        ExecuteMsg::Collect { assets } => collect(deps, env, assets),
+        ExecuteMsg::Collect { assets } => collect(deps, env, info, assets),
         ExecuteMsg::UpdateConfig {
             factory_contract,
             staking_contract,
@@ -300,6 +301,8 @@ pub fn execute(
 
             Ok(Response::new().add_attribute("action", "update_seize_config"))
         }
+        ExecuteMsg::AddKeeper { keeper } => add_keeper(deps, info, keeper),
+        ExecuteMsg::RemoveKeeper { keeper } => remove_keeper(deps, info, keeper),
     }
 }
 
@@ -309,11 +312,17 @@ pub fn execute(
 fn collect(
     deps: DepsMut,
     env: Env,
+    info: MessageInfo,
     assets: Vec<AssetWithLimit>,
 ) -> Result<Response, ContractError> {
     let mut cfg = CONFIG.load(deps.storage)?;
 
-    // Allowing collect only once per cooldown period
+    // Check if caller is authorized keeper
+    if !cfg.authorized_keepers.contains(&info.sender) {
+        return Err(ContractError::Unauthorized {});
+    }
+    
+    // Apply cooldown for all callers (including authorized keepers) as safety mechanism
     LAST_COLLECT_TS.update(deps.storage, |last_ts| match cfg.collect_cooldown {
         Some(cd_period) if env.block.time.seconds() < last_ts + cd_period => {
             Err(ContractError::Cooldown {
@@ -955,6 +964,58 @@ fn seize(deps: DepsMut, env: Env, assets: Vec<AssetWithLimit>) -> Result<Respons
         .add_attribute("action", "seize"))
 }
 
+/// Add an authorized keeper who can call collect
+/// Only the owner can execute this.
+fn add_keeper(
+    deps: DepsMut,
+    info: MessageInfo,
+    keeper: String,
+) -> Result<Response, ContractError> {
+    let mut cfg = CONFIG.load(deps.storage)?;
+    
+    // Only owner can add keepers
+    if info.sender != cfg.owner {
+        return Err(ContractError::Unauthorized {});
+    }
+    
+    let keeper_addr = deps.api.addr_validate(&keeper)?;
+    
+    // Check if keeper already exists
+    if cfg.authorized_keepers.contains(&keeper_addr) {
+        return Err(ContractError::Std(StdError::generic_err(
+            "Keeper already exists",
+        )));
+    }
+    
+    cfg.authorized_keepers.push(keeper_addr);
+    CONFIG.save(deps.storage, &cfg)?;
+    
+    Ok(Response::default().add_attribute("action", "add_keeper"))
+}
+
+/// Remove an authorized keeper
+/// Only the owner can execute this.
+fn remove_keeper(
+    deps: DepsMut,
+    info: MessageInfo,
+    keeper: String,
+) -> Result<Response, ContractError> {
+    let mut cfg = CONFIG.load(deps.storage)?;
+    
+    // Only owner can remove keepers
+    if info.sender != cfg.owner {
+        return Err(ContractError::Unauthorized {});
+    }
+    
+    let keeper_addr = deps.api.addr_validate(&keeper)?;
+    
+    // Remove keeper from list
+    cfg.authorized_keepers.retain(|k| k != &keeper_addr);
+    CONFIG.save(deps.storage, &cfg)?;
+    
+    Ok(Response::default().add_attribute("action", "remove_keeper"))
+}
+
 /// Exposes all the queries available in the contract.
 ///
 /// ## Queries
@@ -991,6 +1052,7 @@ fn query_get_config(deps: Deps) -> StdResult<ConfigResponse> {
         pre_upgrade_oro_amount: config.pre_upgrade_oro_amount,
         default_bridge: config.default_bridge,
         second_receiver_cfg: config.second_receiver_cfg,
+        authorized_keepers: config.authorized_keepers,
     })
 }
 
@@ -1025,67 +1087,11 @@ fn query_bridges(deps: Deps) -> StdResult<Vec<(String, String)>> {
         .collect()
 }
 
-/// Manages contract migration.
+/// Basic migration function for future contract upgrades
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(mut deps: DepsMut, env: Env, msg: MigrateMsg) -> Result<Response, ContractError> {
-    let contract_version = get_contract_version(deps.storage)?;
-
-    match contract_version.contract.as_ref() {
-        "oroswap-maker" => match contract_version.version.as_ref() {
-            // atlantic-2, injective-888: 1.2.0
-            // neutron-1, pion-1, phoenix-1, pisco-1: 1.5.0
-            // injective-1, pacific-1: 1.4.0
-            "1.2.0" => {
-                migrate_from_v120_plus(deps.branch(), msg)?;
-                LAST_COLLECT_TS.save(deps.storage, &env.block.time.seconds())?;
-
-                SEIZE_CONFIG.save(
-                    deps.storage,
-                    &SeizeConfig {
-                        // set to invalid address initially
-                        // governance must update this explicitly
-                        receiver: Addr::unchecked(""),
-                        seizable_assets: vec![],
-                    },
-                )?;
-            }
-            "1.4.0" | "1.5.0" => {
-                // It is enough to load and save config
-                // as we added only one optional field config.dev_fund_conf
-                let config = CONFIG.load(deps.storage)?;
-                CONFIG.save(deps.storage, &config)?;
-
-                SEIZE_CONFIG.save(
-                    deps.storage,
-                    &SeizeConfig {
-                        // set to invalid address initially
-                        // governance must update this explicitly
-                        receiver: Addr::unchecked(""),
-                        seizable_assets: vec![],
-                    },
-                )?;
-            }
-            "1.6.0" => {
-                SEIZE_CONFIG.save(
-                    deps.storage,
-                    &SeizeConfig {
-                        // set to invalid address initially
-                        // governance must update this explicitly
-                        receiver: Addr::unchecked(""),
-                        seizable_assets: vec![],
-                    },
-                )?;
-            }
-            _ => return Err(ContractError::MigrationError {}),
-        },
-        _ => return Err(ContractError::MigrationError {}),
-    };
-
-    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
-
-    Ok(Response::new()
-        .add_attribute("previous_contract_name", &contract_version.contract)
-        .add_attribute("previous_contract_version", &contract_version.version)
-        .add_attribute("new_contract_name", CONTRACT_NAME)
-        .add_attribute("new_contract_version", CONTRACT_VERSION))
+pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
+    // For now, this is a placeholder for future migrations
+    // When contract needs to be upgraded, this function will handle the migration logic
+    
+    Ok(Response::new())
 }

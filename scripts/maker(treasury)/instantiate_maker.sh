@@ -7,7 +7,7 @@ source ../devnet.env
 ADMIN_ADDRESS=$($BINARY keys show $KEY_NAME --keyring-backend $KEYRING_BACKEND -a)
 
 # Maker contract code ID
-CODE_ID=151
+#CODE_ID=25
 
 # Instantiate the contract
 INIT='{
@@ -26,7 +26,7 @@ INIT='{
 }'
 
 # Deploy the contract
-$BINARY tx wasm instantiate $CODE_ID "$INIT" \
+$BINARY tx wasm instantiate $MAKER_CODE_ID "$INIT" \
   --from $KEY_NAME \
   --chain-id $CHAIN_ID \
   --gas-prices $GAS_PRICES \
@@ -42,7 +42,7 @@ $BINARY tx wasm instantiate $CODE_ID "$INIT" \
 sleep $SLEEP_TIME
 
 # Query the contract address
-$BINARY query wasm list-contract-by-code $CODE_ID \
+$BINARY query wasm list-contract-by-code $MAKER_CODE_ID \
   --node $RPC_URL \
   --chain-id $CHAIN_ID \
   --output json | jq -r '.contracts[-1]'

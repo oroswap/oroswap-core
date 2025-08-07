@@ -52,6 +52,8 @@ pub struct Config {
     pub second_receiver_cfg: Option<SecondReceiverConfig>,
     /// If set defines the period when maker collect can be called
     pub collect_cooldown: Option<u64>,
+    /// List of authorized keepers who can call collect
+    pub authorized_keepers: Vec<Addr>,
 }
 
 /// This structure stores general parameters for the contract.
@@ -154,6 +156,10 @@ pub enum ExecuteMsg {
         #[serde(default)]
         seizable_assets: Vec<AssetInfo>,
     },
+    /// Add an authorized keeper who can call collect
+    AddKeeper { keeper: String },
+    /// Remove an authorized keeper
+    RemoveKeeper { keeper: String },
 }
 
 /// This structure describes the query functions available in the contract.
@@ -200,6 +206,8 @@ pub struct ConfigResponse {
     pub pre_upgrade_oro_amount: Uint128,
     /// Parameters that describe the second receiver of fees
     pub second_receiver_cfg: Option<SecondReceiverConfig>,
+    /// List of authorized keepers who can call collect
+    pub authorized_keepers: Vec<Addr>,
 }
 
 /// A custom struct used to return multiple asset balances.
