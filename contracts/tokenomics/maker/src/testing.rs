@@ -55,6 +55,7 @@ fn proper_initialization() {
             pre_upgrade_oro_amount: Uint128::zero(),
             second_receiver_cfg: None,
             collect_cooldown: None,
+            authorized_keepers: vec![],
         }
     )
 }

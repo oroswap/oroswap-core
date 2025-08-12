@@ -250,11 +250,24 @@ fn instantiate_contracts(
     let maker_instance = router
         .instantiate_contract(
             market_code_id,
-            owner,
+            owner.clone(),
             &msg,
             &[],
             String::from("MAKER"),
             None,
+        )
+        .unwrap();
+
+    // Add owner to authorized keepers list
+    let add_keeper_msg = ExecuteMsg::AddKeeper {
+        keeper: "owner".to_string(),
+    };
+    router
+        .execute_contract(
+            owner,
+            maker_instance.clone(),
+            &add_keeper_msg,
+            &[],
         )
         .unwrap();
 
@@ -777,7 +790,7 @@ fn test_maker_collect(
 
     router
         .execute_contract(
-            Addr::unchecked("anyone"),
+            Addr::unchecked("owner"),
             maker_instance.clone(),
             &ExecuteMsg::Collect { assets },
             &[],
@@ -1242,7 +1255,7 @@ fn collect_err_no_swap_pair() {
     let msg = ExecuteMsg::Collect { assets };
 
     let e = router
-        .execute_contract(maker_instance.clone(), maker_instance.clone(), &msg, &[])
+        .execute_contract(Addr::unchecked("owner"), maker_instance.clone(), &msg, &[])
         .unwrap_err();
 
     assert_eq!(
@@ -1589,7 +1602,7 @@ fn collect_with_asset_limit() {
 
     let resp = router
         .execute_contract(
-            Addr::unchecked("anyone"),
+            Addr::unchecked("owner"),
             maker_instance.clone(),
             &ExecuteMsg::Collect {
                 assets: assets_with_duplicate.clone(),
@@ -1604,7 +1617,7 @@ fn collect_with_asset_limit() {
 
     router
         .execute_contract(
-            Addr::unchecked("anyone"),
+            Addr::unchecked("owner"),
             maker_instance.clone(),
             &ExecuteMsg::Collect {
                 assets: assets.clone(),
@@ -1893,7 +1906,7 @@ fn collect_with_second_receiver() {
 
     router
         .execute_contract(
-            Addr::unchecked("anyone"),
+            Addr::unchecked("owner"),
             maker_instance.clone(),
             &ExecuteMsg::Collect {
                 assets: assets.clone(),
@@ -2044,7 +2057,7 @@ fn test_collect_cooldown() {
     // First collect works
     router
         .execute_contract(
-            Addr::unchecked("anyone"),
+            Addr::unchecked("owner"),
             maker_instance.clone(),
             &ExecuteMsg::Collect {
                 assets: assets.clone(),
@@ -2059,7 +2072,7 @@ fn test_collect_cooldown() {
 
     let err = router
         .execute_contract(
-            Addr::unchecked("anyone"),
+            Addr::unchecked("owner"),
             maker_instance.clone(),
             &ExecuteMsg::Collect {
                 assets: assets.clone(),
@@ -2077,7 +2090,7 @@ fn test_collect_cooldown() {
     router.update_block(|block| block.time = block.time.plus_seconds(200));
     router
         .execute_contract(
-            Addr::unchecked("anyone"),
+            Addr::unchecked("owner"),
             maker_instance.clone(),
             &ExecuteMsg::Collect {
                 assets: assets.clone(),
@@ -2219,7 +2232,7 @@ fn test_dev_fund_fee() {
     );
 
     app.execute_contract(
-        Addr::unchecked("anyone"),
+        Addr::unchecked("owner"),
         maker_instance.clone(),
         &ExecuteMsg::Collect {
             assets: vec![AssetWithLimit {
@@ -2286,7 +2299,7 @@ fn test_dev_fund_fee() {
     );
 
     app.execute_contract(
-        Addr::unchecked("anyone"),
+        Addr::unchecked("owner"),
         maker_instance.clone(),
         &ExecuteMsg::Collect {
             assets: vec![AssetWithLimit {
@@ -2370,7 +2383,7 @@ fn test_seize() {
     // Unauthorized check
     let err = app
         .execute_contract(
-            Addr::unchecked("anyone"),
+            Addr::unchecked("unauthorized_user"),
             maker_instance.clone(),
             &ExecuteMsg::UpdateSeizeConfig {
                 receiver: None,
@@ -2778,7 +2791,7 @@ fn distribute_initially_accrued_fees() {
     // Check that collect does not distribute ORO until rewards are enabled
     router
         .execute_contract(
-            Addr::unchecked("anyone"),
+            Addr::unchecked("owner"),
             maker_instance.clone(),
             &ExecuteMsg::Collect { assets },
             &[],
@@ -2830,7 +2843,7 @@ fn distribute_initially_accrued_fees() {
 
     router
         .execute_contract(
-            Addr::unchecked("anyone"),
+            Addr::unchecked("owner"),
             maker_instance.clone(),
             &ExecuteMsg::Collect {
                 assets: assets.clone(),
@@ -2846,7 +2859,7 @@ fn distribute_initially_accrued_fees() {
 
     router
         .execute_contract(
-            Addr::unchecked("anyone"),
+            Addr::unchecked("owner"),
             maker_instance.clone(),
             &ExecuteMsg::Collect {
                 assets: assets.clone(),
@@ -2860,7 +2873,7 @@ fn distribute_initially_accrued_fees() {
     // Let's try to collect again within the same block
     router
         .execute_contract(
-            Addr::unchecked("anyone"),
+            Addr::unchecked("owner"),
             maker_instance.clone(),
             &ExecuteMsg::Collect {
                 assets: assets.clone(),
@@ -2885,7 +2898,7 @@ fn distribute_initially_accrued_fees() {
 
     let resp = router
         .execute_contract(
-            Addr::unchecked("anyone"),
+            Addr::unchecked("owner"),
             maker_instance.clone(),
             &ExecuteMsg::Collect {
                 assets: assets.clone(),
@@ -2918,7 +2931,7 @@ fn distribute_initially_accrued_fees() {
 
     router
         .execute_contract(
-            Addr::unchecked("anyone"),
+            Addr::unchecked("owner"),
             maker_instance.clone(),
             &ExecuteMsg::Collect {
                 assets: assets.clone(),
@@ -2943,7 +2956,7 @@ fn distribute_initially_accrued_fees() {
 
     router
         .execute_contract(
-            Addr::unchecked("anyone"),
+            Addr::unchecked("owner"),
             maker_instance.clone(),
             &ExecuteMsg::Collect {
                 assets: assets.clone(),
@@ -2974,7 +2987,7 @@ fn distribute_initially_accrued_fees() {
 
     let resp = router
         .execute_contract(
-            Addr::unchecked("anyone"),
+            Addr::unchecked("owner"),
             maker_instance.clone(),
             &ExecuteMsg::Collect { assets },
             &[],
@@ -3180,7 +3193,7 @@ fn collect_3pools() {
 
     router
         .execute_contract(
-            Addr::unchecked("anyone"),
+            Addr::unchecked("owner"),
             maker_instance.clone(),
             &ExecuteMsg::Collect {
                 assets: assets.clone(),
