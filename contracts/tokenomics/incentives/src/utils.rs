@@ -232,7 +232,6 @@ pub fn incentivize(
     let mut pool_info = PoolInfo::may_load(deps.storage, &lp_token_asset)?.unwrap_or_default();
     pool_info.update_rewards(deps.storage, env, &lp_token_asset)?;
 
-    let rewards_number_before = pool_info.rewards.len();
     pool_info.incentivize(
         deps.storage,
         &lp_token_asset,
@@ -240,37 +239,30 @@ pub fn incentivize(
         &config.oro_token,
     )?;
 
-    // Check whether this is a new external reward token.
-    // 3rd parties are encouraged to keep endless schedules without breaks even with the small rewards.
-    // Otherwise, reward token will be removed from the pool info and go to outstanding rewards.
-    // Next schedules with the same token will be considered as "new".
-    // ORO rewards don't require incentivize fee.
-    if rewards_number_before < pool_info.rewards.len() && schedule.reward_info != config.oro_token
-    {
-        // If fee set we expect to receive it
-        if let Some(incentivization_fee_info) = &config.incentivization_fee_info {
-            info.funds
-                .iter_mut()
-                .find(|coin| coin.denom == incentivization_fee_info.fee.denom)
-                .and_then(|found| {
-                    found.amount = found
-                        .amount
-                        .checked_sub(incentivization_fee_info.fee.amount)
-                        .ok()?;
-                    Some(())
-                })
-                .ok_or_else(|| ContractError::IncentivizationFeeExpected {
-                    fee: incentivization_fee_info.fee.to_string(),
-                    lp_token: lp_token.clone(),
-                    new_reward_token: schedule.reward_info.to_string(),
-                })?;
+    // Charge incentivization fee for EVERY schedule to prevent DoS attacks.
+    // This makes spam attacks economically unfeasible by requiring payment for each schedule.
+    if let Some(incentivization_fee_info) = &config.incentivization_fee_info {
+        info.funds
+            .iter_mut()
+            .find(|coin| coin.denom == incentivization_fee_info.fee.denom)
+            .and_then(|found| {
+                found.amount = found
+                    .amount
+                    .checked_sub(incentivization_fee_info.fee.amount)
+                    .ok()?;
+                Some(())
+            })
+            .ok_or_else(|| ContractError::IncentivizationFeeExpected {
+                fee: incentivization_fee_info.fee.to_string(),
+                lp_token: lp_token.clone(),
+                new_reward_token: schedule.reward_info.to_string(),
+            })?;
 
-            // Send fee to fee receiver
-            response = response.add_message(BankMsg::Send {
-                to_address: incentivization_fee_info.fee_receiver.to_string(),
-                amount: vec![incentivization_fee_info.fee.clone()],
-            });
-        }
+        // Send fee to fee receiver
+        response = response.add_message(BankMsg::Send {
+            to_address: incentivization_fee_info.fee_receiver.to_string(),
+            amount: vec![incentivization_fee_info.fee.clone()],
+        });
     }
 
     // Assert that we received reward tokens

@@ -45,7 +45,7 @@ pub enum ContractError {
     #[error("Too many reward tokens in pool {lp_token}. Maximum allowed is {MAX_REWARD_TOKENS}")]
     TooManyRewardTokens { lp_token: String },
 
-    #[error("Incentivization fee {fee} expected as you are trying to add new reward token {new_reward_token} for pool {lp_token}")]
+    #[error("Incentivization fee {fee} expected for creating schedule with reward token {new_reward_token} for pool {lp_token}")]
     IncentivizationFeeExpected {
         fee: String,
         lp_token: String,

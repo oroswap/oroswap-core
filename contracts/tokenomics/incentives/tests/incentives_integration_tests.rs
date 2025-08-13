@@ -627,22 +627,16 @@ fn test_multiple_schedules_same_reward() {
         .collect();
     for (ind, (schedule, _)) in schedules.iter().enumerate() {
         helper.mint_assets(&bank, &[reward.clone()]);
-        if ind == 0 {
-            // attach incentivization fee on the first schedule
-            helper.mint_coin(&bank, &incentivization_fee);
-            helper
-                .incentivize(
-                    &bank,
-                    &lp_token,
-                    schedule.clone(),
-                    &[incentivization_fee.clone()],
-                )
-                .unwrap();
-        } else {
-            helper
-                .incentivize(&bank, &lp_token, schedule.clone(), &[])
-                .unwrap();
-        }
+        // Every schedule now requires incentivization fee
+        helper.mint_coin(&bank, &incentivization_fee);
+        helper
+            .incentivize(
+                &bank,
+                &lp_token,
+                schedule.clone(),
+                &[incentivization_fee.clone()],
+            )
+            .unwrap();
     }
 
     let time_before_claims = helper.app.block_info().time.seconds();
@@ -729,8 +723,10 @@ fn test_oro_can_bypass_rewards_limit() {
     }
 
     // ORO can always be added no matter what MAX_REWARD_TOKENS limit is
+    // But now ORO also requires incentivization fee
     let oro_reward = oro.with_balance(1000_000000u128);
     helper.mint_assets(&bank, &[oro_reward.clone()]);
+    helper.mint_coin(&bank, &incentivization_fee);
     helper
         .incentivize(
             &bank,
@@ -739,7 +735,7 @@ fn test_oro_can_bypass_rewards_limit() {
                 reward: oro_reward.clone(),
                 duration_periods: 1,
             },
-            &[],
+            &[incentivization_fee.clone()],
         )
         .unwrap();
 }
@@ -1097,22 +1093,16 @@ fn test_claim_between_different_periods() {
         .collect();
     for (ind, (schedule, _)) in schedules.iter().enumerate() {
         helper.mint_assets(&bank, &[reward.clone()]);
-        if ind == 0 {
-            // attach incentivization fee on the first schedule
-            helper.mint_coin(&bank, &incentivization_fee);
-            helper
-                .incentivize(
-                    &bank,
-                    &lp_token,
-                    schedule.clone(),
-                    &[incentivization_fee.clone()],
-                )
-                .unwrap();
-        } else {
-            helper
-                .incentivize(&bank, &lp_token, schedule.clone(), &[])
-                .unwrap();
-        }
+        // Every schedule now requires incentivization fee
+        helper.mint_coin(&bank, &incentivization_fee);
+        helper
+            .incentivize(
+                &bank,
+                &lp_token,
+                schedule.clone(),
+                &[incentivization_fee.clone()],
+            )
+            .unwrap();
     }
 
     // Incentivize with ORO
@@ -1177,12 +1167,16 @@ fn test_oro_external_reward() {
     let reward = oro.with_balance(2u128 * 7 * 86400 * 25); // 25 uoro per second
     let (schedule, internal_sch) = helper.create_schedule(&reward, 1).unwrap();
     helper.mint_assets(&bank, &[reward.clone()]);
+    // ORO rewards now also require incentivization fee
+    let incentivization_fee = helper.incentivization_fee.clone();
+    helper.mint_coin(&bank, &incentivization_fee);
     helper
-        .incentivize(&bank, &lp_token, schedule.clone(), &[])
+        .incentivize(&bank, &lp_token, schedule.clone(), &[incentivization_fee.clone()])
         .unwrap();
     helper.mint_assets(&bank, &[reward.clone()]);
+    helper.mint_coin(&bank, &incentivization_fee);
     helper
-        .incentivize(&bank, &lp_token, schedule.clone(), &[])
+        .incentivize(&bank, &lp_token, schedule.clone(), &[incentivization_fee.clone()])
         .unwrap();
 
     // Prepare user's liquidity
@@ -1837,13 +1831,10 @@ fn test_long_unclaimed_rewards() {
     // Create multiple schedules with different rewards (starts on the next week)
     for (ind, (schedule, _)) in schedules.iter().enumerate() {
         helper.mint_assets(&bank, &[schedule.reward.clone()]);
-        let mut attach_funds = vec![];
-        if ind % 2 == 0 {
-            helper.mint_coin(&bank, &incentivization_fee);
-            attach_funds = vec![incentivization_fee.clone()]
-        }
+        // Every schedule now requires incentivization fee
+        helper.mint_coin(&bank, &incentivization_fee);
         helper
-            .incentivize(&bank, &lp_token, schedule.clone(), &attach_funds)
+            .incentivize(&bank, &lp_token, schedule.clone(), &[incentivization_fee.clone()])
             .unwrap();
     }
 
@@ -1985,22 +1976,16 @@ fn test_queries() {
         .collect();
     for (ind, (schedule, _)) in schedules.iter().enumerate() {
         helper.mint_assets(&bank, &[reward.clone()]);
-        if ind == 0 {
-            // attach incentivization fee on the first schedule
-            helper.mint_coin(&bank, &incentivization_fee);
-            helper
-                .incentivize(
-                    &bank,
-                    &lp_token,
-                    schedule.clone(),
-                    &[incentivization_fee.clone()],
-                )
-                .unwrap();
-        } else {
-            helper
-                .incentivize(&bank, &lp_token, schedule.clone(), &[])
-                .unwrap();
-        }
+        // Every schedule now requires incentivization fee
+        helper.mint_coin(&bank, &incentivization_fee);
+        helper
+            .incentivize(
+                &bank,
+                &lp_token,
+                schedule.clone(),
+                &[incentivization_fee.clone()],
+            )
+            .unwrap();
     }
 
     let res = helper
@@ -2676,5 +2661,72 @@ fn test_orphaned_rewards() {
     assert_eq!(
         err.downcast::<ContractError>().unwrap(),
         ContractError::NoOrphanedRewards {}
+    );
+}
+
+#[test]
+fn test_incentivization_fee_for_every_schedule() {
+    let oro = native_asset_info("ORO".to_string());
+    let mut helper = Helper::new("owner", &oro, false).unwrap();
+    let asset_infos = [AssetInfo::native("foo"), AssetInfo::native("bar")];
+    let pair_info = helper.create_pair(&asset_infos).unwrap();
+    let lp_token = pair_info.liquidity_token.to_string();
+    let bank = TestAddr::new("bank");
+
+    // Create first schedule for a new token
+    let reward = AssetInfo::native("reward1").with_balance(1000_000000u128);
+    let (schedule1, _) = helper.create_schedule(&reward, 1).unwrap();
+    helper.mint_assets(&bank, &[reward]);
+    let incentivization_fee = coin(10000000000u128, "ORO"); // Use ORO fee as configured
+    helper.mint_coin(&bank, &incentivization_fee);
+
+    // First incentivize should work and charge fee
+    helper
+        .incentivize(
+            &bank,
+            &lp_token,
+            schedule1.clone(),
+            &[incentivization_fee.clone()],
+        )
+        .unwrap();
+
+    // Create second schedule for the SAME token
+    let reward2 = AssetInfo::native("reward1").with_balance(1000_000000u128);
+    let (schedule2, _) = helper.create_schedule(&reward2, 1).unwrap();
+    helper.mint_assets(&bank, &[reward2]);
+    helper.mint_coin(&bank, &incentivization_fee);
+
+    // Second incentivize should also charge fee (this is the key change!)
+    helper
+        .incentivize(
+            &bank,
+            &lp_token,
+            schedule2.clone(),
+            &[incentivization_fee.clone()],
+        )
+        .unwrap();
+
+    // Try to create third schedule WITHOUT fee - should fail
+    let reward3 = AssetInfo::native("reward1").with_balance(1000_000000u128);
+    let (schedule3, _) = helper.create_schedule(&reward3, 1).unwrap();
+    helper.mint_assets(&bank, &[reward3]);
+    
+    let result = helper.incentivize(
+        &bank,
+        &lp_token,
+        schedule3,
+        &[], // No fee provided
+    );
+
+    // Should fail with fee expected error
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::IncentivizationFeeExpected {
+            fee: "10000000000ORO".to_string(),
+            lp_token: lp_token.clone(),
+            new_reward_token: "reward1".to_string(),
+        }
     );
 }
