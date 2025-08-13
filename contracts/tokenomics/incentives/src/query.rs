@@ -105,7 +105,7 @@ fn list_pools(
     start_after: Option<String>,
     limit: Option<u8>,
 ) -> StdResult<Vec<String>> {
-    let limit = limit.unwrap_or(MAX_PAGE_LIMIT) as usize;
+    let limit = limit.unwrap_or(MAX_PAGE_LIMIT).min(MAX_PAGE_LIMIT) as usize;
     POOLS
         .keys_raw(
             deps.storage,
@@ -127,7 +127,7 @@ fn query_blocked_tokens(
     start_after: Option<AssetInfo>,
     limit: Option<u8>,
 ) -> StdResult<Vec<AssetInfo>> {
-    let limit = limit.unwrap_or(MAX_PAGE_LIMIT) as usize;
+    let limit = limit.unwrap_or(MAX_PAGE_LIMIT).min(MAX_PAGE_LIMIT) as usize;
     if let Some(start_after) = start_after {
         let asset_key = asset_info_key(&start_after);
         BLOCKED_TOKENS.range(

@@ -495,7 +495,7 @@ pub fn list_pool_stakers(
     limit: Option<u8>,
 ) -> StdResult<Vec<(Addr, Uint128)>> {
     let start = start_after.as_ref().map(Bound::exclusive);
-    let limit = limit.unwrap_or(MAX_PAGE_LIMIT).max(MAX_PAGE_LIMIT);
+    let limit = limit.unwrap_or(MAX_PAGE_LIMIT).min(MAX_PAGE_LIMIT);
     USER_INFO
         .prefix(lp_token)
         .range(storage, start, None, Order::Ascending)
