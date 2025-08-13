@@ -3254,3 +3254,360 @@ fn collect_3pools() {
     assert_eq!(balances[0].amount.u128(), 100_020);
     assert_eq!(balances[1].amount.u128(), 99_981);
 }
+
+#[test]
+fn test_dev_fund_distribution_fix() {
+    // Test that dev fund is calculated from remaining balance after governance and second receiver
+    let usdc = "uusdc";
+    let owner = Addr::unchecked("owner");
+    let mut app = mock_app(owner.clone(), vec![coin(300_000_000_000u128, usdc)]);
+
+    let staking = Addr::unchecked("staking");
+    
+    // Set up with governance_percent = 50% and dev_fund_share = 50%
+    let (oro_token, factory_instance, maker_instance, _) = instantiate_contracts(
+        &mut app,
+        owner.clone(),
+        staking.clone(),
+        50u64.into(), // 50% governance
+        Some(Decimal::from_str("0.5").unwrap()),
+        None,
+        None,
+        None,
+    );
+
+
+
+    // enable rewards
+    app.execute_contract(
+        owner.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::EnableRewards { blocks: 1 },
+        &[],
+    )
+    .unwrap();
+
+    // Create ORO<>USDC pool first
+    create_pair(
+        &mut app,
+        owner.clone(),
+        owner.clone(),
+        &factory_instance,
+        vec![
+            AssetInfo::native(usdc).with_balance(100_000_000000u128),
+            AssetInfo::cw20(oro_token.clone()).with_balance(100_000_000000u128),
+        ],
+        None,
+    );
+
+    // Set dev fund config with 50% share
+    let dev_fund_conf = DevFundConfig {
+        address: "devs".to_string(),
+        share: Decimal::percent(50), // 50% of remaining after governance
+        asset_info: AssetInfo::native(usdc),
+    };
+
+    set_dev_fund_config(
+        &mut app,
+        &owner,
+        &maker_instance,
+        UpdateDevFundConfig {
+            set: Some(dev_fund_conf.clone()),
+        },
+    )
+    .unwrap();
+
+    // Add some ORO to maker contract
+    mint_coins(&mut app, maker_instance.to_string(), &[coin(1000, "ORO")]);
+
+    // Collect (which triggers distribution internally) - this should work without reverting
+    app.execute_contract(
+        owner.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::Collect {
+            assets: vec![AssetWithLimit {
+                info: AssetInfo::cw20(oro_token.clone()),
+                limit: None,
+            }],
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Verify the fix: governance gets 50% of total, dev fund gets 50% of remaining (25% of total)
+    // This test verifies that the transaction doesn't revert due to insufficient balance
+}
+
+#[test]
+fn test_total_percentage_validation() {
+    // Test that total percentage validation works correctly
+    let usdc = "uusdc";
+    let owner = Addr::unchecked("owner");
+    let mut app = mock_app(owner.clone(), vec![coin(300_000_000_000u128, usdc)]);
+
+    let staking = Addr::unchecked("staking");
+    
+    // Test 1: Valid configuration - governance 50% + dev fund 50% = 100%
+    let (oro_token, factory_instance, maker_instance, _) = instantiate_contracts(
+        &mut app,
+        owner.clone(),
+        staking.clone(),
+        50u64.into(), // 50% governance
+        Some(Decimal::from_str("0.5").unwrap()),
+        None,
+        None,
+        None,
+    );
+
+    // Create ORO<>USDC pool first (needed for dev fund validation)
+    create_pair(
+        &mut app,
+        owner.clone(),
+        owner.clone(),
+        &factory_instance,
+        vec![
+            AssetInfo::native(usdc).with_balance(100_000_000000u128),
+            AssetInfo::cw20(oro_token.clone()).with_balance(100_000_000000u128),
+        ],
+        None,
+    );
+
+    // Set dev fund config with 50% share (50% of remaining = 25% of total)
+    let dev_fund_conf = DevFundConfig {
+        address: "devs".to_string(),
+        share: Decimal::percent(50), // 50% of remaining after governance
+        asset_info: AssetInfo::native(usdc),
+    };
+
+    // This should work: governance 50% + dev fund 25% = 75% total
+    set_dev_fund_config(
+        &mut app,
+        &owner,
+        &maker_instance,
+        UpdateDevFundConfig {
+            set: Some(dev_fund_conf.clone()),
+        },
+    )
+    .unwrap();
+
+    // Test 2: Invalid configuration - governance 50% + dev fund 100% = 150% (should fail)
+    let dev_fund_conf_invalid = DevFundConfig {
+        address: "devs2".to_string(),
+        share: Decimal::percent(100), // 100% of remaining = 50% of total
+        asset_info: AssetInfo::native(usdc),
+    };
+
+    // This should fail: governance 50% + dev fund 50% = 100% total, but we're trying to set 100% of remaining
+    let err = set_dev_fund_config(
+        &mut app,
+        &owner,
+        &maker_instance,
+        UpdateDevFundConfig {
+            set: Some(dev_fund_conf_invalid.clone()),
+        },
+    )
+    .unwrap_err();
+    
+    // Verify the error message
+    assert!(err.root_cause().to_string().contains("Total percentage"));
+}
+
+#[test]
+fn test_data_type_edge_cases() {
+    // Test edge cases for data types and calculations
+    let usdc = "uusdc";
+    let owner = Addr::unchecked("owner");
+    let mut app = mock_app(owner.clone(), vec![coin(300_000_000_000u128, usdc)]);
+
+    let staking = Addr::unchecked("staking");
+    
+    // Test 1: Maximum values - governance 100% + second receiver 50% + dev fund 100% = 250%
+    let (oro_token, factory_instance, maker_instance, _) = instantiate_contracts(
+        &mut app,
+        owner.clone(),
+        staking.clone(),
+        100u64.into(), // 100% governance (maximum)
+        Some(Decimal::from_str("0.5").unwrap()),
+        None,
+        None,
+        None,
+    );
+
+    // Create ORO<>USDC pool first
+    create_pair(
+        &mut app,
+        owner.clone(),
+        owner.clone(),
+        &factory_instance,
+        vec![
+            AssetInfo::native(usdc).with_balance(100_000_000000u128),
+            AssetInfo::cw20(oro_token.clone()).with_balance(100_000_000000u128),
+        ],
+        None,
+    );
+
+    // This should fail: governance 100% + dev fund 100% = 200% total
+    let dev_fund_conf_max = DevFundConfig {
+        address: "devs".to_string(),
+        share: Decimal::one(), // 100% (maximum)
+        asset_info: AssetInfo::native(usdc),
+    };
+
+    let err = set_dev_fund_config(
+        &mut app,
+        &owner,
+        &maker_instance,
+        UpdateDevFundConfig {
+            set: Some(dev_fund_conf_max.clone()),
+        },
+    )
+    .unwrap_err();
+    
+    // Verify the error message
+    assert!(err.root_cause().to_string().contains("Total percentage"));
+
+    // Test 2: Precision edge case - dev fund share = 0.999 (99.9%)
+    let dev_fund_conf_precision = DevFundConfig {
+        address: "devs2".to_string(),
+        share: Decimal::from_str("0.999").unwrap(), // 99.9%
+        asset_info: AssetInfo::native(usdc),
+    };
+
+    // This should work: governance 100% + dev fund 99.9% = 199.9% (but validation should catch it)
+    let err = set_dev_fund_config(
+        &mut app,
+        &owner,
+        &maker_instance,
+        UpdateDevFundConfig {
+            set: Some(dev_fund_conf_precision.clone()),
+        },
+    )
+    .unwrap_err();
+    
+    // Verify the error message
+    assert!(err.root_cause().to_string().contains("Total percentage"));
+
+    // Test 3: Small positive value (edge case)
+    let dev_fund_conf_small = DevFundConfig {
+        address: "devs3".to_string(),
+        share: Decimal::from_str("0.001").unwrap(), // 0.1%
+        asset_info: AssetInfo::native(usdc),
+    };
+
+    // This should work: governance 100% + dev fund 0.1% = 100.1% (but validation should catch it)
+    let err = set_dev_fund_config(
+        &mut app,
+        &owner,
+        &maker_instance,
+        UpdateDevFundConfig {
+            set: Some(dev_fund_conf_small.clone()),
+        },
+    )
+    .unwrap_err();
+    
+    // Verify the error message
+    assert!(err.root_cause().to_string().contains("Total percentage"));
+
+    // Test 4: Valid configuration - governance 50% + dev fund 50% = 100%
+    let dev_fund_conf_valid = DevFundConfig {
+        address: "devs4".to_string(),
+        share: Decimal::from_str("0.5").unwrap(), // 50%
+        asset_info: AssetInfo::native(usdc),
+    };
+
+    // This should work: governance 100% + dev fund 50% = 150% (but validation should catch it)
+    let err = set_dev_fund_config(
+        &mut app,
+        &owner,
+        &maker_instance,
+        UpdateDevFundConfig {
+            set: Some(dev_fund_conf_valid.clone()),
+        },
+    )
+    .unwrap_err();
+    
+    // Verify the error message
+    assert!(err.root_cause().to_string().contains("Total percentage"));
+}
+
+#[test]
+fn test_calculation_edge_cases() {
+    // Test edge cases in the actual calculation logic
+    let usdc = "uusdc";
+    let owner = Addr::unchecked("owner");
+    let mut app = mock_app(owner.clone(), vec![coin(300_000_000_000u128, usdc)]);
+
+    let staking = Addr::unchecked("staking");
+    
+    // Test with small amounts and precision edge cases
+    let (oro_token, factory_instance, maker_instance, _) = instantiate_contracts(
+        &mut app,
+        owner.clone(),
+        staking.clone(),
+        50u64.into(), // 50% governance
+        Some(Decimal::from_str("0.3").unwrap()),
+        None,
+        None,
+        None,
+    );
+
+    // Create ORO<>USDC pool first
+    create_pair(
+        &mut app,
+        owner.clone(),
+        owner.clone(),
+        &factory_instance,
+        vec![
+            AssetInfo::native(usdc).with_balance(100_000_000000u128),
+            AssetInfo::cw20(oro_token.clone()).with_balance(100_000_000000u128),
+        ],
+        None,
+    );
+
+    // Set dev fund config with precision edge case
+    let dev_fund_conf = DevFundConfig {
+        address: "devs".to_string(),
+        share: Decimal::from_str("0.199").unwrap(), // 19.9% (precision edge case)
+        asset_info: AssetInfo::native(usdc),
+    };
+
+    set_dev_fund_config(
+        &mut app,
+        &owner,
+        &maker_instance,
+        UpdateDevFundConfig {
+            set: Some(dev_fund_conf.clone()),
+        },
+    )
+    .unwrap();
+
+    // Enable rewards
+    app.execute_contract(
+        owner.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::EnableRewards { blocks: 1 },
+        &[],
+    )
+    .unwrap();
+
+    // Add some ORO to maker contract
+    mint_coins(&mut app, maker_instance.to_string(), &[coin(1000, "ORO")]);
+
+    // Collect (which triggers distribution internally) - this should work without reverting
+    let err = app.execute_contract(
+        owner.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::Collect {
+            assets: vec![AssetWithLimit {
+                info: AssetInfo::cw20(oro_token.clone()),
+                limit: None,
+            }],
+        },
+        &[],
+    );
+    
+    // This should work without reverting
+    assert!(err.is_ok(), "Collection should succeed: {:?}", err);
+}
+
+

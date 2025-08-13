@@ -101,6 +101,15 @@ pub fn instantiate(
 
     update_second_receiver_cfg(deps.as_ref(), &mut cfg, &msg.second_receiver_params)?;
 
+    // Validate total percentages don't exceed 100% during instantiation
+    let total_percentage = Uint128::from(cfg.governance_percent)
+        + Uint128::from(cfg.second_receiver_cfg.as_ref().map(|cfg| cfg.second_receiver_cut).unwrap_or(Uint64::zero()));
+    
+    ensure!(
+        total_percentage <= Uint128::new(100),
+        StdError::generic_err("Total percentage (governance + second_receiver) cannot exceed 100% during instantiation")
+    );
+
     if cfg.staking_contract.is_none() && cfg.governance_contract.is_none() {
         return Err(
             StdError::generic_err("Either staking or governance contract must be set").into(),
@@ -655,7 +664,12 @@ fn distribute(
     };
 
     let dev_amount = if let Some(dev_fund_conf) = &cfg.dev_fund_conf {
-        let dev_share = amount * dev_fund_conf.share;
+        // Calculate dev fund from remaining balance after governance and second receiver
+        let remaining_after_governance = amount.checked_sub(governance_amount + second_receiver_amount)?;
+        let dev_share = remaining_after_governance.multiply_ratio(
+            (dev_fund_conf.share * Decimal::from_str("100")?).to_uint_ceil(),
+            Uint128::new(100),
+        );
 
         if !dev_share.is_zero() {
             // Swap ORO and process result in reply
@@ -837,6 +851,17 @@ fn update_config(
                 dev_fund_conf.share > Decimal::zero() && dev_fund_conf.share <= Decimal::one(),
                 StdError::generic_err("Dev fund share must be > 0 and <= 1")
             );
+            
+            // Validate total percentages don't exceed 100%
+            let total_percentage = Uint128::from(config.governance_percent)
+                + Uint128::from(config.second_receiver_cfg.as_ref().map(|cfg| cfg.second_receiver_cut).unwrap_or(Uint64::zero()))
+                + (dev_fund_conf.share * Decimal::from_str("100")?).to_uint_ceil();
+            
+            ensure!(
+                total_percentage <= Uint128::new(100),
+                StdError::generic_err("Total percentage (governance + second_receiver + dev_fund) cannot exceed 100%")
+            );
+            
             // Ensure we can swap ORO into dev fund asset
             get_pool(
                 &deps.querier,
