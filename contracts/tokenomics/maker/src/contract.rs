@@ -291,7 +291,7 @@ pub fn execute(
 
             Ok(Response::default().add_attribute("action", "enable_rewards"))
         }
-        ExecuteMsg::Seize { assets } => seize(deps, env, assets),
+        ExecuteMsg::Seize { assets } => seize(deps, env, info, assets),
         ExecuteMsg::UpdateSeizeConfig {
             receiver,
             seizable_assets,
@@ -934,7 +934,14 @@ fn update_bridges(
     Ok(Response::default().add_attribute("action", "update_bridges"))
 }
 
-fn seize(deps: DepsMut, env: Env, assets: Vec<AssetWithLimit>) -> Result<Response, ContractError> {
+fn seize(deps: DepsMut, env: Env, info: MessageInfo, assets: Vec<AssetWithLimit>) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    
+    // Allow owner and authorized keepers to seize
+    if info.sender != config.owner && !config.authorized_keepers.contains(&info.sender) {
+        return Err(ContractError::Unauthorized {});
+    }
+    
     ensure!(
         !assets.is_empty(),
         StdError::generic_err("assets vector is empty")

@@ -2552,6 +2552,140 @@ fn test_seize() {
     );
 }
 
+#[test]
+fn test_seize_authorization() {
+    let owner = Addr::unchecked("owner");
+    let mut app = mock_app(owner.clone(), vec![]);
+
+    let (_, _, maker_instance, _) = instantiate_contracts(
+        &mut app,
+        owner.clone(),
+        Addr::unchecked("staking"),
+        0u64.into(),
+        Some(Decimal::from_str("0.5").unwrap()),
+        None,
+        None,
+        None,
+    );
+
+    let receiver = Addr::unchecked("seize");
+    let usdc = "uusdc";
+
+    // Set valid seize config
+    app.execute_contract(
+        owner.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::UpdateSeizeConfig {
+            receiver: Some(receiver.to_string()),
+            seizable_assets: vec![AssetInfo::native(usdc)],
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Add some funds to maker contract
+    mint_coins(
+        &mut app,
+        &maker_instance,
+        &[coin(1000_000000u128, usdc)],
+    );
+
+    // Test 1: Owner should be able to seize (authorized)
+    app.execute_contract(
+        owner.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::Seize {
+            assets: vec![AssetWithLimit {
+                info: AssetInfo::native(usdc),
+                limit: Some(100_000000u128.into()),
+            }],
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Verify funds were seized
+    assert_eq!(
+        app.wrap()
+            .query_balance(&receiver, usdc)
+            .unwrap()
+            .amount
+            .u128(),
+        100_000000
+    );
+
+    // Add more funds for next test
+    mint_coins(
+        &mut app,
+        &maker_instance,
+        &[coin(1000_000000u128, usdc)],
+    );
+
+    // Test 2: Unauthorized user should NOT be able to seize
+    let err = app
+        .execute_contract(
+            Addr::unchecked("unauthorized_user"),
+            maker_instance.clone(),
+            &ExecuteMsg::Seize {
+                assets: vec![AssetWithLimit {
+                    info: AssetInfo::native(usdc),
+                    limit: Some(100_000000u128.into()),
+                }],
+            },
+            &[],
+        )
+        .unwrap_err();
+    assert_eq!(ContractError::Unauthorized {}, err.downcast().unwrap());
+
+    // Verify funds were NOT seized (balance should remain unchanged)
+    assert_eq!(
+        app.wrap()
+            .query_balance(&receiver, usdc)
+            .unwrap()
+            .amount
+            .u128(),
+        100_000000 // Should still be the same as before
+    );
+
+    // Test 3: Authorized keeper should be able to seize
+    let keeper = Addr::unchecked("keeper");
+    
+    // Add keeper
+    app.execute_contract(
+        owner.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::AddKeeper {
+            keeper: keeper.to_string(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Keeper should be able to seize
+    app.execute_contract(
+        keeper.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::Seize {
+            assets: vec![AssetWithLimit {
+                info: AssetInfo::native(usdc),
+                limit: Some(200_000000u128.into()),
+            }],
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Verify funds were seized by keeper
+    assert_eq!(
+        app.wrap()
+            .query_balance(&receiver, usdc)
+            .unwrap()
+            .amount
+            .u128(),
+        300_000000 // 100 + 200
+    );
+}
+
 struct CheckDistributedOro {
     maker_amount: Uint128,
     governance_amount: Uint128,
