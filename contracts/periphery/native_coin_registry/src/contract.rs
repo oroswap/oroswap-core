@@ -46,7 +46,11 @@ pub fn instantiate(
         },
     )?;
 
-    Ok(Response::default())
+    Ok(Response::new()
+        .add_attributes(vec![
+            attr("action", "instantiate"),
+            attr("contract", CONTRACT_NAME),
+        ]))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]

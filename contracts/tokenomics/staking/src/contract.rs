@@ -72,6 +72,8 @@ pub fn instantiate(
     deps.api.addr_validate(&msg.token_factory_addr)?;
     deps.api.addr_validate(&msg.tracking_admin)?;
 
+    let deposit_token_denom = msg.deposit_token_denom.clone();
+
     CONFIG.save(
         deps.storage,
         &Config {
@@ -99,7 +101,13 @@ pub fn instantiate(
         ReplyIds::InstantiateDenom as u64,
     );
 
-    Ok(Response::new().add_submessage(create_denom_msg))
+    Ok(Response::new()
+        .add_submessage(create_denom_msg)
+        .add_attributes(vec![
+            attr("action", "instantiate"),
+            attr("contract", CONTRACT_NAME),
+            attr("deposit_token_denom", deposit_token_denom),
+        ]))
 }
 
 /// Exposes execute functions available in the contract.
@@ -153,7 +161,10 @@ pub fn execute(
 pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractError> {
     match ReplyIds::try_from(msg.id)? {
         ReplyIds::InstantiateDenom => {
+            #[cfg(not(any(feature = "zigchain")))]
             let MsgCreateDenomResponse { new_token_denom } = msg.result.try_into()?;
+            #[cfg(feature = "zigchain")]
+            let MsgCreateDenomResponse { denom: new_token_denom, .. } = msg.result.try_into()?;
 
             let denom_metadata_msg = MsgSetDenomMetadata {
                 sender: env.contract.address.to_string(),

@@ -90,7 +90,11 @@ pub fn instantiate(
         )?;
     }
 
-    Ok(Response::new())
+    Ok(Response::new()
+        .add_attributes(vec![
+            attr("action", "instantiate"),
+            attr("contract", CONTRACT_NAME),
+        ]))
 }
 
 /// Data structure used to update general contract parameters.

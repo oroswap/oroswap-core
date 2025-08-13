@@ -36,6 +36,8 @@ pub fn instantiate(
 
     msg.vesting_token.check(deps.api)?;
 
+    let vesting_token_string = msg.vesting_token.to_string();
+    
     CONFIG.save(
         deps.storage,
         &Config {
@@ -44,7 +46,12 @@ pub fn instantiate(
         },
     )?;
 
-    Ok(Response::new())
+    Ok(Response::new()
+        .add_attributes(vec![
+            attr("action", "instantiate"),
+            attr("contract", CONTRACT_NAME),
+            attr("vesting_token", vesting_token_string),
+        ]))
 }
 
 /// Exposes execute functions available in the contract.
