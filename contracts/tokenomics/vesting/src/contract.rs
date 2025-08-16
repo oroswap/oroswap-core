@@ -187,13 +187,21 @@ pub fn register_vesting_accounts(
         }
 
         if let Some(mut old_info) = VESTING_INFO.may_load(deps.storage, &account_address)? {
-            if old_info.schedules.len() + 1 > SCHEDULES_LIMIT {
+            // Check if adding new schedules would exceed the limit
+            if old_info.schedules.len() + vesting_account.schedules.len() > SCHEDULES_LIMIT {
                 return Err(ContractError::ExceedSchedulesMaximumLimit(
                     vesting_account.address,
                 ));
             };
             released_amount = old_info.released_amount;
             vesting_account.schedules.append(&mut old_info.schedules);
+        } else {
+            // For new accounts, check if the number of schedules exceeds the limit
+            if vesting_account.schedules.len() > SCHEDULES_LIMIT {
+                return Err(ContractError::ExceedSchedulesMaximumLimit(
+                    vesting_account.address,
+                ));
+            };
         }
 
         VESTING_INFO.save(
