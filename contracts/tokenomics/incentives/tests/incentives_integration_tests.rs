@@ -2730,3 +2730,220 @@ fn test_incentivization_fee_for_every_schedule() {
         }
     );
 }
+
+#[test]
+fn test_bypass_upcoming_schedules_vulnerability_fix() {
+    let oro = native_asset_info("ORO".to_string());
+    let mut helper = Helper::new("owner", &oro, false).unwrap();
+    let asset_infos = [AssetInfo::native("foo"), AssetInfo::native("bar")];
+    let pair_info = helper.create_pair(&asset_infos).unwrap();
+    let lp_token = pair_info.liquidity_token.to_string();
+
+    let owner = helper.owner.clone();
+    let incentivization_fee = helper.incentivization_fee.clone();
+
+    let user = TestAddr::new("user");
+    let bank = TestAddr::new("bank");
+    let receiver = TestAddr::new("receiver");
+
+    // Provide liquidity
+    let provide_assets = [
+        asset_infos[0].with_balance(100000u64),
+        asset_infos[1].with_balance(100000u64),
+    ];
+    helper
+        .provide_liquidity(&user, &provide_assets, &pair_info.contract_addr, true)
+        .unwrap();
+
+    // Create multiple schedules for the same reward token
+    let reward_asset_info = AssetInfo::native("reward");
+    
+    // Schedule 1: 1000 tokens for 1 day
+    let reward1 = reward_asset_info.with_balance(1000_000000u128);
+    let (schedule1, _) = helper.create_schedule(&reward1, 1).unwrap();
+    helper.mint_assets(&bank, &[reward1]);
+    helper.mint_coin(&bank, &incentivization_fee);
+    helper
+        .incentivize(
+            &bank,
+            &lp_token,
+            schedule1.clone(),
+            &[incentivization_fee.clone()],
+        )
+        .unwrap();
+
+    // Schedule 2: 2000 tokens for 2 days (starts after schedule 1)
+    let reward2 = reward_asset_info.with_balance(2000_000000u128);
+    let (schedule2, _) = helper.create_schedule(&reward2, 2).unwrap();
+    helper.mint_assets(&bank, &[reward2]);
+    helper.mint_coin(&bank, &incentivization_fee);
+    helper
+        .incentivize(
+            &bank,
+            &lp_token,
+            schedule2.clone(),
+            &[incentivization_fee.clone()],
+        )
+        .unwrap();
+
+    // Schedule 3: 3000 tokens for 3 days (starts after schedule 2)
+    let reward3 = reward_asset_info.with_balance(3000_000000u128);
+    let (schedule3, _) = helper.create_schedule(&reward3, 3).unwrap();
+    helper.mint_assets(&bank, &[reward3]);
+    helper.mint_coin(&bank, &incentivization_fee);
+    helper
+        .incentivize(
+            &bank,
+            &lp_token,
+            schedule3.clone(),
+            &[incentivization_fee.clone()],
+        )
+        .unwrap();
+
+    // Let some time pass (1 day)
+    helper.next_block(86400);
+
+    // Check initial balances
+    let initial_receiver_balance = reward_asset_info
+        .query_pool(&helper.app.wrap(), &receiver)
+        .unwrap()
+        .u128();
+
+    // Test 1: Remove reward with bypass_upcoming_schedules = false (normal case)
+    // This should transfer ALL upcoming schedule rewards to receiver
+    helper
+        .remove_reward(
+            &owner,
+            &lp_token,
+            &reward_asset_info.to_string(),
+            false, // Don't bypass upcoming schedules
+            &receiver,
+        )
+        .unwrap();
+
+    let balance_after_normal = reward_asset_info
+        .query_pool(&helper.app.wrap(), &receiver)
+        .unwrap()
+        .u128();
+
+    // The receiver should have received rewards from all schedules
+    // (current period + upcoming schedules 2 and 3)
+    assert!(balance_after_normal > initial_receiver_balance, 
+        "Receiver should have received rewards from all schedules");
+
+    // Reset the test environment for the bypass test
+    let mut helper = Helper::new("owner", &oro, false).unwrap();
+    let asset_infos = [AssetInfo::native("foo"), AssetInfo::native("bar")];
+    let pair_info = helper.create_pair(&asset_infos).unwrap();
+    let lp_token = pair_info.liquidity_token.to_string();
+
+    let owner = helper.owner.clone();
+    let incentivization_fee = helper.incentivization_fee.clone();
+
+    let user = TestAddr::new("user");
+    let bank = TestAddr::new("bank");
+    let receiver = TestAddr::new("receiver");
+
+    // Provide liquidity
+    let provide_assets = [
+        asset_infos[0].with_balance(100000u64),
+        asset_infos[1].with_balance(100000u64),
+    ];
+    helper
+        .provide_liquidity(&user, &provide_assets, &pair_info.contract_addr, true)
+        .unwrap();
+
+    // Create the same multiple schedules
+    let reward_asset_info = AssetInfo::native("reward");
+    
+    // Schedule 1: 1000 tokens for 1 day
+    let reward1 = reward_asset_info.with_balance(1000_000000u128);
+    let (schedule1, _) = helper.create_schedule(&reward1, 1).unwrap();
+    helper.mint_assets(&bank, &[reward1]);
+    helper.mint_coin(&bank, &incentivization_fee);
+    helper
+        .incentivize(
+            &bank,
+            &lp_token,
+            schedule1.clone(),
+            &[incentivization_fee.clone()],
+        )
+        .unwrap();
+
+    // Schedule 2: 2000 tokens for 2 days
+    let reward2 = reward_asset_info.with_balance(2000_000000u128);
+    let (schedule2, _) = helper.create_schedule(&reward2, 2).unwrap();
+    helper.mint_assets(&bank, &[reward2]);
+    helper.mint_coin(&bank, &incentivization_fee);
+    helper
+        .incentivize(
+            &bank,
+            &lp_token,
+            schedule2.clone(),
+            &[incentivization_fee.clone()],
+        )
+        .unwrap();
+
+    // Schedule 3: 3000 tokens for 3 days
+    let reward3 = reward_asset_info.with_balance(3000_000000u128);
+    let (schedule3, _) = helper.create_schedule(&reward3, 3).unwrap();
+    helper.mint_assets(&bank, &[reward3]);
+    helper.mint_coin(&bank, &incentivization_fee);
+    helper
+        .incentivize(
+            &bank,
+            &lp_token,
+            schedule3.clone(),
+            &[incentivization_fee.clone()],
+        )
+        .unwrap();
+
+    // Let some time pass (1 day)
+    helper.next_block(86400);
+
+    // Check initial balances
+    let initial_receiver_balance = reward_asset_info
+        .query_pool(&helper.app.wrap(), &receiver)
+        .unwrap()
+        .u128();
+
+    // Test 2: Remove reward with bypass_upcoming_schedules = true (vulnerability fix)
+    // This should STILL transfer ALL upcoming schedule rewards to receiver
+    // The bypass flag should only affect state cleanup, not fund transfer
+    helper
+        .remove_reward(
+            &owner,
+            &lp_token,
+            &reward_asset_info.to_string(),
+            true, // Bypass upcoming schedules (but still transfer funds)
+            &receiver,
+        )
+        .unwrap();
+
+    let balance_after_bypass = reward_asset_info
+        .query_pool(&helper.app.wrap(), &receiver)
+        .unwrap()
+        .u128();
+
+    // The receiver should have received the same amount as in the normal case
+    // This verifies that the bypass flag doesn't cause fund seizure
+    assert!(balance_after_bypass > initial_receiver_balance, 
+        "Receiver should have received rewards even with bypass_upcoming_schedules = true");
+    
+    // The amounts should be similar (allowing for small differences due to timing)
+    let difference = if balance_after_bypass > balance_after_normal {
+        balance_after_bypass - balance_after_normal
+    } else {
+        balance_after_normal - balance_after_bypass
+    };
+    
+    // Allow for small differences due to timing and rounding
+    assert!(difference < 1000000, // Allow 1 token difference
+        "Bypass and normal removal should transfer similar amounts. Normal: {}, Bypass: {}", 
+        balance_after_normal, balance_after_bypass);
+
+    println!("✅ Bypass upcoming schedules vulnerability fix verified!");
+    println!("✅ Normal removal transferred: {} tokens", balance_after_normal - initial_receiver_balance);
+    println!("✅ Bypass removal transferred: {} tokens", balance_after_bypass - initial_receiver_balance);
+    println!("✅ No fund seizure occurs when bypass_upcoming_schedules = true");
+}
