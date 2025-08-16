@@ -349,6 +349,12 @@ fn execute_leave(
     // deposit and shares
     let return_amount = amount.multiply_ratio(total_deposit, total_shares);
 
+    // Prevent users from losing xORO tokens without receiving any ORO
+    // This can happen when burning very small amounts that round down to zero
+    if return_amount.is_zero() {
+        return Err(ContractError::StakeAmountTooSmall {});
+    }
+
     let messages: Vec<CosmosMsg> = vec![
         // Burn the received xORO tokens
         MsgBurn {
