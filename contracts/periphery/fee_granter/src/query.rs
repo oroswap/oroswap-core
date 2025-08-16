@@ -74,6 +74,9 @@ mod unit_tests {
         let env = mock_env();
         let info = mock_info("owner", &[]);
 
+        // Set up contract balance in mock environment
+        deps.querier.update_balance(&env.contract.address, coins(1000, GAS_DENOM));
+
         let msg = InstantiateMsg {
             owner: "owner".to_string(),
             admins: vec!["admin".to_string()],

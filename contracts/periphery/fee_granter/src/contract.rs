@@ -140,6 +140,20 @@ fn grant(
         }
     }
 
+    // Always verify that the contract has sufficient balance to grant the requested amount
+    // This prevents creating grants that cannot be realistically spent
+    let contract_balance = deps
+        .querier
+        .query_balance(&env.contract.address, &config.gas_denom)?
+        .amount;
+    
+    if contract_balance < amount {
+        return Err(ContractError::InsufficientBalance {
+            requested: amount,
+            available: contract_balance,
+        });
+    }
+
     GRANTS.update(
         deps.storage,
         &grantee_contract,

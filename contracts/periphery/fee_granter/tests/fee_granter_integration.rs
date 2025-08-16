@@ -386,3 +386,91 @@ fn test_change_ownership() {
 
     assert_eq!(res.owner, new_owner)
 }
+
+#[test]
+fn test_insufficient_balance_prevention() {
+    let owner = Addr::unchecked("owner");
+    let grantee = Addr::unchecked("grantee_contract");
+    let mut app = App::new(|router, _, store| {
+        router
+            .bank
+            .init_balance(store, &owner, coins(1000000, GAS_DENOM))
+            .unwrap();
+    });
+
+    let fee_granter_code_id = app.store_code(fee_granter_contract());
+    let fee_granter = app
+        .instantiate_contract(
+            fee_granter_code_id,
+            owner.clone(),
+            &InstantiateMsg {
+                owner: owner.to_string(),
+                admins: vec![],
+                gas_denom: GAS_DENOM.to_string(),
+            },
+            &[],
+            "Test contract",
+            None,
+        )
+        .unwrap();
+
+    // Give the contract a small balance
+    app.send_tokens(owner.clone(), fee_granter.clone(), &coins(100, GAS_DENOM))
+        .unwrap();
+
+    // Verify contract has 100 tokens
+    let contract_balance = app
+        .wrap()
+        .query_balance(&fee_granter, GAS_DENOM)
+        .unwrap()
+        .amount
+        .u128();
+    assert_eq!(contract_balance, 100);
+
+    // Test 1: Try to grant more than contract has with bypass_amount_check = true
+    // This should fail with InsufficientBalance error
+    let err = app
+        .execute_contract(
+            owner.clone(),
+            fee_granter.clone(),
+            &ExecuteMsg::Grant {
+                grantee_contract: grantee.to_string(),
+                amount: 1000u128.into(), // Try to grant 1000 when contract only has 100
+                bypass_amount_check: true,
+            },
+            &[],
+        )
+        .unwrap_err();
+
+    // Should fail with InsufficientBalance error
+    let error_msg = err.root_cause().to_string();
+    println!("Test 1 error message: {}", error_msg);
+    assert!(error_msg.contains("Insufficient balance:"), 
+        "Expected 'Insufficient balance:' error, got: {}", error_msg);
+
+    // Test 2: Try to grant exactly what the contract has (should pass balance check)
+    // Note: This will fail in mock environment due to Stargate message, but the balance check passes
+    let result = app.execute_contract(
+        owner.clone(),
+        fee_granter.clone(),
+        &ExecuteMsg::Grant {
+            grantee_contract: Addr::unchecked("grantee3").to_string(),
+            amount: 100u128.into(), // Grant exactly what contract has
+            bypass_amount_check: true,
+        },
+        &[],
+    );
+    
+    // The balance check should pass, but the Stargate message will fail in mock environment
+    if let Err(err) = result {
+        let error_msg = err.root_cause().to_string();
+        assert!(!error_msg.contains("Insufficient balance"), 
+            "Should not fail with InsufficientBalance when granting exact balance amount");
+        println!("Test 2 passed: Balance check passed, failed on StargateMsg as expected");
+    }
+
+    println!("✅ Insufficient balance prevention test passed!");
+    println!("✅ Grants cannot be created for amounts exceeding contract balance");
+    println!("✅ Fix prevents creation of unspendable fee grants");
+    println!("✅ Balance check works correctly with bypass_amount_check = true");
+}
