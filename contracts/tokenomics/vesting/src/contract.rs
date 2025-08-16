@@ -406,7 +406,7 @@ fn withdraw_from_active_schedule(
         let sch_unlocked_amount = calc_schedule_unlocked_amount(schedule, block_time)?;
 
         let amount_left = end_point.amount.checked_sub(sch_unlocked_amount)?;
-        if amount >= amount_left {
+        if amount > amount_left {
             return Err(ContractError::NotEnoughTokens(amount_left));
         }
 

@@ -1725,3 +1725,85 @@ fn test_immediate_unlock_vulnerability_fix() {
     println!("✅ Future start times without end_point are still valid");
     println!("✅ Existing validation for schedules with end_point is preserved");
 }
+
+#[test]
+fn test_withdrawal_exact_amount_fix() {
+    let user1 = Addr::unchecked(USER1);
+    let owner = Addr::unchecked(OWNER1);
+
+    let mut app = mock_app(&owner);
+    let token_code_id = store_token_code(&mut app);
+    let oro_token_instance = instantiate_token(&mut app, token_code_id, "ORO", Some(1_000_000_000_000000));
+    let vesting_instance = instantiate_vesting(&mut app, &oro_token_instance);
+    let current_time = app.block_info().time.seconds();
+
+    // Create a vesting schedule with 100 tokens
+    let schedule = VestingSchedule {
+        start_point: VestingSchedulePoint {
+            time: current_time + 50,
+            amount: Uint128::zero(),
+        },
+        end_point: Some(VestingSchedulePoint {
+            time: current_time + 150,
+            amount: Uint128::new(100),
+        }),
+    };
+
+    // Register the vesting account
+    let msg = Cw20ExecuteMsg::Send {
+        contract: vesting_instance.to_string(),
+        msg: to_json_binary(&Cw20HookMsg::RegisterVestingAccounts {
+            vesting_accounts: vec![VestingAccount {
+                address: user1.to_string(),
+                schedules: vec![schedule],
+            }],
+        })
+        .unwrap(),
+        amount: Uint128::from(100u128),
+    };
+
+    app.execute_contract(owner.clone(), oro_token_instance.clone(), &msg, &[])
+        .unwrap();
+
+    // Move time forward to make the schedule active
+    app.update_block(|b| {
+        b.time = b.time.plus_seconds(100);
+        b.height += 100 / 5
+    });
+
+    // Test 1: Try to withdraw the exact remaining amount (should succeed with fix)
+    // This would fail with the old >= condition, leaving 1 token stuck
+    let withdraw_msg = ExecuteMsg::WithdrawFromActiveSchedule {
+        account: user1.to_string(),
+        recipient: None,
+        withdraw_amount: Uint128::new(50), // Withdraw exactly half
+    };
+
+    app.execute_contract(owner.clone(), vesting_instance.clone(), &withdraw_msg, &[])
+        .unwrap();
+
+    println!("✅ Test 1 passed: Withdrew exact amount successfully");
+
+    // Test 2: Try to withdraw more than available (should fail)
+    let withdraw_msg = ExecuteMsg::WithdrawFromActiveSchedule {
+        account: user1.to_string(),
+        recipient: None,
+        withdraw_amount: Uint128::new(51), // Try to withdraw more than available
+    };
+
+    let err = app
+        .execute_contract(owner.clone(), vesting_instance.clone(), &withdraw_msg, &[])
+        .unwrap_err();
+    
+    let error_msg = err.root_cause().to_string();
+    println!("Test 2 error message: {}", error_msg);
+    assert!(error_msg.contains("amount left 0"), 
+        "Expected amount left error for excessive withdrawal, got: {}", error_msg);
+
+    println!("✅ Test 2 passed: Excessive withdrawal correctly rejected");
+
+    println!("✅ Withdrawal exact amount fix test passed!");
+    println!("✅ Owner can now withdraw exact remaining balances");
+    println!("✅ No more single token units left stuck in schedules");
+    println!("✅ Excessive withdrawals are still properly rejected");
+}
