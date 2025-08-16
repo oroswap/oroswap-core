@@ -1622,3 +1622,106 @@ fn test_schedule_limit_vulnerability_fix() {
     println!("✅ Existing accounts cannot exceed 8 schedules total");
     println!("✅ Multiple schedule registration is properly limited");
 }
+
+#[test]
+fn test_immediate_unlock_vulnerability_fix() {
+    let user1 = Addr::unchecked(USER1);
+    let owner = Addr::unchecked(OWNER1);
+
+    let mut app = mock_app(&owner);
+    let token_code_id = store_token_code(&mut app);
+    let oro_token_instance = instantiate_token(&mut app, token_code_id, "ORO", Some(1_000_000_000_000000));
+    let vesting_instance = instantiate_vesting(&mut app, &oro_token_instance);
+    let current_time = app.block_info().time.seconds();
+
+    // Test 1: Schedule without end_point with past start time should FAIL
+    // This was the vulnerability - immediate unlock bypass
+    let past_time_schedule = VestingSchedule {
+        start_point: VestingSchedulePoint {
+            time: current_time - 1000, // Past time (1000 seconds ago)
+            amount: Uint128::new(100), // Set amount to match the sent tokens
+        },
+        end_point: None, // No end_point = immediate unlock vulnerability
+    };
+
+    let msg = Cw20ExecuteMsg::Send {
+        contract: vesting_instance.to_string(),
+        msg: to_json_binary(&Cw20HookMsg::RegisterVestingAccounts {
+            vesting_accounts: vec![VestingAccount {
+                address: user1.to_string(),
+                schedules: vec![past_time_schedule],
+            }],
+        })
+        .unwrap(),
+        amount: Uint128::from(100u128),
+    };
+
+    let err = app
+        .execute_contract(owner.clone(), oro_token_instance.clone(), &msg, &[])
+        .unwrap_err();
+    
+    let error_msg = err.root_cause().to_string();
+    println!("Test 1 error message: {}", error_msg);
+    assert!(error_msg.contains("Vesting schedule error"), 
+        "Expected vesting schedule error for past start time without end_point, got: {}", error_msg);
+
+    // Test 2: Schedule without end_point with future start time should SUCCEED
+    let future_time_schedule = VestingSchedule {
+        start_point: VestingSchedulePoint {
+            time: current_time + 100, // Future time (100 seconds from now)
+            amount: Uint128::new(100), // Set amount to match the sent tokens
+        },
+        end_point: None, // No end_point but future start time is valid
+    };
+
+    let msg = Cw20ExecuteMsg::Send {
+        contract: vesting_instance.to_string(),
+        msg: to_json_binary(&Cw20HookMsg::RegisterVestingAccounts {
+            vesting_accounts: vec![VestingAccount {
+                address: user1.to_string(),
+                schedules: vec![future_time_schedule],
+            }],
+        })
+        .unwrap(),
+        amount: Uint128::from(100u128),
+    };
+
+    app.execute_contract(owner.clone(), oro_token_instance.clone(), &msg, &[])
+        .unwrap();
+
+    println!("✅ Test 2 passed: Future start time without end_point is valid");
+
+    // Test 3: Schedule with end_point (existing validation) should still work
+    let valid_schedule_with_end = VestingSchedule {
+        start_point: VestingSchedulePoint {
+            time: current_time + 50,
+            amount: Uint128::zero(),
+        },
+        end_point: Some(VestingSchedulePoint {
+            time: current_time + 150,
+            amount: Uint128::new(200),
+        }),
+    };
+
+    let msg = Cw20ExecuteMsg::Send {
+        contract: vesting_instance.to_string(),
+        msg: to_json_binary(&Cw20HookMsg::RegisterVestingAccounts {
+            vesting_accounts: vec![VestingAccount {
+                address: Addr::unchecked("user2").to_string(),
+                schedules: vec![valid_schedule_with_end],
+            }],
+        })
+        .unwrap(),
+        amount: Uint128::from(200u128),
+    };
+
+    app.execute_contract(owner.clone(), oro_token_instance.clone(), &msg, &[])
+        .unwrap();
+
+    println!("✅ Test 3 passed: Valid schedule with end_point still works");
+
+    println!("✅ Immediate unlock vulnerability fix test passed!");
+    println!("✅ Schedules without end_point cannot have past start times");
+    println!("✅ Future start times without end_point are still valid");
+    println!("✅ Existing validation for schedules with end_point is preserved");
+}

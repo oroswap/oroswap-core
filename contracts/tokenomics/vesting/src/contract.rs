@@ -244,6 +244,12 @@ fn assert_vesting_schedules(
             {
                 return Err(ContractError::VestingScheduleError(addr.to_string()));
             }
+        } else {
+            // For schedules without end_point, enforce start_time >= block_time
+            // This prevents immediate unlocking of tokens with past start times
+            if sch.start_point.time < env.block.time.seconds() {
+                return Err(ContractError::VestingScheduleError(addr.to_string()));
+            }
         }
     }
 
