@@ -12,6 +12,8 @@ pub struct InstantiateMsg {
     pub tracking_code_id: u64,
     /// Token factory module address. Contract creator must ensure that the address is exact token factory module address.
     pub token_factory_addr: String,
+    /// Bootstrap amount to initialize the pool (optional, defaults to MINIMUM_STAKE_AMOUNT)
+    pub bootstrap_amount: Option<Uint128>,
 }
 
 /// This structure describes the execute messages available in the contract.
@@ -66,6 +68,8 @@ pub struct Config {
     pub oro_denom: String,
     /// The xORO token denom
     pub xoro_denom: String,
+    /// The bootstrap amount for pool initialization
+    pub bootstrap_amount: Uint128,
 }
 
 /// This structure stores the tracking contract data.

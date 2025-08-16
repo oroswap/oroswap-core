@@ -54,7 +54,7 @@ pub(crate) const MINIMUM_STAKE_AMOUNT: Uint128 = Uint128::new(1_000);
 pub fn instantiate(
     deps: DepsMut,
     env: Env,
-    _info: MessageInfo,
+    info: MessageInfo,
     msg: InstantiateMsg,
 ) -> StdResult<Response> {
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
@@ -72,6 +72,28 @@ pub fn instantiate(
     deps.api.addr_validate(&msg.token_factory_addr)?;
     deps.api.addr_validate(&msg.tracking_admin)?;
 
+    // Set bootstrap amount (default to MINIMUM_STAKE_AMOUNT if not provided)
+    let bootstrap_amount = msg.bootstrap_amount.unwrap_or(MINIMUM_STAKE_AMOUNT);
+    
+    // Validate bootstrap amount if provided
+    if let Some(provided_amount) = msg.bootstrap_amount {
+        if provided_amount < MINIMUM_STAKE_AMOUNT {
+            return Err(StdError::generic_err(format!(
+                "Bootstrap amount must be at least {}",
+                MINIMUM_STAKE_AMOUNT
+            )));
+        }
+    }
+    
+    // Check if bootstrap funds are provided
+    let provided_funds = must_pay(&info, &msg.deposit_token_denom).map_err(|e| StdError::generic_err(e.to_string()))?;
+    if provided_funds != bootstrap_amount {
+        return Err(StdError::generic_err(format!(
+            "Expected bootstrap amount: {}, provided: {}",
+            bootstrap_amount, provided_funds
+        )));
+    }
+
     let deposit_token_denom = msg.deposit_token_denom.clone();
 
     CONFIG.save(
@@ -79,6 +101,7 @@ pub fn instantiate(
         &Config {
             oro_denom: msg.deposit_token_denom,
             xoro_denom: "".to_string(),
+            bootstrap_amount,
         },
     )?;
 
@@ -92,6 +115,8 @@ pub fn instantiate(
             tracker_addr: "".to_string(),
         },
     )?;
+
+
 
     let create_denom_msg = SubMsg::reply_on_success(
         MsgCreateDenom {
@@ -232,13 +257,27 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractEr
             // Enable balance tracking for xORO
             let set_hook_msg = MsgSetBeforeSendHook {
                 sender: env.contract.address.to_string(),
-                denom: config.xoro_denom,
+                denom: config.xoro_denom.clone(),
                 cosmwasm_address: contract_address.clone(),
             };
 
+            // Bootstrap the pool by minting xORO tokens equal to bootstrap amount
+            let bootstrap_mint_msg = MsgMint {
+                sender: env.contract.address.to_string(),
+                amount: Some(coin(config.bootstrap_amount.u128(), &config.xoro_denom).into()),
+                mint_to_address: env.contract.address.to_string(),
+            };
+
+
+
             Ok(Response::new()
                 .add_message(set_hook_msg)
-                .add_attribute("tracker_contract", contract_address))
+                .add_message(bootstrap_mint_msg)
+                .add_attributes([
+                    ("tracker_contract", contract_address),
+                    ("bootstrap_amount", config.bootstrap_amount.to_string()),
+                    ("pool_bootstrapped", "true".to_string()),
+                ]))
         }
     }
 }
@@ -269,23 +308,8 @@ fn execute_enter(
     let mut messages: Vec<CosmosMsg> = vec![];
 
     let mint_amount = if total_shares.is_zero() || total_deposit.is_zero() {
-        // There needs to be a minimum amount initially staked, thus the result
-        // cannot be zero if the amount is not enough
-        if amount.saturating_sub(MINIMUM_STAKE_AMOUNT).is_zero() {
-            return Err(ContractError::MinimumStakeAmountError {});
-        }
-
-        // Mint the xORO tokens to ourselves if this is the first stake
-        messages.push(
-            MsgMint {
-                sender: env.contract.address.to_string(),
-                amount: Some(coin(MINIMUM_STAKE_AMOUNT.u128(), &config.xoro_denom).into()),
-                mint_to_address: env.contract.address.to_string(),
-            }
-            .into(),
-        );
-
-        amount - MINIMUM_STAKE_AMOUNT
+        // This should never happen after bootstrap, but if it does, use 1:1 ratio
+        amount
     } else {
         amount.multiply_ratio(total_shares, total_deposit)
     };
@@ -394,6 +418,8 @@ fn execute_leave(
             attr("oro_amount", return_amount),
         ]))
 }
+
+
 
 /// Exposes all the queries available in the contract.
 ///

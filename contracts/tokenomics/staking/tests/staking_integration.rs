@@ -33,7 +33,8 @@ fn test_instantiate() {
         response,
         Config {
             oro_denom: ORO_DENOM.to_string(),
-            xoro_denom: format!("coin.{}.xORO", &helper.staking)
+            xoro_denom: format!("coin.{}.xORO", &helper.staking),
+            bootstrap_amount: Uint128::new(1000),
         }
     );
 
@@ -65,13 +66,8 @@ fn check_deflate_liquidity() {
     helper.give_oro(10000, &attacker);
     helper.give_oro(10000, &victim);
 
-    let err = helper.stake(&attacker, 1000).unwrap_err();
-    assert_eq!(
-        err.downcast::<ContractError>().unwrap(),
-        ContractError::MinimumStakeAmountError {}
-    );
-
-    helper.stake(&attacker, 1001).unwrap();
+    // First stake should work now since pool is bootstrapped during instantiation
+    helper.stake(&attacker, 1000).unwrap();
 
     helper
         .app
@@ -82,12 +78,8 @@ fn check_deflate_liquidity() {
         )
         .unwrap();
 
-    let err = helper.stake(&victim, 5).unwrap_err();
-    assert_eq!(
-        err.downcast::<ContractError>().unwrap(),
-        ContractError::StakeAmountTooSmall {}
-    );
-
+    // Small stakes should work now since pool is bootstrapped
+    helper.stake(&victim, 5).unwrap();
     helper.stake(&victim, 7).unwrap();
 }
 
@@ -180,24 +172,24 @@ fn test_enter_and_leave() {
     // Mint 10000 ORO for Alice
     helper.give_oro(10000, &alice);
 
-    // Stake Alice's 1100 ORO for 1100 xORO
+    // Stake Alice's 1100 ORO for 1100 xORO (1:1 ratio now)
     let resp_data = helper.stake(&alice, 1100).unwrap().data.unwrap();
     let staking_resp: StakingResponse = from_json(&resp_data).unwrap();
     assert_eq!(
         staking_resp,
         StakingResponse {
             oro_amount: 1100u128.into(),
-            xoro_amount: 100u128.into(),
+            xoro_amount: 1100u128.into(),
         }
     );
 
-    // Check if Alice's xORO balance is 100 (1000 consumed by staking contract on initial provide)
+    // Check if Alice's xORO balance is 1100 (1:1 ratio)
     let amount = helper.query_balance(&alice, &xoro_denom).unwrap();
-    assert_eq!(amount.u128(), 100);
+    assert_eq!(amount.u128(), 1100);
 
-    // Check if the staking contract's ORO balance is 1100
+    // Check if the staking contract's ORO balance is 2100 (1000 bootstrap + 1100 from Alice)
     let amount = helper.query_balance(&staking, ORO_DENOM).unwrap();
-    assert_eq!(amount.u128(), 1100u128);
+    assert_eq!(amount.u128(), 2100u128);
 
     // Unstake Alice's 10 xORO for 10 ORO
     let resp_data = helper.unstake(&alice, 10).unwrap().data.unwrap();
@@ -210,19 +202,19 @@ fn test_enter_and_leave() {
         }
     );
 
-    // Check if Alice's xORO balance is 90
+    // Check if Alice's xORO balance is 1090 (1100 - 10)
     let amount = helper.query_balance(&alice, &xoro_denom).unwrap();
-    assert_eq!(amount.u128(), 90);
+    assert_eq!(amount.u128(), 1090);
 
-    // Check if Alice's ORO balance is 8910
+    // Check if Alice's ORO balance is 8910 (10000 - 1100 + 10)
     let amount = helper.query_balance(&alice, ORO_DENOM).unwrap();
     assert_eq!(amount.u128(), 8910);
 
-    // Check if the staking contract's ORO balance is 1090
+    // Check if the staking contract's ORO balance is 2090 (2100 - 10)
     let amount = helper.query_balance(&staking, ORO_DENOM).unwrap();
-    assert_eq!(amount.u128(), 1090);
+    assert_eq!(amount.u128(), 2090);
 
-    // Check if the staking contract's xORO balance is 1000 (locked forever)
+    // Check if the staking contract's xORO balance is 1000 (1000 bootstrap, 10 was sent to Alice)
     let amount = helper.query_balance(&staking, &xoro_denom).unwrap();
     assert_eq!(amount.u128(), 1000);
 
@@ -264,11 +256,11 @@ fn should_work_with_more_than_one_participant() {
     helper.give_oro(10000, &alice);
     helper.give_oro(10000, &bob);
 
-    // Stake Alice's 2000 ORO for 1000 xORO (subtract min liquid amount)
+    // Stake Alice's 2000 ORO for 2000 xORO (1:1 ratio now)
     helper.stake(&alice, 2000).unwrap();
-    // Check Alice's xORO balance is 1000
+    // Check Alice's xORO balance is 2000
     let amount = helper.query_balance(&alice, &xoro_denom).unwrap();
-    assert_eq!(amount.u128(), 1000);
+    assert_eq!(amount.u128(), 2000);
 
     // Stake Bob's 10 ORO for 10 xORO
     helper.stake(&bob, 10).unwrap();
@@ -276,19 +268,19 @@ fn should_work_with_more_than_one_participant() {
     let amount = helper.query_balance(&bob, &xoro_denom).unwrap();
     assert_eq!(amount.u128(), 10);
 
-    // Check staking contract's ORO balance is 2010
+    // Check staking contract's ORO balance is 3010 (1000 bootstrap + 2000 from Alice + 10 from Bob)
     let amount = helper.query_balance(&staking, ORO_DENOM).unwrap();
-    assert_eq!(amount.u128(), 2010);
+    assert_eq!(amount.u128(), 3010);
 
     // Staking contract gets 20 more ORO from external source
     helper.give_oro(20, &staking);
 
-    // Stake Alice's 10 ORO for 9 xORO: 10*2010/2030 = 9
+    // Stake Alice's 10 ORO for 6 xORO: 10*2010/3030 = 6 (integer division)
     helper.stake(&alice, 10).unwrap();
 
-    // Check Alice's xORO balance is 1009
+    // Check Alice's xORO balance is 2009 (2000 + 9 from second stake)
     let amount = helper.query_balance(&alice, &xoro_denom).unwrap();
-    assert_eq!(amount.u128(), 1009);
+    assert_eq!(amount.u128(), 2009);
 
     // Burn Bob's 5 xORO and unstake: gets 5*2040/2019 = 5 ORO
     helper.unstake(&bob, 5).unwrap();
@@ -299,9 +291,9 @@ fn should_work_with_more_than_one_participant() {
     let amount = helper.query_balance(&bob, ORO_DENOM).unwrap();
     assert_eq!(amount.u128(), 9995);
 
-    // Check the staking contract's ORO balance
+    // Check the staking contract's ORO balance is 3035 (3010 + 20 + 10 - 5)
     let amount = helper.query_balance(&staking, ORO_DENOM).unwrap();
-    assert_eq!(amount.u128(), 2035);
+    assert_eq!(amount.u128(), 3035);
 
     // Check Alice's ORO balance is 7990 (10000 minted - 2000 entered - 10 entered)
     let amount = helper.query_balance(&alice, ORO_DENOM).unwrap();
@@ -333,7 +325,7 @@ fn test_historical_queries() {
     let amount = helper.query_xoro_balance_at(&user1, None).unwrap();
     assert_eq!(amount.u128(), 1_000_000000);
     let total_supply = helper.query_xoro_supply_at(None).unwrap();
-    assert_eq!(total_supply.u128(), 1_000_001001);
+    assert_eq!(total_supply.u128(), 1_000_002001);
 
     // Stake for user2 too
     helper.give_oro(1_000_000000, &user2);
@@ -466,7 +458,7 @@ fn test_different_query_results() {
         staking_resp,
         StakingResponse {
             oro_amount: 1100u128.into(),
-            xoro_amount: 100u128.into(),
+            xoro_amount: 1100u128.into(),
         }
     );
     // get current time
