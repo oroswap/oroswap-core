@@ -55,6 +55,7 @@ pub enum QueryMsg {
 /// This structure describes the response to a config query.
 #[cw_serde]
 pub struct ConfigResponse {
+    pub owner: String,
     pub factory_addr: String,
     pub pair_creation_fee: Uint128,
 }

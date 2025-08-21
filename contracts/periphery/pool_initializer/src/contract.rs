@@ -19,10 +19,11 @@ use crate::state::{
 pub fn instantiate(
     deps: DepsMut,
     _env: Env,
-    _info: MessageInfo,
+    info: MessageInfo,
     msg: InstantiateMsg,
 ) -> Result<Response, ContractError> {
     let config = Config {
+        owner: info.sender.clone(),
         factory_addr: deps.api.addr_validate(&msg.factory_addr)?,
         pair_creation_fee: msg.pair_creation_fee,
     };
@@ -268,7 +269,7 @@ pub fn execute_create_pair_and_provide_liquidity(
 /// Update the contract configuration (admin only)
 pub fn execute_update_config(
     deps: DepsMut,
-    env: Env,
+    _env: Env,
     info: MessageInfo,
     factory_addr: Option<String>,
     pair_creation_fee: Option<Uint128>,
@@ -276,8 +277,8 @@ pub fn execute_update_config(
     // Only the contract admin can update config
     let config = CONFIG.load(deps.storage)?;
     
-    // Check if sender is the contract admin (owner)
-    if info.sender != env.contract.address {
+    // Check if sender is the contract owner
+    if info.sender != config.owner {
         return Err(ContractError::Unauthorized {});
     }
     
@@ -305,6 +306,7 @@ pub fn execute_update_config(
 pub fn query_config(deps: Deps) -> StdResult<ConfigResponse> {
     let config = CONFIG.load(deps.storage)?;
     Ok(ConfigResponse {
+        owner: config.owner.to_string(),
         factory_addr: config.factory_addr.to_string(),
         pair_creation_fee: config.pair_creation_fee,
     })

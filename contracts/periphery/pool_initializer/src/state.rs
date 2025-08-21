@@ -13,6 +13,7 @@ pub const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Configuration for the pool initializer contract
 #[cw_serde]
 pub struct Config {
+    pub owner: Addr,
     pub factory_addr: Addr,
     pub pair_creation_fee: Uint128,
 }
