@@ -33,11 +33,27 @@ pub enum ContractError {
     #[error("Invalid initial liquidity")]
     InvalidInitialLiquidity {},
 
+    #[error("Asset mismatch between asset_infos and liquidity.assets")]
+    AssetMismatch {},
+
     #[error("Insufficient funds for pool creation fee")]
     InsufficientFunds {},
+
+    #[error("Insufficient funds for denom: {denom}")]
+    InsufficientFundsForDenom { denom: String },
 
     #[error("Unauthorized")]
     Unauthorized {},
 
+    #[error("Failed to parse reply")]
+    FailedToParseReply {},
 
+    #[error("Factory creation failed: {error}")]
+    FactoryCreationFailed { error: String },
+
+    #[error("User already has an operation in progress")]
+    OperationInProgress {},
+
+    #[error("Insufficient CW-20 allowance for token {token}: required {required}, current {current}")]
+    InsufficientCw20Allowance { token: String, required: cosmwasm_std::Uint128, current: cosmwasm_std::Uint128 },
 }

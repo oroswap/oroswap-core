@@ -25,32 +25,6 @@ echo "✅ Contract Config:"
 echo "$CONFIG" | jq '.'
 echo ""
 
-# Test 2: Check if the native token exists
-echo "🔍 Test 2: Checking if native token exists..."
-NATIVE_TOKEN_DENOM="coin.zig18sytwc03z5j3wge5egf4rdue6gxkzzyf4658vq.poolliquidity1"
-
-# Check if the token exists by querying bank balances
-BALANCE=$(zigchaind query bank balances $(zigchaind keys show $KEY_NAME -a --keyring-backend $KEYRING_BACKEND) \
-  --node $RPC_URL \
-  --chain-id $CHAIN_ID \
-  --output json | jq -r ".balances[] | select(.denom == \"$NATIVE_TOKEN_DENOM\") | .amount // \"0\"")
-
-echo "💰 Native Token Balance: $BALANCE"
-if [[ "$BALANCE" == "0" ]]; then
-    echo "⚠️  Warning: Native token '$NATIVE_TOKEN_DENOM' not found in your balance."
-    echo "   This token may need to be created first or you may need to receive some tokens."
-    echo ""
-    echo "💡 To create this token, you would typically:"
-    echo "   1. Use the token factory to create the denom"
-    echo "   2. Or receive tokens from someone who has them"
-    echo ""
-    echo "🔍 To check if the token exists on chain:"
-    echo "   zigchaind query bank total --node $RPC_URL --chain-id $CHAIN_ID | grep $NATIVE_TOKEN_DENOM"
-    echo ""
-    echo "⏭️  Continuing with pool creation attempt anyway..."
-    echo ""
-fi
-
 # Test 3: Create a XYK_30 pool with native token and ZIG
 echo "🔍 Test 3: Creating XYK_30 pool with Native Token/ZIG..."
 echo "📝 Creating pool with 100,000 native tokens and 1 ZIG initial liquidity..."
@@ -59,7 +33,7 @@ echo "🎯 Using XYK_30 pair type (0.3% fee tier)"
 echo "📝 Note: This test uses native tokens only. For CW-20 tokens, users must first approve the pool_initializer contract."
 
 # Native token denom
-NATIVE_TOKEN_DENOM="coin.zig18sytwc03z5j3wge5egf4rdue6gxkzzyf4658vq.poolliquidity1"
+NATIVE_TOKEN_DENOM="coin.zig18sytwc03z5j3wge5egf4rdue6gxkzzyf4658vq.poolinit102"
 
 # Note: 102 ZIG total = 101 ZIG for pair creation fee + 1 ZIG for liquidity
 
@@ -68,23 +42,22 @@ zigchaind tx wasm execute $POOL_INITIALIZER_ADDR \
     "create_pair_and_provide_liquidity": {
       "pair_type": {"custom": "xyk_30"},
       "asset_infos": [
-        {"native_token": {"denom": "coin.zig18sytwc03z5j3wge5egf4rdue6gxkzzyf4658vq.poolliquidity1"}},
+        {"native_token": {"denom": "'$NATIVE_TOKEN_DENOM'"}},
         {"native_token": {"denom": "uzig"}}
       ],
       "init_params": null,
       "liquidity": {
         "assets": [
-          {"info": {"native_token": {"denom": "coin.zig18sytwc03z5j3wge5egf4rdue6gxkzzyf4658vq.poolliquidity1"}}, "amount": "100000"},
+          {"info": {"native_token": {"denom": "'$NATIVE_TOKEN_DENOM'"}}, "amount": "100000"},
           {"info": {"native_token": {"denom": "uzig"}}, "amount": "1000000"}
         ],
         "slippage_tolerance": "0.01",
-        "auto_stake": false,
         "receiver": null,
         "min_lp_to_receive": null
       }
     }
   }' \
-  --amount "102000000uzig,100000coin.zig18sytwc03z5j3wge5egf4rdue6gxkzzyf4658vq.poolliquidity1" \
+  --amount "102000000uzig,100000$NATIVE_TOKEN_DENOM" \
   --from $KEY_NAME --keyring-backend $KEYRING_BACKEND \
   --node $RPC_URL \
   --chain-id $CHAIN_ID \
@@ -106,6 +79,6 @@ echo "🔍 To query factory pairs:"
 echo "   zigchaind query wasm contract-state smart $FACTORY_CONTRACT '{\"pairs\": {\"start_after\": null, \"limit\": 10}}' --node $RPC_URL --chain-id $CHAIN_ID"
 echo ""
 echo "🔍 To query the specific pair:"
-echo "   zigchaind query wasm contract-state smart $FACTORY_CONTRACT '{\"pair\": {\"asset_infos\": [{\"native_token\": {\"denom\": \"coin.zig18sytwc03z5j3wge5egf4rdue6gxkzzyf4658vq.poolliquidity1\"}}, {\"native_token\": {\"denom\": \"uzig\"}}], \"pair_type\": {\"xyk\": {}}}}' --node $RPC_URL --chain-id $CHAIN_ID"
+echo "   zigchaind query wasm contract-state smart $FACTORY_CONTRACT '{\"pair\": {\"asset_infos\": [{\"native_token\": {\"denom\": \"'$NATIVE_TOKEN_DENOM'\"}}, {\"native_token\": {\"denom\": \"uzig\"}}], \"pair_type\": {\"xyk\": {}}}}' --node $RPC_URL --chain-id $CHAIN_ID"
 echo ""
 echo "🎉 Pool Initializer test completed!"

@@ -1,8 +1,6 @@
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Binary, Coin, Uint128};
+use cosmwasm_std::{Addr, Uint128};
 use cw_storage_plus::Item;
-use oroswap_core::asset::AssetInfo;
-use oroswap_core::factory::PairType;
 use crate::msg::ProvideLiquidityParams;
 
 /// Contract name that is used for migration.
@@ -16,26 +14,25 @@ pub struct Config {
     pub owner: Addr,
     pub factory_addr: Addr,
     pub pair_creation_fee: Uint128,
+    pub fee_denom: String,
 }
 
-
-
-/// Pending liquidity operation
+/// Pending liquidity operation data
 #[cw_serde]
 pub struct PendingLiquidity {
     pub sender: Addr,
-    pub pair_type: PairType,
-    pub asset_infos: Vec<AssetInfo>,
-    pub init_params: Option<Binary>,
+    pub pair_type: oroswap_core::factory::PairType,
+    pub asset_infos: Vec<oroswap_core::asset::AssetInfo>,
+    pub init_params: Option<cosmwasm_std::Binary>,
     pub liquidity: ProvideLiquidityParams,
-    pub funds: Vec<Coin>, // Native token funds for liquidity
-    pub cw20_messages: Vec<(Addr, Uint128)>, // CW-20 contract addresses and amounts to send
+    pub funds: Vec<cosmwasm_std::Coin>, // Store the native token funds
+    pub cw20_messages: Vec<(Addr, Uint128)>, // Store CW-20 messages to send
 }
-
-// Storage items
-pub const CONFIG: Item<Config> = Item::new("config");
-pub const PENDING_LIQUIDITY: Item<PendingLiquidity> = Item::new("pending_liquidity");
 
 // Reply IDs
 pub const CREATE_PAIR_REPLY_ID: u64 = 1;
 pub const PROVIDE_LIQUIDITY_REPLY_ID: u64 = 2;
+
+// Storage items
+pub const CONFIG: Item<Config> = Item::new("config");
+pub const PENDING_LIQUIDITY: Item<PendingLiquidity> = Item::new("pending_liquidity");

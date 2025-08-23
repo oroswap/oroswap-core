@@ -8,8 +8,10 @@ use oroswap_core::factory::PairType;
 pub struct InstantiateMsg {
     /// The factory contract address
     pub factory_addr: String,
-    /// The fee required for creating a pair (in uzig)
+    /// The fee required for creating a pair
     pub pair_creation_fee: Uint128,
+    /// The denomination for the pair creation fee (e.g., "uzig")
+    pub fee_denom: String,
 }
 
 /// This structure describes the execute messages available in the contract.
@@ -32,7 +34,11 @@ pub enum ExecuteMsg {
         factory_addr: Option<String>,
         /// New pair creation fee (optional)
         pair_creation_fee: Option<Uint128>,
+        /// New fee denomination (optional)
+        fee_denom: Option<String>,
     },
+    /// Emergency recovery function to clean up stuck operations (admin only)
+    EmergencyRecovery {},
 }
 
 /// Liquidity parameters for providing liquidity
@@ -40,7 +46,6 @@ pub enum ExecuteMsg {
 pub struct ProvideLiquidityParams {
     pub assets: Vec<Asset>,
     pub slippage_tolerance: Option<Decimal>,
-    pub auto_stake: Option<bool>,
     pub receiver: Option<String>,
     pub min_lp_to_receive: Option<Uint128>,
 }
@@ -58,4 +63,7 @@ pub struct ConfigResponse {
     pub owner: String,
     pub factory_addr: String,
     pub pair_creation_fee: Uint128,
+    pub fee_denom: String,
 }
+
+

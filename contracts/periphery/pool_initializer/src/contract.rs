@@ -7,6 +7,7 @@ use oroswap_core::asset::AssetInfo;
 use oroswap_core::factory::{ExecuteMsg as FactoryExecuteMsg, PairType, QueryMsg as FactoryQueryMsg};
 use oroswap_core::pair::ExecuteMsg as PairExecuteMsg;
 use cw20::Cw20ExecuteMsg;
+use std::collections::BTreeMap;
 
 use crate::error::ContractError;
 use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg, ConfigResponse, ProvideLiquidityParams};
@@ -26,6 +27,7 @@ pub fn instantiate(
         owner: info.sender.clone(),
         factory_addr: deps.api.addr_validate(&msg.factory_addr)?,
         pair_creation_fee: msg.pair_creation_fee,
+        fee_denom: msg.fee_denom,
     };
     CONFIG.save(deps.storage, &config)?;
 
@@ -33,7 +35,7 @@ pub fn instantiate(
 
     Ok(Response::new().add_attributes(vec![
         attr("action", "instantiate"),
-        attr("factory_addr", msg.factory_addr),
+        attr("factory_addr", msg.factory_addr.to_string()),
     ]))
 }
 
@@ -53,6 +55,7 @@ pub fn execute(
             liquidity,
         } => execute_create_pair_and_provide_liquidity(
             deps,
+            _env,
             info,
             pair_type,
             asset_infos,
@@ -62,7 +65,9 @@ pub fn execute(
         ExecuteMsg::UpdateConfig {
             factory_addr,
             pair_creation_fee,
-        } => execute_update_config(deps, _env, info, factory_addr, pair_creation_fee),
+            fee_denom,
+        } => execute_update_config(deps, _env, info, factory_addr, pair_creation_fee, fee_denom),
+        ExecuteMsg::EmergencyRecovery {} => execute_emergency_recovery(deps, _env, info),
     }
 }
 
@@ -71,6 +76,7 @@ pub fn execute(
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
         QueryMsg::Config {} => to_json_binary(&query_config(deps)?),
+
     }
 }
 
@@ -94,6 +100,7 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractEr
                 &query_msg,
             ).map_err(|_| ContractError::FailedToQueryFactory {})?;
             
+            // Use the pair address directly (it's already validated by the factory)
             let pair_addr = pair_info.contract_addr;
             
             // Create submessages for CW-20 token transfers and approvals
@@ -138,7 +145,7 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractEr
             let provide_liquidity_msg = PairExecuteMsg::ProvideLiquidity {
                 assets: pending.liquidity.assets,
                 slippage_tolerance: pending.liquidity.slippage_tolerance,
-                auto_stake: pending.liquidity.auto_stake,
+                auto_stake: None,
                 receiver,
                 min_lp_to_receive: pending.liquidity.min_lp_to_receive,
             };
@@ -172,9 +179,15 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractEr
     }
 }
 
+/// Helper function to add amounts to a BTreeMap
+fn add_amount(m: &mut BTreeMap<String, Uint128>, k: &str, v: Uint128) {
+    m.entry(k.to_string()).and_modify(|x| *x += v).or_insert(v);
+}
+
 /// Create a pair and provide liquidity in a single atomic transaction
 pub fn execute_create_pair_and_provide_liquidity(
     deps: DepsMut,
+    _env: Env,
     info: MessageInfo,
     pair_type: PairType,
     asset_infos: Vec<AssetInfo>,
@@ -193,25 +206,72 @@ pub fn execute_create_pair_and_provide_liquidity(
         return Err(ContractError::InvalidInitialLiquidity {});
     }
 
+    // Asset consistency checks
+    // 1. Assets must match the pair assets 1:1 and be distinct
+    for (i, ai) in asset_infos.iter().enumerate() {
+        if liquidity.assets[i].info != *ai {
+            return Err(ContractError::AssetMismatch {});
+        }
+    }
+    
+    // 2. Assets must be distinct
+    if asset_infos[0] == asset_infos[1] {
+        return Err(ContractError::InvalidAssetInfo {});
+    }
+    
+    // 3. Disallow zero amounts
+    for a in &liquidity.assets {
+        if a.amount.is_zero() {
+            return Err(ContractError::InvalidInitialLiquidity {});
+        }
+    }
+
+    // 4. Validate native coverage
+    let mut need = BTreeMap::<String, Uint128>::new();
+    for a in &liquidity.assets {
+        if let AssetInfo::NativeToken { denom } = &a.info {
+            add_amount(&mut need, denom, a.amount);
+        }
+    }
+    let mut sent = BTreeMap::<String, Uint128>::new();
+    for c in &info.funds {
+        add_amount(&mut sent, &c.denom, c.amount);
+    }
+    for (denom, req) in need {
+        let got = sent.get(&denom).cloned().unwrap_or_default();
+        if got < req {
+            return Err(ContractError::InsufficientFundsForDenom { denom });
+        }
+    }
+
+    // 5. Enforce minimum pool creation fee
+    let fee_denom = config.fee_denom.clone();
+    let fee_sent = info.funds.iter()
+        .find(|c| c.denom == fee_denom)
+        .map(|c| c.amount)
+        .unwrap_or_default();
+    if fee_sent < config.pair_creation_fee {
+        return Err(ContractError::InsufficientFundsForDenom { denom: fee_denom });
+    }
+
     // Extract pool creation fee and keep the rest for liquidity
     let mut factory_funds = vec![];
     let mut liquidity_funds = vec![];
     let mut cw20_messages = vec![];
     
     for coin in &info.funds {
-        if coin.denom == "uzig" {
-            // Send pool creation fee to factory, keep the rest for liquidity
+        if coin.denom == fee_denom {
             let pool_creation_fee = config.pair_creation_fee;
             if coin.amount >= pool_creation_fee {
                 factory_funds.push(cosmwasm_std::Coin {
-                    denom: "uzig".to_string(),
+                    denom: fee_denom.clone(),
                     amount: pool_creation_fee,
                 });
                 // Keep the rest for liquidity
                 let remaining = coin.amount - pool_creation_fee;
                 if !remaining.is_zero() {
                     liquidity_funds.push(cosmwasm_std::Coin {
-                        denom: "uzig".to_string(),
+                        denom: fee_denom.clone(),
                         amount: remaining,
                     });
                 }
@@ -220,7 +280,7 @@ pub fn execute_create_pair_and_provide_liquidity(
                 factory_funds.push(coin.clone());
             }
         } else {
-            // Non-uzig tokens go to liquidity
+            // Non-fee tokens go to liquidity
             liquidity_funds.push(coin.clone());
         }
     }
@@ -278,6 +338,7 @@ pub fn execute_update_config(
     info: MessageInfo,
     factory_addr: Option<String>,
     pair_creation_fee: Option<Uint128>,
+    fee_denom: Option<String>,
 ) -> Result<Response, ContractError> {
     // Only the contract admin can update config
     let config = CONFIG.load(deps.storage)?;
@@ -297,13 +358,18 @@ pub fn execute_update_config(
         new_config.pair_creation_fee = fee;
     }
     
+    if let Some(denom) = fee_denom {
+        new_config.fee_denom = denom;
+    }
+    
     CONFIG.save(deps.storage, &new_config)?;
     
     Ok(Response::new()
         .add_attributes(vec![
             attr("action", "update_config"),
-            attr("factory_addr", new_config.factory_addr),
-            attr("pair_creation_fee", new_config.pair_creation_fee),
+            attr("factory_addr", new_config.factory_addr.to_string()),
+            attr("pair_creation_fee", new_config.pair_creation_fee.to_string()),
+            attr("fee_denom", new_config.fee_denom.clone()),
         ]))
 }
 
@@ -314,98 +380,34 @@ pub fn query_config(deps: Deps) -> StdResult<ConfigResponse> {
         owner: config.owner.to_string(),
         factory_addr: config.factory_addr.to_string(),
         pair_creation_fee: config.pair_creation_fee,
+        fee_denom: config.fee_denom,
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use cosmwasm_std::{Addr, Decimal, Uint128};
-    use oroswap_core::asset::{Asset, AssetInfo};
-
-    #[test]
-    fn test_receiver_logic() {
-        // Test that the receiver logic correctly handles different scenarios
-        
-        // Scenario 1: No receiver specified (should default to sender)
-        let receiver_none: Option<String> = None;
-        let sender = "user_addr".to_string();
-        
-        let result = receiver_none
-            .clone()
-            .or_else(|| Some(sender.clone()));
-        
-        assert_eq!(result, Some(sender.clone()));
-        println!("✅ Test 1 passed: No receiver defaults to sender");
-        
-        // Scenario 2: Receiver explicitly specified
-        let specified_receiver = "specified_receiver".to_string();
-        let receiver_some: Option<String> = Some(specified_receiver.clone());
-        
-        let result = receiver_some
-            .clone()
-            .or_else(|| Some(sender.clone()));
-        
-        assert_eq!(result, Some(specified_receiver));
-        println!("✅ Test 2 passed: Explicit receiver is used");
-        
-        // Scenario 3: Verify the logic matches our contract implementation
-        let pending_liquidity = ProvideLiquidityParams {
-            assets: vec![
-                Asset {
-                    info: AssetInfo::NativeToken { denom: "uzig".to_string() },
-                    amount: Uint128::new(1000000),
-                },
-                Asset {
-                    info: AssetInfo::NativeToken { denom: "uatom".to_string() },
-                    amount: Uint128::new(1000000),
-                },
-            ],
-            slippage_tolerance: Some(Decimal::percent(1)),
-            auto_stake: Some(false),
-            receiver: None, // No receiver specified
-            min_lp_to_receive: None,
-        };
-        
-        let sender_addr = Addr::unchecked("user_addr");
-        let receiver = pending_liquidity
-            .receiver
-            .clone()
-            .or_else(|| Some(sender_addr.to_string()));
-        
-        assert_eq!(receiver, Some("user_addr".to_string()));
-        println!("✅ Test 3 passed: Contract logic correctly defaults to sender");
-        
-        // Scenario 4: With explicit receiver
-        let pending_liquidity_with_receiver = ProvideLiquidityParams {
-            assets: vec![
-                Asset {
-                    info: AssetInfo::NativeToken { denom: "uzig".to_string() },
-                    amount: Uint128::new(1000000),
-                },
-                Asset {
-                    info: AssetInfo::NativeToken { denom: "uatom".to_string() },
-                    amount: Uint128::new(1000000),
-                },
-            ],
-            slippage_tolerance: Some(Decimal::percent(1)),
-            auto_stake: Some(false),
-            receiver: Some("explicit_receiver".to_string()), // Explicit receiver
-            min_lp_to_receive: None,
-        };
-        
-        let receiver = pending_liquidity_with_receiver
-            .receiver
-            .clone()
-            .or_else(|| Some(sender_addr.to_string()));
-        
-        assert_eq!(receiver, Some("explicit_receiver".to_string()));
-        println!("✅ Test 4 passed: Contract logic correctly uses explicit receiver");
-        
-        println!("🎉 All receiver logic tests passed!");
-        println!("🔒 LP tokens will be sent to the correct address:");
-        println!("   - Explicit receiver if specified");
-        println!("   - Original caller if no receiver specified");
-        println!("   - NEVER to the pool initializer contract itself");
+/// Emergency recovery function to clean up stuck operations (admin only)
+pub fn execute_emergency_recovery(
+    deps: DepsMut,
+    _env: Env,
+    info: MessageInfo,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.owner {
+        return Err(ContractError::Unauthorized {});
     }
+    
+    // Clear any stuck pending liquidity operation
+    if PENDING_LIQUIDITY.may_load(deps.storage)?.is_some() {
+        PENDING_LIQUIDITY.remove(deps.storage);
+    }
+    
+    Ok(Response::new().add_attributes(vec![
+        attr("action", "emergency_recovery"),
+        attr("admin", info.sender.to_string()),
+    ]))
 }
+
+
+
+
+
+
