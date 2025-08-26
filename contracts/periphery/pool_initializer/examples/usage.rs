@@ -9,6 +9,7 @@ pub fn instantiate_pool_initializer(factory_addr: String) -> InstantiateMsg {
     InstantiateMsg {
         factory_addr,
         pair_creation_fee: Uint128::new(101000000), // 101 ZIG default fee
+        fee_denom: "uzig".to_string(),
     }
 }
 
@@ -23,7 +24,6 @@ pub fn initialize_xyk_pool_native(
     let liquidity_params = ProvideLiquidityParams {
         assets: initial_liquidity,
         slippage_tolerance,
-        auto_stake: Some(false),
         receiver,
         min_lp_to_receive: None,
     };
@@ -49,7 +49,6 @@ pub fn initialize_stable_pool(
     let liquidity_params = ProvideLiquidityParams {
         assets: initial_liquidity,
         slippage_tolerance,
-        auto_stake: Some(false),
         receiver,
         min_lp_to_receive: None,
     };
@@ -91,7 +90,6 @@ pub fn create_usdc_zig_pool_example() -> ExecuteMsg {
     let liquidity_params = ProvideLiquidityParams {
         assets: initial_liquidity,
         slippage_tolerance: Some(Decimal::from_str("0.01").unwrap()), // 1% slippage
-        auto_stake: Some(false),
         receiver: None, // LP tokens go to sender
         min_lp_to_receive: None,
     };
@@ -138,7 +136,6 @@ pub fn create_cw20_native_pool_example(
     let liquidity_params = ProvideLiquidityParams {
         assets: initial_liquidity,
         slippage_tolerance: Some(Decimal::from_str("0.005").unwrap()), // 0.5% slippage
-        auto_stake: Some(false),
         receiver: None,
         min_lp_to_receive: None,
     };
@@ -183,6 +180,10 @@ mod tests {
             ExecuteMsg::UpdateConfig { .. } => {
                 // This test doesn't cover UpdateConfig, so we'll skip it
                 panic!("UpdateConfig not expected in this test");
+            }
+            ExecuteMsg::EmergencyRecovery {} => {
+                // This test doesn't cover EmergencyRecovery, so we'll skip it
+                panic!("EmergencyRecovery not expected in this test");
             }
         }
     }
@@ -231,6 +232,10 @@ mod tests {
             ExecuteMsg::UpdateConfig { .. } => {
                 // This test doesn't cover UpdateConfig, so we'll skip it
                 panic!("UpdateConfig not expected in this test");
+            }
+            ExecuteMsg::EmergencyRecovery {} => {
+                // This test doesn't cover EmergencyRecovery, so we'll skip it
+                panic!("EmergencyRecovery not expected in this test");
             }
         }
     }

@@ -17,6 +17,7 @@ serde = { version = "1.0", default-features = false, features = ["derive"] }
 thiserror = "1.0"
 schemars = "0.8"
 oroswap-core = { path = "../../../packages/oroswap-core" }
+cw-utils.workspace = true
 
 [dev-dependencies]
 cw-multi-test = "0.20"

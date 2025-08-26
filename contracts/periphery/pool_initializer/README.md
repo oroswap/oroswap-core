@@ -12,7 +12,7 @@ This contract combines both operations into a single atomic transaction, providi
 
 ## 🚀 **How It Works**
 
-1. **User calls** `InitializePoolWithLiquidity` with pool parameters and initial liquidity
+1. **User calls** `CreatePairAndProvideLiquidity` with pool parameters and initial liquidity
 2. **Contract calls** factory to create the pair
 3. **Factory replies** with the new pair address
 4. **Contract automatically** calls the pair to add initial liquidity
@@ -24,7 +24,9 @@ This contract combines both operations into a single atomic transaction, providi
 
 ```bash
 zigchaind tx wasm instantiate $POOL_INITIALIZER_CODE_ID '{
-  "factory_addr": "'"$FACTORY_ADDR"'"
+  "factory_addr": "'"$FACTORY_ADDR"'",
+  "pair_creation_fee": "101000000",
+  "fee_denom": "uzig"
 }' \
   --label "pool-initializer" \
   --admin $ADMIN \
@@ -39,19 +41,22 @@ zigchaind tx wasm instantiate $POOL_INITIALIZER_CODE_ID '{
 
 ```bash
 zigchaind tx wasm execute $POOL_INITIALIZER_ADDR '{
-  "initialize_pool_with_liquidity": {
+  "create_pair_and_provide_liquidity": {
     "pair_type": {"xyk": {}},
     "asset_infos": [
       {"native_token": {"denom": "uzig"}},
       {"native_token": {"denom": "usdc"}}
     ],
     "init_params": null,
-    "initial_liquidity": [
-      {"info": {"native_token": {"denom": "uzig"}}, "amount": "1000000"},
-      {"info": {"native_token": {"denom": "usdc"}}, "amount": "1000000"}
-    ],
-    "slippage_tolerance": "0.01",
-    "receiver": "'"$USER_ADDR"'"
+    "liquidity": {
+      "assets": [
+        {"info": {"native_token": {"denom": "uzig"}}, "amount": "1000000"},
+        {"info": {"native_token": {"denom": "usdc"}}, "amount": "1000000"}
+      ],
+      "slippage_tolerance": "0.01",
+      "receiver": "'"$USER_ADDR"'",
+      "min_lp_to_receive": null
+    }
   }
 }' \
   --amount "2000000uzig,1000000usdc" \
@@ -64,14 +69,16 @@ zigchaind tx wasm execute $POOL_INITIALIZER_ADDR '{
 
 ## 🔧 **Parameters**
 
-### `InitializePoolWithLiquidity`
+### `CreatePairAndProvideLiquidity`
 
 - **`pair_type`** - The type of pair (XYK, Stable, Concentrated, etc.)
 - **`asset_infos`** - Array of asset information for the pool
 - **`init_params`** - Optional parameters for custom pool types
-- **`initial_liquidity`** - Array of assets to add as initial liquidity
-- **`slippage_tolerance`** - Optional slippage tolerance (e.g., "0.01" for 1%)
-- **`receiver`** - Optional address to receive LP tokens (defaults to sender)
+- **`liquidity`** - Liquidity parameters object containing:
+  - **`assets`** - Array of assets to add as initial liquidity
+  - **`slippage_tolerance`** - Optional slippage tolerance (e.g., "0.01" for 1%)
+  - **`receiver`** - Optional address to receive LP tokens (defaults to sender)
+  - **`min_lp_to_receive`** - Optional minimum LP tokens to receive
 
 ## ✅ **Benefits**
 
@@ -87,6 +94,8 @@ zigchaind tx wasm execute $POOL_INITIALIZER_ADDR '{
 - **Validates Inputs** - Checks asset infos, slippage tolerance, etc.
 - **Uses Existing Contracts** - Leverages audited factory and pair contracts
 - **Clear Error Handling** - Provides meaningful error messages
+- **Defensive Guards** - Prevents concurrent operations and stuck states
+- **Fee Validation** - Enforces minimum pool creation fees upfront
 
 ## 🧪 **Testing**
 

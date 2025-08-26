@@ -1,5 +1,5 @@
 use cosmwasm_std::{
-    attr, entry_point, to_json_binary, Binary, Deps, DepsMut, Env,
+    attr, entry_point, to_json_binary, Binary, Deps, DepsMut, Empty, Env,
     MessageInfo, Reply, Response, StdResult, SubMsg, WasmMsg, Uint128,
 };
 
@@ -179,6 +179,20 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractEr
     }
 }
 
+/// The entry point to the contract for migrations.
+#[entry_point]
+pub fn migrate(deps: DepsMut, _env: Env, _msg: Empty) -> Result<Response, ContractError> {
+    let contract_version = cw2::get_contract_version(deps.storage)?;
+
+    cw2::set_contract_version(deps.storage, crate::state::CONTRACT_NAME, crate::state::CONTRACT_VERSION)?;
+    
+    Ok(Response::new()
+        .add_attribute("previous_contract_name", &contract_version.contract)
+        .add_attribute("previous_contract_version", &contract_version.version)
+        .add_attribute("new_contract_name", crate::state::CONTRACT_NAME)
+        .add_attribute("new_contract_version", crate::state::CONTRACT_VERSION))
+}
+
 /// Helper function to add amounts to a BTreeMap
 fn add_amount(m: &mut BTreeMap<String, Uint128>, k: &str, v: Uint128) {
     m.entry(k.to_string()).and_modify(|x| *x += v).or_insert(v);
@@ -195,6 +209,11 @@ pub fn execute_create_pair_and_provide_liquidity(
     liquidity: ProvideLiquidityParams,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
+
+    // Defensive guard: ensure no pending operation exists
+    if PENDING_LIQUIDITY.may_load(deps.storage)?.is_some() {
+        return Err(ContractError::OperationInProgress {});
+    }
 
     // Validate asset infos
     if asset_infos.len() != 2 {
@@ -261,23 +280,19 @@ pub fn execute_create_pair_and_provide_liquidity(
     
     for coin in &info.funds {
         if coin.denom == fee_denom {
-            let pool_creation_fee = config.pair_creation_fee;
-            if coin.amount >= pool_creation_fee {
-                factory_funds.push(cosmwasm_std::Coin {
+            // Since we already validated fee_sent >= config.pair_creation_fee,
+            // we can safely extract the fee and treat remainder as liquidity
+            factory_funds.push(cosmwasm_std::Coin {
+                denom: fee_denom.clone(),
+                amount: config.pair_creation_fee,
+            });
+            // Keep the rest for liquidity
+            let remaining = coin.amount - config.pair_creation_fee;
+            if !remaining.is_zero() {
+                liquidity_funds.push(cosmwasm_std::Coin {
                     denom: fee_denom.clone(),
-                    amount: pool_creation_fee,
+                    amount: remaining,
                 });
-                // Keep the rest for liquidity
-                let remaining = coin.amount - pool_creation_fee;
-                if !remaining.is_zero() {
-                    liquidity_funds.push(cosmwasm_std::Coin {
-                        denom: fee_denom.clone(),
-                        amount: remaining,
-                    });
-                }
-            } else {
-                // If less than pool creation fee, send all to factory
-                factory_funds.push(coin.clone());
             }
         } else {
             // Non-fee tokens go to liquidity
