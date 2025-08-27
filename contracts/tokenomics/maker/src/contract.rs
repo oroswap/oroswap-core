@@ -24,8 +24,8 @@ use crate::error::ContractError;
 use crate::reply::PROCESS_DEV_FUND_REPLY_ID;
 use crate::state::{BRIDGES, CONFIG, LAST_COLLECT_TS, OWNERSHIP_PROPOSAL, SEIZE_CONFIG};
 use crate::utils::{
-    build_distribute_msg, build_send_msg, build_swap_msg, get_pool, try_build_swap_msg,
-    update_second_receiver_cfg, validate_bridge, validate_cooldown, BRIDGES_EXECUTION_MAX_DEPTH,
+    build_distribute_msg, build_send_msg, build_swap_msg, get_pool, is_critical_token,
+    try_build_swap_msg, update_second_receiver_cfg, validate_bridge, validate_cooldown, BRIDGES_EXECUTION_MAX_DEPTH,
     BRIDGES_INITIAL_DEPTH,
 };
 
@@ -76,6 +76,13 @@ pub fn instantiate(
         default_bridge.check(deps.api)?
     }
 
+    // Validate critical tokens if provided
+    if let Some(critical_tokens) = &msg.critical_tokens {
+        for token in critical_tokens {
+            token.check(deps.api)?;
+        }
+    }
+
     validate_cooldown(msg.collect_cooldown)?;
     LAST_COLLECT_TS.save(deps.storage, &env.block.time.seconds())?;
 
@@ -97,6 +104,7 @@ pub fn instantiate(
         collect_cooldown: msg.collect_cooldown,
         dev_fund_conf: None,
         authorized_keepers: vec![],  // Initialize with empty list
+        critical_tokens: msg.critical_tokens.unwrap_or_default(),
     };
 
     update_second_receiver_cfg(deps.as_ref(), &mut cfg, &msg.second_receiver_params)?;
@@ -164,6 +172,7 @@ pub fn instantiate(
         attr("max_spread", max_spread.to_string()),
         attr("second_fee_receiver", second_fee_receiver),
         attr("second_receiver_cut", second_receiver_cut),
+        attr("critical_tokens_count", cfg.critical_tokens.len().to_string()),
     ]))
 }
 
@@ -215,6 +224,7 @@ pub fn execute(
             collect_cooldown,
             oro_token,
             dev_fund_config,
+            critical_tokens,
         } => update_config(
             deps,
             info,
@@ -228,6 +238,7 @@ pub fn execute(
             collect_cooldown,
             oro_token,
             dev_fund_config,
+            critical_tokens,
         ),
         ExecuteMsg::UpdateBridges { add, remove } => update_bridges(deps, info, add, remove),
         ExecuteMsg::SwapBridgeAssets { assets, depth } => {
@@ -751,6 +762,7 @@ fn update_config(
     collect_cooldown: Option<u64>,
     oro_token: Option<AssetInfo>,
     dev_fund_conf: Option<Box<UpdateDevFundConfig>>,
+    critical_tokens: Option<Vec<AssetInfo>>,
 ) -> Result<Response, ContractError> {
     let mut attributes = vec![attr("action", "set_config")];
 
@@ -876,6 +888,15 @@ fn update_config(
         }
     }
 
+    if let Some(critical_tokens) = critical_tokens {
+        // Validate all critical tokens
+        for token in &critical_tokens {
+            token.check(deps.api)?;
+        }
+        config.critical_tokens = critical_tokens;
+        attributes.push(attr("critical_tokens_count", config.critical_tokens.len().to_string()));
+    }
+
     CONFIG.save(deps.storage, &config)?;
 
     Ok(Response::new().add_attributes(attributes))
@@ -888,7 +909,7 @@ fn update_config(
 /// * **remove** array of bridge tokens removed from being used to swap certain fee tokens.
 ///
 /// ## Executor
-/// Only the owner can execute this.
+/// Owner can manage all bridges. Keepers can only manage non-critical tokens.
 fn update_bridges(
     deps: DepsMut,
     info: MessageInfo,
@@ -897,9 +918,37 @@ fn update_bridges(
 ) -> Result<Response, ContractError> {
     let cfg = CONFIG.load(deps.storage)?;
 
-    // Permission check
-    if info.sender != cfg.owner {
+    // Permission check - owner can manage all bridges, keepers only non-critical ones
+    let is_owner = info.sender == cfg.owner;
+    let is_keeper = cfg.authorized_keepers.contains(&info.sender);
+    
+    if !is_owner && !is_keeper {
         return Err(ContractError::Unauthorized {});
+    }
+
+    // Store counts for logging before processing
+    let add_count = add.as_ref().map(|v| v.len()).unwrap_or(0);
+    let remove_count = remove.as_ref().map(|v| v.len()).unwrap_or(0);
+
+    // If keeper is calling, check that no critical tokens are being modified
+    if !is_owner {
+        // Check remove operations
+        if let Some(ref remove_bridges) = remove {
+            for asset in remove_bridges {
+                if is_critical_token(asset, &cfg.critical_tokens) {
+                    return Err(ContractError::Unauthorized {});
+                }
+            }
+        }
+        
+        // Check add operations
+        if let Some(ref add_bridges) = add {
+            for (asset, _) in add_bridges {
+                if is_critical_token(asset, &cfg.critical_tokens) {
+                    return Err(ContractError::Unauthorized {});
+                }
+            }
+        }
     }
 
     // Remove old bridges
@@ -931,7 +980,14 @@ fn update_bridges(
         }
     }
 
-    Ok(Response::default().add_attribute("action", "update_bridges"))
+    // Add detailed logging for audit trail
+    let mut attributes = vec![attr("action", "update_bridges")];
+    attributes.push(attr("executed_by", info.sender.to_string()));
+    attributes.push(attr("is_owner", is_owner.to_string()));
+    attributes.push(attr("bridges_added", add_count.to_string()));
+    attributes.push(attr("bridges_removed", remove_count.to_string()));
+
+    Ok(Response::default().add_attributes(attributes))
 }
 
 fn seize(deps: DepsMut, env: Env, info: MessageInfo, assets: Vec<AssetWithLimit>) -> Result<Response, ContractError> {
@@ -1085,6 +1141,7 @@ fn query_get_config(deps: Deps) -> StdResult<ConfigResponse> {
         default_bridge: config.default_bridge,
         second_receiver_cfg: config.second_receiver_cfg,
         authorized_keepers: config.authorized_keepers,
+        critical_tokens: config.critical_tokens,
     })
 }
 

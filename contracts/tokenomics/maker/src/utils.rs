@@ -323,3 +323,8 @@ pub fn validate_cooldown(maybe_cooldown: Option<u64>) -> Result<(), ContractErro
 
     Ok(())
 }
+
+/// Check if a token is in the critical tokens list
+pub fn is_critical_token(token: &AssetInfo, critical_tokens: &[AssetInfo]) -> bool {
+    critical_tokens.contains(token)
+}

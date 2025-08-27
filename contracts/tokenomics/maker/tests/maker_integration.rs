@@ -246,6 +246,7 @@ fn instantiate_contracts(
         max_spread,
         second_receiver_params,
         collect_cooldown,
+        critical_tokens: None,
     };
     let maker_instance = router
         .instantiate_contract(
@@ -538,6 +539,7 @@ fn update_config() {
         collect_cooldown: None,
         oro_token: None,
         dev_fund_config: None,
+        critical_tokens: None,
     };
 
     // Assert cannot update with improper owner
@@ -582,6 +584,7 @@ fn update_config() {
         collect_cooldown: None,
         oro_token: None,
         dev_fund_config: None,
+        critical_tokens: None,
     };
 
     let err = router
@@ -603,6 +606,7 @@ fn update_config() {
         collect_cooldown: None,
         oro_token: None,
         dev_fund_config: None,
+        critical_tokens: None,
     };
 
     router
@@ -634,6 +638,7 @@ fn update_config() {
         collect_cooldown: Some(*COOLDOWN_LIMITS.start() - 1),
         oro_token: None,
         dev_fund_config: None,
+        critical_tokens: None,
     };
 
     let err = router
@@ -658,6 +663,7 @@ fn update_config() {
         collect_cooldown: Some(*COOLDOWN_LIMITS.end() + 1),
         oro_token: None,
         dev_fund_config: None,
+        critical_tokens: None,
     };
     let err = router
         .execute_contract(owner.clone(), maker_instance.clone(), &msg, &[])
@@ -681,6 +687,7 @@ fn update_config() {
         collect_cooldown: Some((*COOLDOWN_LIMITS.end() - *COOLDOWN_LIMITS.start()) / 2),
         oro_token: None,
         dev_fund_config: None,
+        critical_tokens: None,
     };
     router
         .execute_contract(owner.clone(), maker_instance.clone(), &msg, &[])
@@ -2120,6 +2127,7 @@ fn set_dev_fund_config(
             collect_cooldown: None,
             oro_token: None,
             dev_fund_config: Some(Box::new(dev_fund_config)),
+            critical_tokens: None,
         },
         &[],
     )
@@ -3742,6 +3750,647 @@ fn test_calculation_edge_cases() {
     
     // This should work without reverting
     assert!(err.is_ok(), "Collection should succeed: {:?}", err);
+}
+
+#[test]
+fn test_keeper_bridge_management_integration() {
+    let usdc = "uusdc";
+    let owner = Addr::unchecked("owner");
+    let keeper = Addr::unchecked("keeper");
+    let mut app = mock_app(owner.clone(), vec![coin(300_000_000_000u128, usdc)]);
+
+    let staking = Addr::unchecked("staking");
+    
+    // Define critical tokens
+    let critical_tokens = vec![
+        AssetInfo::native("uzig"),
+        AssetInfo::native("usdc"),
+        AssetInfo::cw20(Addr::unchecked("critical-token")),
+    ];
+
+    let (oro_token, factory_instance, maker_instance, _) = instantiate_contracts(
+        &mut app,
+        owner.clone(),
+        staking.clone(),
+        50u64.into(),
+        Some(Decimal::from_str("0.3").unwrap()),
+        None,
+        None,
+        None,
+    );
+
+    // Set critical tokens after instantiation
+    app.execute_contract(
+        owner.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::UpdateConfig {
+            factory_contract: None,
+            staking_contract: None,
+            governance_contract: None,
+            governance_percent: None,
+            basic_asset: None,
+            max_spread: None,
+            second_receiver_params: None,
+            collect_cooldown: None,
+            oro_token: None,
+            dev_fund_config: None,
+            critical_tokens: Some(critical_tokens.clone()),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Test 1: Add keeper
+    app.execute_contract(
+        owner.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::AddKeeper {
+            keeper: keeper.to_string(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Create pool for uzig-oro pair first
+    create_pair(
+        &mut app,
+        owner.clone(),
+        owner.clone(),
+        &factory_instance,
+        vec![
+            Asset {
+                info: AssetInfo::native("uzig"),
+                amount: Uint128::new(1000000),
+            },
+            Asset {
+                info: AssetInfo::cw20(oro_token.clone()),
+                amount: Uint128::new(1000000),
+            },
+        ],
+        None,
+    );
+
+    // Test 2: Owner can add bridge for critical token
+    app.execute_contract(
+        owner.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::UpdateBridges {
+            add: Some(vec![(
+                AssetInfo::native("uzig"),
+                AssetInfo::cw20(oro_token.clone()),
+            )]),
+            remove: None,
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Create pool for meme-token-oro pair first
+    create_pair(
+        &mut app,
+        owner.clone(),
+        owner.clone(),
+        &factory_instance,
+        vec![
+            Asset {
+                info: AssetInfo::native("meme-token"),
+                amount: Uint128::new(1000000),
+            },
+            Asset {
+                info: AssetInfo::cw20(oro_token.clone()),
+                amount: Uint128::new(1000000),
+            },
+        ],
+        None,
+    );
+
+    // Test 3: Keeper can add bridge for non-critical token
+    app.execute_contract(
+        keeper.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::UpdateBridges {
+            add: Some(vec![(
+                AssetInfo::native("meme-token"),
+                AssetInfo::cw20(oro_token.clone()),
+            )]),
+            remove: None,
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Create pool for uzig-usdt pair first
+    create_pair(
+        &mut app,
+        owner.clone(),
+        owner.clone(),
+        &factory_instance,
+        vec![
+            Asset {
+                info: AssetInfo::native("uzig"),
+                amount: Uint128::new(1000000),
+            },
+            Asset {
+                info: AssetInfo::native("usdt"),
+                amount: Uint128::new(1000000),
+            },
+        ],
+        None,
+    );
+
+    // Create pool for usdt-oro pair first
+    create_pair(
+        &mut app,
+        owner.clone(),
+        owner.clone(),
+        &factory_instance,
+        vec![
+            Asset {
+                info: AssetInfo::native("usdt"),
+                amount: Uint128::new(1000000),
+            },
+            Asset {
+                info: AssetInfo::cw20(oro_token.clone()),
+                amount: Uint128::new(1000000),
+            },
+        ],
+        None,
+    );
+
+    // Test 4: Keeper cannot add bridge for critical token (should fail)
+    let err = app.execute_contract(
+        keeper.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::UpdateBridges {
+            add: Some(vec![(
+                AssetInfo::native("uzig"),
+                AssetInfo::native("usdt"),
+            )]),
+            remove: None,
+        },
+        &[],
+    )
+    .unwrap_err();
+    assert_eq!(err.root_cause().to_string(), "Unauthorized");
+
+    // Test 5: Keeper cannot remove bridge for critical token (should fail)
+    let err = app.execute_contract(
+        keeper.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::UpdateBridges {
+            add: None,
+            remove: Some(vec![AssetInfo::native("uzig")]),
+        },
+        &[],
+    )
+    .unwrap_err();
+    assert_eq!(err.root_cause().to_string(), "Unauthorized");
+
+    // Test 6: Keeper can remove bridge for non-critical token
+    app.execute_contract(
+        keeper.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::UpdateBridges {
+            add: None,
+            remove: Some(vec![AssetInfo::native("meme-token")]),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Test 7: Non-keeper cannot add bridge (should fail)
+    let random_user = Addr::unchecked("random-user");
+    let err = app.execute_contract(
+        random_user,
+        maker_instance.clone(),
+        &ExecuteMsg::UpdateBridges {
+            add: Some(vec![(
+                AssetInfo::native("random-token"),
+                AssetInfo::native("usdc"),
+            )]),
+            remove: None,
+        },
+        &[],
+    )
+    .unwrap_err();
+    assert_eq!(err.root_cause().to_string(), "Unauthorized");
+
+    // Test 8: Query config should include critical tokens and keepers
+    let config: ConfigResponse = app
+        .wrap()
+        .query_wasm_smart(&maker_instance, &QueryMsg::Config {})
+        .unwrap();
+    assert_eq!(config.critical_tokens, critical_tokens);
+    assert!(config.authorized_keepers.contains(&keeper));
+}
+
+#[test]
+fn test_update_critical_tokens_integration() {
+    let usdc = "uusdc";
+    let owner = Addr::unchecked("owner");
+    let keeper = Addr::unchecked("keeper");
+    let mut app = mock_app(owner.clone(), vec![coin(300_000_000_000u128, usdc)]);
+
+    let staking = Addr::unchecked("staking");
+    
+    // Initialize with no critical tokens
+    let (oro_token, factory_instance, maker_instance, _) = instantiate_contracts(
+        &mut app,
+        owner.clone(),
+        staking.clone(),
+        50u64.into(),
+        Some(Decimal::from_str("0.3").unwrap()),
+        None,
+        None,
+        None,
+    );
+
+    // Add keeper
+    app.execute_contract(
+        owner.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::AddKeeper {
+            keeper: keeper.to_string(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Create pool for uzig-oro pair first
+    create_pair(
+        &mut app,
+        owner.clone(),
+        owner.clone(),
+        &factory_instance,
+        vec![
+            Asset {
+                info: AssetInfo::native("uzig"),
+                amount: Uint128::new(1000000),
+            },
+            Asset {
+                info: AssetInfo::cw20(oro_token.clone()),
+                amount: Uint128::new(1000000),
+            },
+        ],
+        None,
+    );
+
+    // Initially, keeper can add bridge for any token (no critical tokens)
+    app.execute_contract(
+        keeper.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::UpdateBridges {
+            add: Some(vec![(
+                AssetInfo::native("uzig"),
+                AssetInfo::cw20(oro_token.clone()),
+            )]),
+            remove: None,
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Update config to add critical tokens
+    let new_critical_tokens = vec![
+        AssetInfo::native("uzig"),
+        AssetInfo::native("usdc"),
+    ];
+    app.execute_contract(
+        owner.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::UpdateConfig {
+            factory_contract: None,
+            staking_contract: None,
+            governance_contract: None,
+            governance_percent: None,
+            basic_asset: None,
+            max_spread: None,
+            second_receiver_params: None,
+            collect_cooldown: None,
+            oro_token: None,
+            dev_fund_config: None,
+            critical_tokens: Some(new_critical_tokens.clone()),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Create pool for uzig-usdt pair first
+    create_pair(
+        &mut app,
+        owner.clone(),
+        owner.clone(),
+        &factory_instance,
+        vec![
+            Asset {
+                info: AssetInfo::native("uzig"),
+                amount: Uint128::new(1000000),
+            },
+            Asset {
+                info: AssetInfo::native("usdt"),
+                amount: Uint128::new(1000000),
+            },
+        ],
+        None,
+    );
+
+    // Create pool for usdt-oro pair first
+    create_pair(
+        &mut app,
+        owner.clone(),
+        owner.clone(),
+        &factory_instance,
+        vec![
+            Asset {
+                info: AssetInfo::native("usdt"),
+                amount: Uint128::new(1000000),
+            },
+            Asset {
+                info: AssetInfo::cw20(oro_token.clone()),
+                amount: Uint128::new(1000000),
+            },
+        ],
+        None,
+    );
+
+    // Now keeper cannot add bridge for critical token (should fail)
+    let err = app.execute_contract(
+        keeper.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::UpdateBridges {
+            add: Some(vec![(
+                AssetInfo::native("uzig"),
+                AssetInfo::native("usdt"),
+            )]),
+            remove: None,
+        },
+        &[],
+    )
+    .unwrap_err();
+    assert_eq!(err.root_cause().to_string(), "Unauthorized");
+
+    // Create pool for meme-token-oro pair first
+    create_pair(
+        &mut app,
+        owner.clone(),
+        owner.clone(),
+        &factory_instance,
+        vec![
+            Asset {
+                info: AssetInfo::native("meme-token"),
+                amount: Uint128::new(1000000),
+            },
+            Asset {
+                info: AssetInfo::cw20(oro_token.clone()),
+                amount: Uint128::new(1000000),
+            },
+        ],
+        None,
+    );
+
+    // But keeper can still add bridge for non-critical token
+    app.execute_contract(
+        keeper.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::UpdateBridges {
+            add: Some(vec![(
+                AssetInfo::native("meme-token"),
+                AssetInfo::cw20(oro_token.clone()),
+            )]),
+            remove: None,
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Verify config was updated
+    let config: ConfigResponse = app
+        .wrap()
+        .query_wasm_smart(&maker_instance, &QueryMsg::Config {})
+        .unwrap();
+    assert_eq!(config.critical_tokens, new_critical_tokens);
+}
+
+#[test]
+fn test_remove_keeper_integration() {
+    let usdc = "uusdc";
+    let owner = Addr::unchecked("owner");
+    let keeper = Addr::unchecked("keeper");
+    let mut app = mock_app(owner.clone(), vec![coin(300_000_000_000u128, usdc)]);
+
+    let staking = Addr::unchecked("staking");
+    
+    let (oro_token, factory_instance, maker_instance, _) = instantiate_contracts(
+        &mut app,
+        owner.clone(),
+        staking.clone(),
+        50u64.into(),
+        Some(Decimal::from_str("0.3").unwrap()),
+        None,
+        None,
+        None,
+    );
+
+    // Add keeper
+    app.execute_contract(
+        owner.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::AddKeeper {
+            keeper: keeper.to_string(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Verify keeper was added
+    let config: ConfigResponse = app
+        .wrap()
+        .query_wasm_smart(&maker_instance, &QueryMsg::Config {})
+        .unwrap();
+    assert!(config.authorized_keepers.contains(&keeper));
+
+    // Remove keeper
+    app.execute_contract(
+        owner.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::RemoveKeeper {
+            keeper: keeper.to_string(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Verify keeper was removed
+    let config: ConfigResponse = app
+        .wrap()
+        .query_wasm_smart(&maker_instance, &QueryMsg::Config {})
+        .unwrap();
+    assert!(!config.authorized_keepers.contains(&keeper));
+
+    // Keeper should no longer be able to add bridges
+    let err = app.execute_contract(
+        keeper,
+        maker_instance.clone(),
+        &ExecuteMsg::UpdateBridges {
+            add: Some(vec![(
+                AssetInfo::native("meme-token"),
+                AssetInfo::native("usdc"),
+            )]),
+            remove: None,
+        },
+        &[],
+    )
+    .unwrap_err();
+    assert_eq!(err.root_cause().to_string(), "Unauthorized");
+}
+
+#[test]
+fn test_bridge_audit_trail_integration() {
+    let usdc = "uusdc";
+    let owner = Addr::unchecked("owner");
+    let keeper = Addr::unchecked("keeper");
+    let mut app = mock_app(owner.clone(), vec![coin(300_000_000_000u128, usdc)]);
+
+    let staking = Addr::unchecked("staking");
+    
+    let (oro_token, factory_instance, maker_instance, _) = instantiate_contracts(
+        &mut app,
+        owner.clone(),
+        staking.clone(),
+        50u64.into(),
+        Some(Decimal::from_str("0.3").unwrap()),
+        None,
+        None,
+        None,
+    );
+
+    // Add keeper
+    app.execute_contract(
+        owner.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::AddKeeper {
+            keeper: keeper.to_string(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Create pools for the tokens first
+    create_pair(
+        &mut app,
+        owner.clone(),
+        owner.clone(),
+        &factory_instance,
+        vec![
+            Asset {
+                info: AssetInfo::native("token1"),
+                amount: Uint128::new(1000000),
+            },
+            Asset {
+                info: AssetInfo::cw20(oro_token.clone()),
+                amount: Uint128::new(1000000),
+            },
+        ],
+        None,
+    );
+
+    create_pair(
+        &mut app,
+        owner.clone(),
+        owner.clone(),
+        &factory_instance,
+        vec![
+            Asset {
+                info: AssetInfo::native("token2"),
+                amount: Uint128::new(1000000),
+            },
+            Asset {
+                info: AssetInfo::cw20(oro_token.clone()),
+                amount: Uint128::new(1000000),
+            },
+        ],
+        None,
+    );
+
+    create_pair(
+        &mut app,
+        owner.clone(),
+        owner.clone(),
+        &factory_instance,
+        vec![
+            Asset {
+                info: AssetInfo::native("old-token"),
+                amount: Uint128::new(1000000),
+            },
+            Asset {
+                info: AssetInfo::cw20(oro_token.clone()),
+                amount: Uint128::new(1000000),
+            },
+        ],
+        None,
+    );
+
+    // Test owner adding bridges (should include audit trail)
+    let res = app.execute_contract(
+        owner.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::UpdateBridges {
+            add: Some(vec![
+                (AssetInfo::native("token1"), AssetInfo::cw20(oro_token.clone())),
+                (AssetInfo::native("token2"), AssetInfo::cw20(oro_token.clone())),
+            ]),
+            remove: Some(vec![AssetInfo::native("old-token")]),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Check audit trail attributes
+    let attributes = res.events.iter().flat_map(|e| &e.attributes).collect::<Vec<_>>();
+    assert!(attributes.iter().any(|attr| attr.key == "action" && attr.value == "update_bridges"));
+    assert!(attributes.iter().any(|attr| attr.key == "executed_by" && attr.value == owner.to_string()));
+    assert!(attributes.iter().any(|attr| attr.key == "is_owner" && attr.value == "true"));
+    assert!(attributes.iter().any(|attr| attr.key == "bridges_added" && attr.value == "2"));
+    assert!(attributes.iter().any(|attr| attr.key == "bridges_removed" && attr.value == "1"));
+
+    // Create pool for meme-token-oro pair first
+    create_pair(
+        &mut app,
+        owner.clone(),
+        owner.clone(),
+        &factory_instance,
+        vec![
+            Asset {
+                info: AssetInfo::native("meme-token"),
+                amount: Uint128::new(1000000),
+            },
+            Asset {
+                info: AssetInfo::cw20(oro_token.clone()),
+                amount: Uint128::new(1000000),
+            },
+        ],
+        None,
+    );
+
+    // Test keeper adding bridges (should include audit trail)
+    let res = app.execute_contract(
+        keeper.clone(),
+        maker_instance.clone(),
+        &ExecuteMsg::UpdateBridges {
+            add: Some(vec![(AssetInfo::native("meme-token"), AssetInfo::cw20(oro_token.clone()))]),
+            remove: None,
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Check audit trail attributes
+    let attributes = res.events.iter().flat_map(|e| &e.attributes).collect::<Vec<_>>();
+    assert!(attributes.iter().any(|attr| attr.key == "action" && attr.value == "update_bridges"));
+    assert!(attributes.iter().any(|attr| attr.key == "executed_by" && attr.value == keeper.to_string()));
+    assert!(attributes.iter().any(|attr| attr.key == "is_owner" && attr.value == "false"));
+    assert!(attributes.iter().any(|attr| attr.key == "bridges_added" && attr.value == "1"));
+    assert!(attributes.iter().any(|attr| attr.key == "bridges_removed" && attr.value == "0"));
 }
 
 
