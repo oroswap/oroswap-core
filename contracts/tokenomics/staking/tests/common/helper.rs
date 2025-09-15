@@ -82,13 +82,14 @@ impl Helper {
             tracking_admin: owner.to_string(),
             tracking_code_id: tracker_code_id,
             token_factory_addr: TOKEN_FACTORY_MODULE.to_string(),
+            bootstrap_amount: None, // Use default MINIMUM_STAKE_AMOUNT
         };
         let staking = app
             .instantiate_contract(
                 staking_code_id,
                 owner.clone(),
                 &msg,
-                &[],
+                &coins(1000, ORO_DENOM), // Bootstrap amount
                 String::from("Oroswap Staking"),
                 None,
             )

@@ -8,6 +8,8 @@ use oroswap::fee_granter::{GrantResponse, QueryMsg};
 
 /// Default pagination limit
 const DEFAULT_LIMIT: u32 = 50;
+/// Maximum pagination limit to prevent DoS attacks
+const MAX_LIMIT: u32 = 100;
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
@@ -31,9 +33,10 @@ fn list_grants(
         .map(|addr| deps.api.addr_validate(&addr))
         .transpose()?;
     let start_after = start_after.as_ref().map(Bound::exclusive);
+    let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
     GRANTS
         .range(deps.storage, start_after, None, Order::Ascending)
-        .take(limit.unwrap_or(DEFAULT_LIMIT) as usize)
+        .take(limit as usize)
         .map(|item| {
             let (k, amount) = item?;
             Ok(GrantResponse {
@@ -70,6 +73,9 @@ mod unit_tests {
         let mut deps = mock_dependencies();
         let env = mock_env();
         let info = mock_info("owner", &[]);
+
+        // Set up contract balance in mock environment
+        deps.querier.update_balance(&env.contract.address, coins(1000, GAS_DENOM));
 
         let msg = InstantiateMsg {
             owner: "owner".to_string(),
@@ -199,5 +205,20 @@ mod unit_tests {
                 }
             ]
         );
+
+        // Test DoS protection: verify that excessive limits are capped
+        let resp = query(
+            deps.as_ref(),
+            env.clone(),
+            QueryMsg::GrantsList {
+                start_after: None,
+                limit: Some(u32::MAX), // Try to request maximum possible limit
+            },
+        )
+        .unwrap();
+        let config: Vec<GrantResponse> = from_json(&resp).unwrap();
+        // Should be capped to MAX_LIMIT (100) instead of u32::MAX
+        assert_eq!(config.len(), 2); // Only 2 grants exist, so should return both
+        assert!(config.len() <= MAX_LIMIT as usize); // Verify it's capped
     }
 }

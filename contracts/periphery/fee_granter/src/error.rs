@@ -14,6 +14,9 @@ pub enum ContractError {
     #[error("Amount in message {expected} doesn't match sent amount {actual}")]
     InvalidAmount { expected: Uint128, actual: Uint128 },
 
+    #[error("Insufficient balance: requested {requested}, available {available}")]
+    InsufficientBalance { requested: Uint128, available: Uint128 },
+
     #[error("Unauthorized")]
     Unauthorized {},
 }

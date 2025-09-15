@@ -572,6 +572,21 @@ impl AssetInfo {
 
         Ok(())
     }
+
+    /// Compare two AssetInfo instances case-insensitively
+    pub fn case_insensitive_eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (AssetInfo::Token { contract_addr: addr1 }, AssetInfo::Token { contract_addr: addr2 }) => {
+                // Compare contract addresses case-insensitively
+                addr1.to_string().to_lowercase() == addr2.to_string().to_lowercase()
+            }
+            (AssetInfo::NativeToken { denom: denom1 }, AssetInfo::NativeToken { denom: denom2 }) => {
+                // Compare denoms case-insensitively
+                denom1.to_lowercase() == denom2.to_lowercase()
+            }
+            _ => false,
+        }
+    }
 }
 
 /// Taken from https://github.com/mars-protocol/red-bank/blob/5bb0fe145588352b281803f7b870103bc6832621/packages/utils/src/helpers.rs#L68
@@ -1256,5 +1271,37 @@ mod tests {
             ),
             asset_cw20.try_into().unwrap()
         )
+    }
+
+    #[test]
+    fn test_asset_info_case_insensitive_equality() {
+        // Test native token case insensitivity
+        let denom1 = AssetInfo::NativeToken { denom: "ULUNA".to_string() };
+        let denom2 = AssetInfo::NativeToken { denom: "uluna".to_string() };
+        let denom3 = AssetInfo::NativeToken { denom: "Uluna".to_string() };
+        
+        assert!(denom1.case_insensitive_eq(&denom2));
+        assert!(denom1.case_insensitive_eq(&denom3));
+        assert!(denom2.case_insensitive_eq(&denom3));
+        
+        // Test token contract address case insensitivity
+        let addr1 = AssetInfo::Token { contract_addr: Addr::unchecked("CONTRACT123") };
+        let addr2 = AssetInfo::Token { contract_addr: Addr::unchecked("contract123") };
+        let addr3 = AssetInfo::Token { contract_addr: Addr::unchecked("Contract123") };
+        
+        assert!(addr1.case_insensitive_eq(&addr2));
+        assert!(addr1.case_insensitive_eq(&addr3));
+        assert!(addr2.case_insensitive_eq(&addr3));
+        
+        // Test that different assets are not equal
+        assert!(!denom1.case_insensitive_eq(&addr1));
+        
+        // Test that different native tokens are not equal
+        let denom4 = AssetInfo::NativeToken { denom: "uusd".to_string() };
+        assert!(!denom1.case_insensitive_eq(&denom4));
+        
+        // Test that different contract addresses are not equal
+        let addr4 = AssetInfo::Token { contract_addr: Addr::unchecked("different") };
+        assert!(!addr1.case_insensitive_eq(&addr4));
     }
 }

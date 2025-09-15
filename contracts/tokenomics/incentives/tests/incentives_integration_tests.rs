@@ -627,22 +627,16 @@ fn test_multiple_schedules_same_reward() {
         .collect();
     for (ind, (schedule, _)) in schedules.iter().enumerate() {
         helper.mint_assets(&bank, &[reward.clone()]);
-        if ind == 0 {
-            // attach incentivization fee on the first schedule
-            helper.mint_coin(&bank, &incentivization_fee);
-            helper
-                .incentivize(
-                    &bank,
-                    &lp_token,
-                    schedule.clone(),
-                    &[incentivization_fee.clone()],
-                )
-                .unwrap();
-        } else {
-            helper
-                .incentivize(&bank, &lp_token, schedule.clone(), &[])
-                .unwrap();
-        }
+        // Every schedule now requires incentivization fee
+        helper.mint_coin(&bank, &incentivization_fee);
+        helper
+            .incentivize(
+                &bank,
+                &lp_token,
+                schedule.clone(),
+                &[incentivization_fee.clone()],
+            )
+            .unwrap();
     }
 
     let time_before_claims = helper.app.block_info().time.seconds();
@@ -729,8 +723,10 @@ fn test_oro_can_bypass_rewards_limit() {
     }
 
     // ORO can always be added no matter what MAX_REWARD_TOKENS limit is
+    // But now ORO also requires incentivization fee
     let oro_reward = oro.with_balance(1000_000000u128);
     helper.mint_assets(&bank, &[oro_reward.clone()]);
+    helper.mint_coin(&bank, &incentivization_fee);
     helper
         .incentivize(
             &bank,
@@ -739,7 +735,7 @@ fn test_oro_can_bypass_rewards_limit() {
                 reward: oro_reward.clone(),
                 duration_periods: 1,
             },
-            &[],
+            &[incentivization_fee.clone()],
         )
         .unwrap();
 }
@@ -1097,22 +1093,16 @@ fn test_claim_between_different_periods() {
         .collect();
     for (ind, (schedule, _)) in schedules.iter().enumerate() {
         helper.mint_assets(&bank, &[reward.clone()]);
-        if ind == 0 {
-            // attach incentivization fee on the first schedule
-            helper.mint_coin(&bank, &incentivization_fee);
-            helper
-                .incentivize(
-                    &bank,
-                    &lp_token,
-                    schedule.clone(),
-                    &[incentivization_fee.clone()],
-                )
-                .unwrap();
-        } else {
-            helper
-                .incentivize(&bank, &lp_token, schedule.clone(), &[])
-                .unwrap();
-        }
+        // Every schedule now requires incentivization fee
+        helper.mint_coin(&bank, &incentivization_fee);
+        helper
+            .incentivize(
+                &bank,
+                &lp_token,
+                schedule.clone(),
+                &[incentivization_fee.clone()],
+            )
+            .unwrap();
     }
 
     // Incentivize with ORO
@@ -1177,12 +1167,16 @@ fn test_oro_external_reward() {
     let reward = oro.with_balance(2u128 * 7 * 86400 * 25); // 25 uoro per second
     let (schedule, internal_sch) = helper.create_schedule(&reward, 1).unwrap();
     helper.mint_assets(&bank, &[reward.clone()]);
+    // ORO rewards now also require incentivization fee
+    let incentivization_fee = helper.incentivization_fee.clone();
+    helper.mint_coin(&bank, &incentivization_fee);
     helper
-        .incentivize(&bank, &lp_token, schedule.clone(), &[])
+        .incentivize(&bank, &lp_token, schedule.clone(), &[incentivization_fee.clone()])
         .unwrap();
     helper.mint_assets(&bank, &[reward.clone()]);
+    helper.mint_coin(&bank, &incentivization_fee);
     helper
-        .incentivize(&bank, &lp_token, schedule.clone(), &[])
+        .incentivize(&bank, &lp_token, schedule.clone(), &[incentivization_fee.clone()])
         .unwrap();
 
     // Prepare user's liquidity
@@ -1837,13 +1831,10 @@ fn test_long_unclaimed_rewards() {
     // Create multiple schedules with different rewards (starts on the next week)
     for (ind, (schedule, _)) in schedules.iter().enumerate() {
         helper.mint_assets(&bank, &[schedule.reward.clone()]);
-        let mut attach_funds = vec![];
-        if ind % 2 == 0 {
-            helper.mint_coin(&bank, &incentivization_fee);
-            attach_funds = vec![incentivization_fee.clone()]
-        }
+        // Every schedule now requires incentivization fee
+        helper.mint_coin(&bank, &incentivization_fee);
         helper
-            .incentivize(&bank, &lp_token, schedule.clone(), &attach_funds)
+            .incentivize(&bank, &lp_token, schedule.clone(), &[incentivization_fee.clone()])
             .unwrap();
     }
 
@@ -1985,22 +1976,16 @@ fn test_queries() {
         .collect();
     for (ind, (schedule, _)) in schedules.iter().enumerate() {
         helper.mint_assets(&bank, &[reward.clone()]);
-        if ind == 0 {
-            // attach incentivization fee on the first schedule
-            helper.mint_coin(&bank, &incentivization_fee);
-            helper
-                .incentivize(
-                    &bank,
-                    &lp_token,
-                    schedule.clone(),
-                    &[incentivization_fee.clone()],
-                )
-                .unwrap();
-        } else {
-            helper
-                .incentivize(&bank, &lp_token, schedule.clone(), &[])
-                .unwrap();
-        }
+        // Every schedule now requires incentivization fee
+        helper.mint_coin(&bank, &incentivization_fee);
+        helper
+            .incentivize(
+                &bank,
+                &lp_token,
+                schedule.clone(),
+                &[incentivization_fee.clone()],
+            )
+            .unwrap();
     }
 
     let res = helper
@@ -2677,4 +2662,288 @@ fn test_orphaned_rewards() {
         err.downcast::<ContractError>().unwrap(),
         ContractError::NoOrphanedRewards {}
     );
+}
+
+#[test]
+fn test_incentivization_fee_for_every_schedule() {
+    let oro = native_asset_info("ORO".to_string());
+    let mut helper = Helper::new("owner", &oro, false).unwrap();
+    let asset_infos = [AssetInfo::native("foo"), AssetInfo::native("bar")];
+    let pair_info = helper.create_pair(&asset_infos).unwrap();
+    let lp_token = pair_info.liquidity_token.to_string();
+    let bank = TestAddr::new("bank");
+
+    // Create first schedule for a new token
+    let reward = AssetInfo::native("reward1").with_balance(1000_000000u128);
+    let (schedule1, _) = helper.create_schedule(&reward, 1).unwrap();
+    helper.mint_assets(&bank, &[reward]);
+    let incentivization_fee = coin(10000000000u128, "ORO"); // Use ORO fee as configured
+    helper.mint_coin(&bank, &incentivization_fee);
+
+    // First incentivize should work and charge fee
+    helper
+        .incentivize(
+            &bank,
+            &lp_token,
+            schedule1.clone(),
+            &[incentivization_fee.clone()],
+        )
+        .unwrap();
+
+    // Create second schedule for the SAME token
+    let reward2 = AssetInfo::native("reward1").with_balance(1000_000000u128);
+    let (schedule2, _) = helper.create_schedule(&reward2, 1).unwrap();
+    helper.mint_assets(&bank, &[reward2]);
+    helper.mint_coin(&bank, &incentivization_fee);
+
+    // Second incentivize should also charge fee (this is the key change!)
+    helper
+        .incentivize(
+            &bank,
+            &lp_token,
+            schedule2.clone(),
+            &[incentivization_fee.clone()],
+        )
+        .unwrap();
+
+    // Try to create third schedule WITHOUT fee - should fail
+    let reward3 = AssetInfo::native("reward1").with_balance(1000_000000u128);
+    let (schedule3, _) = helper.create_schedule(&reward3, 1).unwrap();
+    helper.mint_assets(&bank, &[reward3]);
+    
+    let result = helper.incentivize(
+        &bank,
+        &lp_token,
+        schedule3,
+        &[], // No fee provided
+    );
+
+    // Should fail with fee expected error
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::IncentivizationFeeExpected {
+            fee: "10000000000ORO".to_string(),
+            lp_token: lp_token.clone(),
+            new_reward_token: "reward1".to_string(),
+        }
+    );
+}
+
+#[test]
+fn test_bypass_upcoming_schedules_vulnerability_fix() {
+    let oro = native_asset_info("ORO".to_string());
+    let mut helper = Helper::new("owner", &oro, false).unwrap();
+    let asset_infos = [AssetInfo::native("foo"), AssetInfo::native("bar")];
+    let pair_info = helper.create_pair(&asset_infos).unwrap();
+    let lp_token = pair_info.liquidity_token.to_string();
+
+    let owner = helper.owner.clone();
+    let incentivization_fee = helper.incentivization_fee.clone();
+
+    let user = TestAddr::new("user");
+    let bank = TestAddr::new("bank");
+    let receiver = TestAddr::new("receiver");
+
+    // Provide liquidity
+    let provide_assets = [
+        asset_infos[0].with_balance(100000u64),
+        asset_infos[1].with_balance(100000u64),
+    ];
+    helper
+        .provide_liquidity(&user, &provide_assets, &pair_info.contract_addr, true)
+        .unwrap();
+
+    // Create multiple schedules for the same reward token
+    let reward_asset_info = AssetInfo::native("reward");
+    
+    // Schedule 1: 1000 tokens for 1 day
+    let reward1 = reward_asset_info.with_balance(1000_000000u128);
+    let (schedule1, _) = helper.create_schedule(&reward1, 1).unwrap();
+    helper.mint_assets(&bank, &[reward1]);
+    helper.mint_coin(&bank, &incentivization_fee);
+    helper
+        .incentivize(
+            &bank,
+            &lp_token,
+            schedule1.clone(),
+            &[incentivization_fee.clone()],
+        )
+        .unwrap();
+
+    // Schedule 2: 2000 tokens for 2 days (starts after schedule 1)
+    let reward2 = reward_asset_info.with_balance(2000_000000u128);
+    let (schedule2, _) = helper.create_schedule(&reward2, 2).unwrap();
+    helper.mint_assets(&bank, &[reward2]);
+    helper.mint_coin(&bank, &incentivization_fee);
+    helper
+        .incentivize(
+            &bank,
+            &lp_token,
+            schedule2.clone(),
+            &[incentivization_fee.clone()],
+        )
+        .unwrap();
+
+    // Schedule 3: 3000 tokens for 3 days (starts after schedule 2)
+    let reward3 = reward_asset_info.with_balance(3000_000000u128);
+    let (schedule3, _) = helper.create_schedule(&reward3, 3).unwrap();
+    helper.mint_assets(&bank, &[reward3]);
+    helper.mint_coin(&bank, &incentivization_fee);
+    helper
+        .incentivize(
+            &bank,
+            &lp_token,
+            schedule3.clone(),
+            &[incentivization_fee.clone()],
+        )
+        .unwrap();
+
+    // Let some time pass (1 day)
+    helper.next_block(86400);
+
+    // Check initial balances
+    let initial_receiver_balance = reward_asset_info
+        .query_pool(&helper.app.wrap(), &receiver)
+        .unwrap()
+        .u128();
+
+    // Test 1: Remove reward with bypass_upcoming_schedules = false (normal case)
+    // This should transfer ALL upcoming schedule rewards to receiver
+    helper
+        .remove_reward(
+            &owner,
+            &lp_token,
+            &reward_asset_info.to_string(),
+            false, // Don't bypass upcoming schedules
+            &receiver,
+        )
+        .unwrap();
+
+    let balance_after_normal = reward_asset_info
+        .query_pool(&helper.app.wrap(), &receiver)
+        .unwrap()
+        .u128();
+
+    // The receiver should have received rewards from all schedules
+    // (current period + upcoming schedules 2 and 3)
+    assert!(balance_after_normal > initial_receiver_balance, 
+        "Receiver should have received rewards from all schedules");
+
+    // Reset the test environment for the bypass test
+    let mut helper = Helper::new("owner", &oro, false).unwrap();
+    let asset_infos = [AssetInfo::native("foo"), AssetInfo::native("bar")];
+    let pair_info = helper.create_pair(&asset_infos).unwrap();
+    let lp_token = pair_info.liquidity_token.to_string();
+
+    let owner = helper.owner.clone();
+    let incentivization_fee = helper.incentivization_fee.clone();
+
+    let user = TestAddr::new("user");
+    let bank = TestAddr::new("bank");
+    let receiver = TestAddr::new("receiver");
+
+    // Provide liquidity
+    let provide_assets = [
+        asset_infos[0].with_balance(100000u64),
+        asset_infos[1].with_balance(100000u64),
+    ];
+    helper
+        .provide_liquidity(&user, &provide_assets, &pair_info.contract_addr, true)
+        .unwrap();
+
+    // Create the same multiple schedules
+    let reward_asset_info = AssetInfo::native("reward");
+    
+    // Schedule 1: 1000 tokens for 1 day
+    let reward1 = reward_asset_info.with_balance(1000_000000u128);
+    let (schedule1, _) = helper.create_schedule(&reward1, 1).unwrap();
+    helper.mint_assets(&bank, &[reward1]);
+    helper.mint_coin(&bank, &incentivization_fee);
+    helper
+        .incentivize(
+            &bank,
+            &lp_token,
+            schedule1.clone(),
+            &[incentivization_fee.clone()],
+        )
+        .unwrap();
+
+    // Schedule 2: 2000 tokens for 2 days
+    let reward2 = reward_asset_info.with_balance(2000_000000u128);
+    let (schedule2, _) = helper.create_schedule(&reward2, 2).unwrap();
+    helper.mint_assets(&bank, &[reward2]);
+    helper.mint_coin(&bank, &incentivization_fee);
+    helper
+        .incentivize(
+            &bank,
+            &lp_token,
+            schedule2.clone(),
+            &[incentivization_fee.clone()],
+        )
+        .unwrap();
+
+    // Schedule 3: 3000 tokens for 3 days
+    let reward3 = reward_asset_info.with_balance(3000_000000u128);
+    let (schedule3, _) = helper.create_schedule(&reward3, 3).unwrap();
+    helper.mint_assets(&bank, &[reward3]);
+    helper.mint_coin(&bank, &incentivization_fee);
+    helper
+        .incentivize(
+            &bank,
+            &lp_token,
+            schedule3.clone(),
+            &[incentivization_fee.clone()],
+        )
+        .unwrap();
+
+    // Let some time pass (1 day)
+    helper.next_block(86400);
+
+    // Check initial balances
+    let initial_receiver_balance = reward_asset_info
+        .query_pool(&helper.app.wrap(), &receiver)
+        .unwrap()
+        .u128();
+
+    // Test 2: Remove reward with bypass_upcoming_schedules = true (vulnerability fix)
+    // This should STILL transfer ALL upcoming schedule rewards to receiver
+    // The bypass flag should only affect state cleanup, not fund transfer
+    helper
+        .remove_reward(
+            &owner,
+            &lp_token,
+            &reward_asset_info.to_string(),
+            true, // Bypass upcoming schedules (but still transfer funds)
+            &receiver,
+        )
+        .unwrap();
+
+    let balance_after_bypass = reward_asset_info
+        .query_pool(&helper.app.wrap(), &receiver)
+        .unwrap()
+        .u128();
+
+    // The receiver should have received the same amount as in the normal case
+    // This verifies that the bypass flag doesn't cause fund seizure
+    assert!(balance_after_bypass > initial_receiver_balance, 
+        "Receiver should have received rewards even with bypass_upcoming_schedules = true");
+    
+    // The amounts should be similar (allowing for small differences due to timing)
+    let difference = if balance_after_bypass > balance_after_normal {
+        balance_after_bypass - balance_after_normal
+    } else {
+        balance_after_normal - balance_after_bypass
+    };
+    
+    // Allow for small differences due to timing and rounding
+    assert!(difference < 1000000, // Allow 1 token difference
+        "Bypass and normal removal should transfer similar amounts. Normal: {}, Bypass: {}", 
+        balance_after_normal, balance_after_bypass);
+
+    println!("✅ Bypass upcoming schedules vulnerability fix verified!");
+    println!("✅ Normal removal transferred: {} tokens", balance_after_normal - initial_receiver_balance);
+    println!("✅ Bypass removal transferred: {} tokens", balance_after_bypass - initial_receiver_balance);
+    println!("✅ No fund seizure occurs when bypass_upcoming_schedules = true");
 }

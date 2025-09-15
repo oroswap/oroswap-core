@@ -7,7 +7,7 @@ use cosmwasm_std::{
     Decimal, Deps, DepsMut, Env, MessageInfo, Order, ReplyOn, Response, StdError, StdResult,
     SubMsg, Uint128, Uint64,
 };
-use cw2::{get_contract_version, set_contract_version};
+use cw2::set_contract_version;
 
 use oroswap::asset::{addr_opt_validate, Asset, AssetInfo, AssetInfoExt};
 use oroswap::common::{claim_ownership, drop_ownership_proposal, propose_new_owner};
@@ -20,12 +20,12 @@ use oroswap::maker::{
 use oroswap::pair::MAX_ALLOWED_SLIPPAGE;
 
 use crate::error::ContractError;
-use crate::migration::migrate_from_v120_plus;
+// Migration function is simplified for new codebase
 use crate::reply::PROCESS_DEV_FUND_REPLY_ID;
 use crate::state::{BRIDGES, CONFIG, LAST_COLLECT_TS, OWNERSHIP_PROPOSAL, SEIZE_CONFIG};
 use crate::utils::{
-    build_distribute_msg, build_send_msg, build_swap_msg, get_pool, try_build_swap_msg,
-    update_second_receiver_cfg, validate_bridge, validate_cooldown, BRIDGES_EXECUTION_MAX_DEPTH,
+    build_distribute_msg, build_send_msg, build_swap_msg, get_pool, is_critical_token,
+    try_build_swap_msg, update_second_receiver_cfg, validate_bridge, validate_cooldown, BRIDGES_EXECUTION_MAX_DEPTH,
     BRIDGES_INITIAL_DEPTH,
 };
 
@@ -76,6 +76,13 @@ pub fn instantiate(
         default_bridge.check(deps.api)?
     }
 
+    // Validate critical tokens if provided
+    if let Some(critical_tokens) = &msg.critical_tokens {
+        for token in critical_tokens {
+            token.check(deps.api)?;
+        }
+    }
+
     validate_cooldown(msg.collect_cooldown)?;
     LAST_COLLECT_TS.save(deps.storage, &env.block.time.seconds())?;
 
@@ -96,9 +103,20 @@ pub fn instantiate(
         second_receiver_cfg: None,
         collect_cooldown: msg.collect_cooldown,
         dev_fund_conf: None,
+        authorized_keepers: vec![],  // Initialize with empty list
+        critical_tokens: msg.critical_tokens.unwrap_or_default(),
     };
 
     update_second_receiver_cfg(deps.as_ref(), &mut cfg, &msg.second_receiver_params)?;
+
+    // Validate total percentages don't exceed 100% during instantiation
+    let total_percentage = Uint128::from(cfg.governance_percent)
+        + Uint128::from(cfg.second_receiver_cfg.as_ref().map(|cfg| cfg.second_receiver_cut).unwrap_or(Uint64::zero()));
+    
+    ensure!(
+        total_percentage <= Uint128::new(100),
+        StdError::generic_err("Total percentage (governance + second_receiver) cannot exceed 100% during instantiation")
+    );
 
     if cfg.staking_contract.is_none() && cfg.governance_contract.is_none() {
         return Err(
@@ -154,6 +172,7 @@ pub fn instantiate(
         attr("max_spread", max_spread.to_string()),
         attr("second_fee_receiver", second_fee_receiver),
         attr("second_receiver_cut", second_receiver_cut),
+        attr("critical_tokens_count", cfg.critical_tokens.len().to_string()),
     ]))
 }
 
@@ -193,7 +212,7 @@ pub fn execute(
     msg: ExecuteMsg,
 ) -> Result<Response, ContractError> {
     match msg {
-        ExecuteMsg::Collect { assets } => collect(deps, env, assets),
+        ExecuteMsg::Collect { assets } => collect(deps, env, info, assets),
         ExecuteMsg::UpdateConfig {
             factory_contract,
             staking_contract,
@@ -205,6 +224,7 @@ pub fn execute(
             collect_cooldown,
             oro_token,
             dev_fund_config,
+            critical_tokens,
         } => update_config(
             deps,
             info,
@@ -218,6 +238,7 @@ pub fn execute(
             collect_cooldown,
             oro_token,
             dev_fund_config,
+            critical_tokens,
         ),
         ExecuteMsg::UpdateBridges { add, remove } => update_bridges(deps, info, add, remove),
         ExecuteMsg::SwapBridgeAssets { assets, depth } => {
@@ -281,7 +302,7 @@ pub fn execute(
 
             Ok(Response::default().add_attribute("action", "enable_rewards"))
         }
-        ExecuteMsg::Seize { assets } => seize(deps, env, assets),
+        ExecuteMsg::Seize { assets } => seize(deps, env, info, assets),
         ExecuteMsg::UpdateSeizeConfig {
             receiver,
             seizable_assets,
@@ -300,6 +321,8 @@ pub fn execute(
 
             Ok(Response::new().add_attribute("action", "update_seize_config"))
         }
+        ExecuteMsg::AddKeeper { keeper } => add_keeper(deps, info, keeper),
+        ExecuteMsg::RemoveKeeper { keeper } => remove_keeper(deps, info, keeper),
     }
 }
 
@@ -309,11 +332,17 @@ pub fn execute(
 fn collect(
     deps: DepsMut,
     env: Env,
+    info: MessageInfo,
     assets: Vec<AssetWithLimit>,
 ) -> Result<Response, ContractError> {
     let mut cfg = CONFIG.load(deps.storage)?;
 
-    // Allowing collect only once per cooldown period
+    // Check if caller is authorized keeper
+    if !cfg.authorized_keepers.contains(&info.sender) {
+        return Err(ContractError::Unauthorized {});
+    }
+    
+    // Apply cooldown for all callers (including authorized keepers) as safety mechanism
     LAST_COLLECT_TS.update(deps.storage, |last_ts| match cfg.collect_cooldown {
         Some(cd_period) if env.block.time.seconds() < last_ts + cd_period => {
             Err(ContractError::Cooldown {
@@ -646,7 +675,12 @@ fn distribute(
     };
 
     let dev_amount = if let Some(dev_fund_conf) = &cfg.dev_fund_conf {
-        let dev_share = amount * dev_fund_conf.share;
+        // Calculate dev fund from remaining balance after governance and second receiver
+        let remaining_after_governance = amount.checked_sub(governance_amount + second_receiver_amount)?;
+        let dev_share = remaining_after_governance.multiply_ratio(
+            (dev_fund_conf.share * Decimal::from_str("100")?).to_uint_ceil(),
+            Uint128::new(100),
+        );
 
         if !dev_share.is_zero() {
             // Swap ORO and process result in reply
@@ -728,6 +762,7 @@ fn update_config(
     collect_cooldown: Option<u64>,
     oro_token: Option<AssetInfo>,
     dev_fund_conf: Option<Box<UpdateDevFundConfig>>,
+    critical_tokens: Option<Vec<AssetInfo>>,
 ) -> Result<Response, ContractError> {
     let mut attributes = vec![attr("action", "set_config")];
 
@@ -828,6 +863,17 @@ fn update_config(
                 dev_fund_conf.share > Decimal::zero() && dev_fund_conf.share <= Decimal::one(),
                 StdError::generic_err("Dev fund share must be > 0 and <= 1")
             );
+            
+            // Validate total percentages don't exceed 100%
+            let total_percentage = Uint128::from(config.governance_percent)
+                + Uint128::from(config.second_receiver_cfg.as_ref().map(|cfg| cfg.second_receiver_cut).unwrap_or(Uint64::zero()))
+                + (dev_fund_conf.share * Decimal::from_str("100")?).to_uint_ceil();
+            
+            ensure!(
+                total_percentage <= Uint128::new(100),
+                StdError::generic_err("Total percentage (governance + second_receiver + dev_fund) cannot exceed 100%")
+            );
+            
             // Ensure we can swap ORO into dev fund asset
             get_pool(
                 &deps.querier,
@@ -842,6 +888,15 @@ fn update_config(
         }
     }
 
+    if let Some(critical_tokens) = critical_tokens {
+        // Validate all critical tokens
+        for token in &critical_tokens {
+            token.check(deps.api)?;
+        }
+        config.critical_tokens = critical_tokens;
+        attributes.push(attr("critical_tokens_count", config.critical_tokens.len().to_string()));
+    }
+
     CONFIG.save(deps.storage, &config)?;
 
     Ok(Response::new().add_attributes(attributes))
@@ -854,7 +909,7 @@ fn update_config(
 /// * **remove** array of bridge tokens removed from being used to swap certain fee tokens.
 ///
 /// ## Executor
-/// Only the owner can execute this.
+/// Owner can manage all bridges. Keepers can only manage non-critical tokens.
 fn update_bridges(
     deps: DepsMut,
     info: MessageInfo,
@@ -863,9 +918,37 @@ fn update_bridges(
 ) -> Result<Response, ContractError> {
     let cfg = CONFIG.load(deps.storage)?;
 
-    // Permission check
-    if info.sender != cfg.owner {
+    // Permission check - owner can manage all bridges, keepers only non-critical ones
+    let is_owner = info.sender == cfg.owner;
+    let is_keeper = cfg.authorized_keepers.contains(&info.sender);
+    
+    if !is_owner && !is_keeper {
         return Err(ContractError::Unauthorized {});
+    }
+
+    // Store counts for logging before processing
+    let add_count = add.as_ref().map(|v| v.len()).unwrap_or(0);
+    let remove_count = remove.as_ref().map(|v| v.len()).unwrap_or(0);
+
+    // If keeper is calling, check that no critical tokens are being modified
+    if !is_owner {
+        // Check remove operations
+        if let Some(ref remove_bridges) = remove {
+            for asset in remove_bridges {
+                if is_critical_token(asset, &cfg.critical_tokens) {
+                    return Err(ContractError::Unauthorized {});
+                }
+            }
+        }
+        
+        // Check add operations
+        if let Some(ref add_bridges) = add {
+            for (asset, _) in add_bridges {
+                if is_critical_token(asset, &cfg.critical_tokens) {
+                    return Err(ContractError::Unauthorized {});
+                }
+            }
+        }
     }
 
     // Remove old bridges
@@ -897,10 +980,24 @@ fn update_bridges(
         }
     }
 
-    Ok(Response::default().add_attribute("action", "update_bridges"))
+    // Add detailed logging for audit trail
+    let mut attributes = vec![attr("action", "update_bridges")];
+    attributes.push(attr("executed_by", info.sender.to_string()));
+    attributes.push(attr("is_owner", is_owner.to_string()));
+    attributes.push(attr("bridges_added", add_count.to_string()));
+    attributes.push(attr("bridges_removed", remove_count.to_string()));
+
+    Ok(Response::default().add_attributes(attributes))
 }
 
-fn seize(deps: DepsMut, env: Env, assets: Vec<AssetWithLimit>) -> Result<Response, ContractError> {
+fn seize(deps: DepsMut, env: Env, info: MessageInfo, assets: Vec<AssetWithLimit>) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    
+    // Allow owner and authorized keepers to seize
+    if info.sender != config.owner && !config.authorized_keepers.contains(&info.sender) {
+        return Err(ContractError::Unauthorized {});
+    }
+    
     ensure!(
         !assets.is_empty(),
         StdError::generic_err("assets vector is empty")
@@ -955,6 +1052,58 @@ fn seize(deps: DepsMut, env: Env, assets: Vec<AssetWithLimit>) -> Result<Respons
         .add_attribute("action", "seize"))
 }
 
+/// Add an authorized keeper who can call collect
+/// Only the owner can execute this.
+fn add_keeper(
+    deps: DepsMut,
+    info: MessageInfo,
+    keeper: String,
+) -> Result<Response, ContractError> {
+    let mut cfg = CONFIG.load(deps.storage)?;
+    
+    // Only owner can add keepers
+    if info.sender != cfg.owner {
+        return Err(ContractError::Unauthorized {});
+    }
+    
+    let keeper_addr = deps.api.addr_validate(&keeper)?;
+    
+    // Check if keeper already exists
+    if cfg.authorized_keepers.contains(&keeper_addr) {
+        return Err(ContractError::Std(StdError::generic_err(
+            "Keeper already exists",
+        )));
+    }
+    
+    cfg.authorized_keepers.push(keeper_addr);
+    CONFIG.save(deps.storage, &cfg)?;
+    
+    Ok(Response::default().add_attribute("action", "add_keeper"))
+}
+
+/// Remove an authorized keeper
+/// Only the owner can execute this.
+fn remove_keeper(
+    deps: DepsMut,
+    info: MessageInfo,
+    keeper: String,
+) -> Result<Response, ContractError> {
+    let mut cfg = CONFIG.load(deps.storage)?;
+    
+    // Only owner can remove keepers
+    if info.sender != cfg.owner {
+        return Err(ContractError::Unauthorized {});
+    }
+    
+    let keeper_addr = deps.api.addr_validate(&keeper)?;
+    
+    // Remove keeper from list
+    cfg.authorized_keepers.retain(|k| k != &keeper_addr);
+    CONFIG.save(deps.storage, &cfg)?;
+    
+    Ok(Response::default().add_attribute("action", "remove_keeper"))
+}
+
 /// Exposes all the queries available in the contract.
 ///
 /// ## Queries
@@ -991,6 +1140,8 @@ fn query_get_config(deps: Deps) -> StdResult<ConfigResponse> {
         pre_upgrade_oro_amount: config.pre_upgrade_oro_amount,
         default_bridge: config.default_bridge,
         second_receiver_cfg: config.second_receiver_cfg,
+        authorized_keepers: config.authorized_keepers,
+        critical_tokens: config.critical_tokens,
     })
 }
 
@@ -1025,67 +1176,11 @@ fn query_bridges(deps: Deps) -> StdResult<Vec<(String, String)>> {
         .collect()
 }
 
-/// Manages contract migration.
+/// Basic migration function for future contract upgrades
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(mut deps: DepsMut, env: Env, msg: MigrateMsg) -> Result<Response, ContractError> {
-    let contract_version = get_contract_version(deps.storage)?;
-
-    match contract_version.contract.as_ref() {
-        "oroswap-maker" => match contract_version.version.as_ref() {
-            // atlantic-2, injective-888: 1.2.0
-            // neutron-1, pion-1, phoenix-1, pisco-1: 1.5.0
-            // injective-1, pacific-1: 1.4.0
-            "1.2.0" => {
-                migrate_from_v120_plus(deps.branch(), msg)?;
-                LAST_COLLECT_TS.save(deps.storage, &env.block.time.seconds())?;
-
-                SEIZE_CONFIG.save(
-                    deps.storage,
-                    &SeizeConfig {
-                        // set to invalid address initially
-                        // governance must update this explicitly
-                        receiver: Addr::unchecked(""),
-                        seizable_assets: vec![],
-                    },
-                )?;
-            }
-            "1.4.0" | "1.5.0" => {
-                // It is enough to load and save config
-                // as we added only one optional field config.dev_fund_conf
-                let config = CONFIG.load(deps.storage)?;
-                CONFIG.save(deps.storage, &config)?;
-
-                SEIZE_CONFIG.save(
-                    deps.storage,
-                    &SeizeConfig {
-                        // set to invalid address initially
-                        // governance must update this explicitly
-                        receiver: Addr::unchecked(""),
-                        seizable_assets: vec![],
-                    },
-                )?;
-            }
-            "1.6.0" => {
-                SEIZE_CONFIG.save(
-                    deps.storage,
-                    &SeizeConfig {
-                        // set to invalid address initially
-                        // governance must update this explicitly
-                        receiver: Addr::unchecked(""),
-                        seizable_assets: vec![],
-                    },
-                )?;
-            }
-            _ => return Err(ContractError::MigrationError {}),
-        },
-        _ => return Err(ContractError::MigrationError {}),
-    };
-
-    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
-
-    Ok(Response::new()
-        .add_attribute("previous_contract_name", &contract_version.contract)
-        .add_attribute("previous_contract_version", &contract_version.version)
-        .add_attribute("new_contract_name", CONTRACT_NAME)
-        .add_attribute("new_contract_version", CONTRACT_VERSION))
+pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
+    // For now, this is a placeholder for future migrations
+    // When contract needs to be upgraded, this function will handle the migration logic
+    
+    Ok(Response::new())
 }

@@ -1016,21 +1016,107 @@ fn check_pair_not_paused(deps: &Deps) -> Result<(), ContractError> {
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, _env: Env, _msg: Empty) -> Result<Response, ContractError> {
-    let contract_version = get_contract_version(deps.storage)?;
+    let prev = get_contract_version(deps.storage)?;
 
-    match contract_version.contract.as_ref() {
-        "oroswap-pair-concentrated" => match contract_version.version.as_ref() {
-            "4.0.0" | "4.0.1" | "4.1.0" => {}
-            _ => return Err(ContractError::MigrationError {}),
-        },
-        _ => return Err(ContractError::MigrationError {}),
+    // Mainnet-safe guard: enforce same contract name and same major version, and prevent downgrades
+    const EXPECTED_NAME: &str = "oroswap-pair-concentrated";
+
+    if prev.contract != EXPECTED_NAME {
+        return Err(ContractError::MigrationError {});
+    }
+
+    fn parse_semver(s: &str) -> Option<(u64, u64, u64)> {
+        let mut it = s.split('.');
+        let major = it.next()?.parse().ok()?;
+        let minor = it.next()?.parse().ok()?;
+        let patch = it.next()?.parse().ok()?;
+        Some((major, minor, patch))
+    }
+
+    let (prev_major, prev_minor, prev_patch) =
+        parse_semver(&prev.version).ok_or(ContractError::MigrationError {})?;
+    let (curr_major, curr_minor, curr_patch) =
+        parse_semver(CONTRACT_VERSION).ok_or(ContractError::MigrationError {})?;
+
+    // Only allow migrations within the same major version and not to an older version
+    if prev_major != curr_major {
+        return Err(ContractError::MigrationError {});
+    }
+    let prev_tuple = (prev_major, prev_minor, prev_patch);
+    let curr_tuple = (curr_major, curr_minor, curr_patch);
+    if prev_tuple > curr_tuple {
+        return Err(ContractError::MigrationError {});
     }
 
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
     Ok(Response::new()
-        .add_attribute("previous_contract_name", &contract_version.contract)
-        .add_attribute("previous_contract_version", &contract_version.version)
+        .add_attribute("previous_contract_name", &prev.contract)
+        .add_attribute("previous_contract_version", &prev.version)
         .add_attribute("new_contract_name", CONTRACT_NAME)
         .add_attribute("new_contract_version", CONTRACT_VERSION))
+}
+
+#[cfg(test)]
+mod migrate_tests {
+    use super::*;
+    use cosmwasm_std::testing::{mock_dependencies, mock_env};
+
+    fn current_major() -> u64 {
+        let mut it = CONTRACT_VERSION.split('.');
+        it.next().unwrap_or("0").parse().unwrap_or(0)
+    }
+
+    fn make_version(major: u64, minor: u64, patch: u64) -> String {
+        format!("{}.{}.{}", major, minor, patch)
+    }
+
+    #[test]
+    fn migrate_allows_same_major_upgrade() {
+        let mut deps = mock_dependencies();
+        // Simulate an older deployed version with the correct contract name and SAME major as current
+        let major = current_major();
+        let prev = make_version(major, 0, 0);
+        set_contract_version(deps.as_mut().storage, "oroswap-pair-concentrated", &prev).unwrap();
+
+        // Should succeed
+        migrate(deps.as_mut(), mock_env(), Empty {}).unwrap();
+    }
+
+    #[test]
+    fn migrate_rejects_wrong_name() {
+        let mut deps = mock_dependencies();
+        // Wrong previous contract name
+        let major = current_major();
+        let prev = make_version(major, 0, 0);
+        set_contract_version(deps.as_mut().storage, "wrong-name", &prev).unwrap();
+
+        let err = migrate(deps.as_mut(), mock_env(), Empty {}).unwrap_err();
+        assert_eq!(err, ContractError::MigrationError {});
+    }
+
+    #[test]
+    fn migrate_rejects_major_mismatch() {
+        let mut deps = mock_dependencies();
+        // Different major version
+        let curr_major = current_major();
+        let other_major = if curr_major == 0 { 1 } else { curr_major - 1 };
+        let prev = make_version(other_major, 9, 9);
+        set_contract_version(deps.as_mut().storage, "oroswap-pair-concentrated", &prev).unwrap();
+
+        let err = migrate(deps.as_mut(), mock_env(), Empty {}).unwrap_err();
+        assert_eq!(err, ContractError::MigrationError {});
+    }
+
+    #[test]
+    fn migrate_rejects_downgrade() {
+        let mut deps = mock_dependencies();
+        // Previous version greater than current (ensure downgrade is rejected)
+        let major = current_major();
+        let prev = make_version(major, 99, 0);
+        set_contract_version(deps.as_mut().storage, "oroswap-pair-concentrated", &prev).unwrap();
+
+        let err = migrate(deps.as_mut(), mock_env(), Empty {}).unwrap_err();
+        assert_eq!(err, ContractError::MigrationError {});
+    }
 }

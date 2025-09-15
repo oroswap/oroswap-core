@@ -1498,3 +1498,312 @@ fn claim_and_check(
     let oro_amount = query_token_balance(app, &oro_token, &who);
     assert_eq!(oro_amount.u128(), expected_amount);
 }
+
+#[test]
+fn test_schedule_limit_vulnerability_fix() {
+    let user1 = Addr::unchecked(USER1);
+    let owner = Addr::unchecked(OWNER1);
+
+    let mut app = mock_app(&owner);
+    let token_code_id = store_token_code(&mut app);
+    let oro_token_instance = instantiate_token(&mut app, token_code_id, "ORO", Some(1_000_000_000_000000));
+    let vesting_instance = instantiate_vesting(&mut app, &oro_token_instance);
+    let current_time = app.block_info().time.seconds();
+
+    // Helper closure to create a valid vesting schedule
+    let create_schedule = |start_offset: u64, end_offset: u64, amount: u128| -> VestingSchedule {
+        VestingSchedule {
+            start_point: VestingSchedulePoint {
+                time: current_time + start_offset,
+                amount: Uint128::zero(),
+            },
+            end_point: Some(VestingSchedulePoint {
+                time: current_time + end_offset,
+                amount: Uint128::new(amount),
+            }),
+        }
+    };
+
+    // Test 1: New account trying to register more than SCHEDULES_LIMIT (8) schedules
+    // This should fail with ExceedSchedulesMaximumLimit error
+    let too_many_schedules = (0..9).map(|i| create_schedule(100 + i, 150 + i, 100)).collect::<Vec<_>>();
+    
+    let msg = Cw20ExecuteMsg::Send {
+        contract: vesting_instance.to_string(),
+        msg: to_json_binary(&Cw20HookMsg::RegisterVestingAccounts {
+            vesting_accounts: vec![VestingAccount {
+                address: user1.to_string(),
+                schedules: too_many_schedules,
+            }],
+        })
+        .unwrap(),
+        amount: Uint128::from(900u128),
+    };
+
+    let err = app
+        .execute_contract(owner.clone(), oro_token_instance.clone(), &msg, &[])
+        .unwrap_err();
+    
+    let error_msg = err.root_cause().to_string();
+    println!("Test 1 error message: {}", error_msg);
+    assert!(error_msg.contains("number of schedules exceeds maximum limit"), 
+        "Expected schedule limit error for new account with too many schedules, got: {}", error_msg);
+
+    // Test 2: New account registering exactly SCHEDULES_LIMIT (8) schedules should succeed
+    let exactly_limit_schedules = (0..8).map(|i| create_schedule(100 + i, 150 + i, 100)).collect::<Vec<_>>();
+    
+    let msg = Cw20ExecuteMsg::Send {
+        contract: vesting_instance.to_string(),
+        msg: to_json_binary(&Cw20HookMsg::RegisterVestingAccounts {
+            vesting_accounts: vec![VestingAccount {
+                address: user1.to_string(),
+                schedules: exactly_limit_schedules,
+            }],
+        })
+        .unwrap(),
+        amount: Uint128::from(800u128),
+    };
+
+    app.execute_contract(owner.clone(), oro_token_instance.clone(), &msg, &[])
+        .unwrap();
+
+    // Test 3: Existing account with 8 schedules trying to add 1 more schedule
+    // This should fail with ExceedSchedulesMaximumLimit error
+    let additional_schedule = vec![create_schedule(200, 250, 100)];
+    
+    let msg = Cw20ExecuteMsg::Send {
+        contract: vesting_instance.to_string(),
+        msg: to_json_binary(&Cw20HookMsg::RegisterVestingAccounts {
+            vesting_accounts: vec![VestingAccount {
+                address: user1.to_string(),
+                schedules: additional_schedule,
+            }],
+        })
+        .unwrap(),
+        amount: Uint128::from(100u128),
+    };
+
+    let err = app
+        .execute_contract(owner.clone(), oro_token_instance.clone(), &msg, &[])
+        .unwrap_err();
+    
+    let error_msg = err.root_cause().to_string();
+    println!("Test 3 error message: {}", error_msg);
+    assert!(error_msg.contains("number of schedules exceeds maximum limit"), 
+        "Expected schedule limit error for existing account exceeding limit, got: {}", error_msg);
+
+    // Test 4: Existing account with 8 schedules trying to add multiple schedules
+    // This should fail with ExceedSchedulesMaximumLimit error
+    let multiple_additional_schedules = (0..3).map(|i| create_schedule(300 + i, 350 + i, 100)).collect::<Vec<_>>();
+    
+    let msg = Cw20ExecuteMsg::Send {
+        contract: vesting_instance.to_string(),
+        msg: to_json_binary(&Cw20HookMsg::RegisterVestingAccounts {
+            vesting_accounts: vec![VestingAccount {
+                address: user1.to_string(),
+                schedules: multiple_additional_schedules,
+            }],
+        })
+        .unwrap(),
+        amount: Uint128::from(300u128),
+    };
+
+    let err = app
+        .execute_contract(owner.clone(), oro_token_instance.clone(), &msg, &[])
+        .unwrap_err();
+    
+    let error_msg = err.root_cause().to_string();
+    println!("Test 4 error message: {}", error_msg);
+    assert!(error_msg.contains("number of schedules exceeds maximum limit"), 
+        "Expected schedule limit error for existing account with multiple additional schedules, got: {}", error_msg);
+
+    println!("✅ Schedule limit vulnerability fix test passed!");
+    println!("✅ New accounts cannot register more than 8 schedules");
+    println!("✅ Existing accounts cannot exceed 8 schedules total");
+    println!("✅ Multiple schedule registration is properly limited");
+}
+
+#[test]
+fn test_immediate_unlock_vulnerability_fix() {
+    let user1 = Addr::unchecked(USER1);
+    let owner = Addr::unchecked(OWNER1);
+
+    let mut app = mock_app(&owner);
+    let token_code_id = store_token_code(&mut app);
+    let oro_token_instance = instantiate_token(&mut app, token_code_id, "ORO", Some(1_000_000_000_000000));
+    let vesting_instance = instantiate_vesting(&mut app, &oro_token_instance);
+    let current_time = app.block_info().time.seconds();
+
+    // Test 1: Schedule without end_point with past start time should FAIL
+    // This was the vulnerability - immediate unlock bypass
+    let past_time_schedule = VestingSchedule {
+        start_point: VestingSchedulePoint {
+            time: current_time - 1000, // Past time (1000 seconds ago)
+            amount: Uint128::new(100), // Set amount to match the sent tokens
+        },
+        end_point: None, // No end_point = immediate unlock vulnerability
+    };
+
+    let msg = Cw20ExecuteMsg::Send {
+        contract: vesting_instance.to_string(),
+        msg: to_json_binary(&Cw20HookMsg::RegisterVestingAccounts {
+            vesting_accounts: vec![VestingAccount {
+                address: user1.to_string(),
+                schedules: vec![past_time_schedule],
+            }],
+        })
+        .unwrap(),
+        amount: Uint128::from(100u128),
+    };
+
+    let err = app
+        .execute_contract(owner.clone(), oro_token_instance.clone(), &msg, &[])
+        .unwrap_err();
+    
+    let error_msg = err.root_cause().to_string();
+    println!("Test 1 error message: {}", error_msg);
+    assert!(error_msg.contains("Vesting schedule error"), 
+        "Expected vesting schedule error for past start time without end_point, got: {}", error_msg);
+
+    // Test 2: Schedule without end_point with future start time should SUCCEED
+    let future_time_schedule = VestingSchedule {
+        start_point: VestingSchedulePoint {
+            time: current_time + 100, // Future time (100 seconds from now)
+            amount: Uint128::new(100), // Set amount to match the sent tokens
+        },
+        end_point: None, // No end_point but future start time is valid
+    };
+
+    let msg = Cw20ExecuteMsg::Send {
+        contract: vesting_instance.to_string(),
+        msg: to_json_binary(&Cw20HookMsg::RegisterVestingAccounts {
+            vesting_accounts: vec![VestingAccount {
+                address: user1.to_string(),
+                schedules: vec![future_time_schedule],
+            }],
+        })
+        .unwrap(),
+        amount: Uint128::from(100u128),
+    };
+
+    app.execute_contract(owner.clone(), oro_token_instance.clone(), &msg, &[])
+        .unwrap();
+
+    println!("✅ Test 2 passed: Future start time without end_point is valid");
+
+    // Test 3: Schedule with end_point (existing validation) should still work
+    let valid_schedule_with_end = VestingSchedule {
+        start_point: VestingSchedulePoint {
+            time: current_time + 50,
+            amount: Uint128::zero(),
+        },
+        end_point: Some(VestingSchedulePoint {
+            time: current_time + 150,
+            amount: Uint128::new(200),
+        }),
+    };
+
+    let msg = Cw20ExecuteMsg::Send {
+        contract: vesting_instance.to_string(),
+        msg: to_json_binary(&Cw20HookMsg::RegisterVestingAccounts {
+            vesting_accounts: vec![VestingAccount {
+                address: Addr::unchecked("user2").to_string(),
+                schedules: vec![valid_schedule_with_end],
+            }],
+        })
+        .unwrap(),
+        amount: Uint128::from(200u128),
+    };
+
+    app.execute_contract(owner.clone(), oro_token_instance.clone(), &msg, &[])
+        .unwrap();
+
+    println!("✅ Test 3 passed: Valid schedule with end_point still works");
+
+    println!("✅ Immediate unlock vulnerability fix test passed!");
+    println!("✅ Schedules without end_point cannot have past start times");
+    println!("✅ Future start times without end_point are still valid");
+    println!("✅ Existing validation for schedules with end_point is preserved");
+}
+
+#[test]
+fn test_withdrawal_exact_amount_fix() {
+    let user1 = Addr::unchecked(USER1);
+    let owner = Addr::unchecked(OWNER1);
+
+    let mut app = mock_app(&owner);
+    let token_code_id = store_token_code(&mut app);
+    let oro_token_instance = instantiate_token(&mut app, token_code_id, "ORO", Some(1_000_000_000_000000));
+    let vesting_instance = instantiate_vesting(&mut app, &oro_token_instance);
+    let current_time = app.block_info().time.seconds();
+
+    // Create a vesting schedule with 100 tokens
+    let schedule = VestingSchedule {
+        start_point: VestingSchedulePoint {
+            time: current_time + 50,
+            amount: Uint128::zero(),
+        },
+        end_point: Some(VestingSchedulePoint {
+            time: current_time + 150,
+            amount: Uint128::new(100),
+        }),
+    };
+
+    // Register the vesting account
+    let msg = Cw20ExecuteMsg::Send {
+        contract: vesting_instance.to_string(),
+        msg: to_json_binary(&Cw20HookMsg::RegisterVestingAccounts {
+            vesting_accounts: vec![VestingAccount {
+                address: user1.to_string(),
+                schedules: vec![schedule],
+            }],
+        })
+        .unwrap(),
+        amount: Uint128::from(100u128),
+    };
+
+    app.execute_contract(owner.clone(), oro_token_instance.clone(), &msg, &[])
+        .unwrap();
+
+    // Move time forward to make the schedule active
+    app.update_block(|b| {
+        b.time = b.time.plus_seconds(100);
+        b.height += 100 / 5
+    });
+
+    // Test 1: Try to withdraw the exact remaining amount (should succeed with fix)
+    // This would fail with the old >= condition, leaving 1 token stuck
+    let withdraw_msg = ExecuteMsg::WithdrawFromActiveSchedule {
+        account: user1.to_string(),
+        recipient: None,
+        withdraw_amount: Uint128::new(50), // Withdraw exactly half
+    };
+
+    app.execute_contract(owner.clone(), vesting_instance.clone(), &withdraw_msg, &[])
+        .unwrap();
+
+    println!("✅ Test 1 passed: Withdrew exact amount successfully");
+
+    // Test 2: Try to withdraw more than available (should fail)
+    let withdraw_msg = ExecuteMsg::WithdrawFromActiveSchedule {
+        account: user1.to_string(),
+        recipient: None,
+        withdraw_amount: Uint128::new(51), // Try to withdraw more than available
+    };
+
+    let err = app
+        .execute_contract(owner.clone(), vesting_instance.clone(), &withdraw_msg, &[])
+        .unwrap_err();
+    
+    let error_msg = err.root_cause().to_string();
+    println!("Test 2 error message: {}", error_msg);
+    assert!(error_msg.contains("amount left 0"), 
+        "Expected amount left error for excessive withdrawal, got: {}", error_msg);
+
+    println!("✅ Test 2 passed: Excessive withdrawal correctly rejected");
+
+    println!("✅ Withdrawal exact amount fix test passed!");
+    println!("✅ Owner can now withdraw exact remaining balances");
+    println!("✅ No more single token units left stuck in schedules");
+    println!("✅ Excessive withdrawals are still properly rejected");
+}

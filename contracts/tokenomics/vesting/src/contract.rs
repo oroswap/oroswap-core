@@ -36,6 +36,8 @@ pub fn instantiate(
 
     msg.vesting_token.check(deps.api)?;
 
+    let vesting_token_string = msg.vesting_token.to_string();
+    
     CONFIG.save(
         deps.storage,
         &Config {
@@ -44,7 +46,12 @@ pub fn instantiate(
         },
     )?;
 
-    Ok(Response::new())
+    Ok(Response::new()
+        .add_attributes(vec![
+            attr("action", "instantiate"),
+            attr("contract", CONTRACT_NAME),
+            attr("vesting_token", vesting_token_string),
+        ]))
 }
 
 /// Exposes execute functions available in the contract.
@@ -180,13 +187,21 @@ pub fn register_vesting_accounts(
         }
 
         if let Some(mut old_info) = VESTING_INFO.may_load(deps.storage, &account_address)? {
-            if old_info.schedules.len() + 1 > SCHEDULES_LIMIT {
+            // Check if adding new schedules would exceed the limit
+            if old_info.schedules.len() + vesting_account.schedules.len() > SCHEDULES_LIMIT {
                 return Err(ContractError::ExceedSchedulesMaximumLimit(
                     vesting_account.address,
                 ));
             };
             released_amount = old_info.released_amount;
             vesting_account.schedules.append(&mut old_info.schedules);
+        } else {
+            // For new accounts, check if the number of schedules exceeds the limit
+            if vesting_account.schedules.len() > SCHEDULES_LIMIT {
+                return Err(ContractError::ExceedSchedulesMaximumLimit(
+                    vesting_account.address,
+                ));
+            };
         }
 
         VESTING_INFO.save(
@@ -227,6 +242,12 @@ fn assert_vesting_schedules(
                 && end_point.time > env.block.time.seconds()
                 && sch.start_point.amount < end_point.amount)
             {
+                return Err(ContractError::VestingScheduleError(addr.to_string()));
+            }
+        } else {
+            // For schedules without end_point, enforce start_time >= block_time
+            // This prevents immediate unlocking of tokens with past start times
+            if sch.start_point.time < env.block.time.seconds() {
                 return Err(ContractError::VestingScheduleError(addr.to_string()));
             }
         }
@@ -385,7 +406,7 @@ fn withdraw_from_active_schedule(
         let sch_unlocked_amount = calc_schedule_unlocked_amount(schedule, block_time)?;
 
         let amount_left = end_point.amount.checked_sub(sch_unlocked_amount)?;
-        if amount >= amount_left {
+        if amount > amount_left {
             return Err(ContractError::NotEnoughTokens(amount_left));
         }
 

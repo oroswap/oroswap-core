@@ -396,32 +396,34 @@ impl PoolInfo {
         // Remove active schedule from state
         EXTERNAL_REWARD_SCHEDULES.remove(storage, (lp_asset, reward_asset, next_update_ts));
 
-        // If there is too much spam in the state, we can bypass upcoming schedules
-        if !bypass_upcoming_schedules {
-            let schedules = EXTERNAL_REWARD_SCHEDULES
-                .prefix((lp_asset, reward_asset))
-                .range(
-                    storage,
-                    Some(Bound::exclusive(next_update_ts)),
-                    None,
-                    Order::Ascending,
-                )
-                .collect::<StdResult<Vec<_>>>()?;
+        // Always calculate upcoming schedule rewards to prevent fund seizure
+        // The bypass_upcoming_schedules flag only controls whether we remove schedules from state
+        let schedules = EXTERNAL_REWARD_SCHEDULES
+            .prefix((lp_asset, reward_asset))
+            .range(
+                storage,
+                Some(Bound::exclusive(next_update_ts)),
+                None,
+                Order::Ascending,
+            )
+            .collect::<StdResult<Vec<_>>>()?;
 
-            // Collect future rewards and remove future schedules from state
-            let mut prev_time = next_update_ts;
-            schedules
-                .into_iter()
-                .for_each(|(update_ts, period_reward_per_sec)| {
-                    if update_ts > next_update_ts {
-                        remaining += period_reward_per_sec
-                            * Decimal256::from_ratio(update_ts - prev_time, 1u8);
-                        prev_time = update_ts;
-                    }
+        // Collect future rewards and optionally remove future schedules from state
+        let mut prev_time = next_update_ts;
+        schedules
+            .into_iter()
+            .for_each(|(update_ts, period_reward_per_sec)| {
+                if update_ts > next_update_ts {
+                    remaining += period_reward_per_sec
+                        * Decimal256::from_ratio(update_ts - prev_time, 1u8);
+                    prev_time = update_ts;
+                }
 
+                // Only remove schedules from state if not bypassing (for performance reasons)
+                if !bypass_upcoming_schedules {
                     EXTERNAL_REWARD_SCHEDULES.remove(storage, (lp_asset, reward_asset, update_ts));
-                })
-        }
+                }
+            });
 
         // Take orphaned rewards as well
         remaining += reward_info.orphaned;
@@ -495,7 +497,7 @@ pub fn list_pool_stakers(
     limit: Option<u8>,
 ) -> StdResult<Vec<(Addr, Uint128)>> {
     let start = start_after.as_ref().map(Bound::exclusive);
-    let limit = limit.unwrap_or(MAX_PAGE_LIMIT).max(MAX_PAGE_LIMIT);
+    let limit = limit.unwrap_or(MAX_PAGE_LIMIT).min(MAX_PAGE_LIMIT);
     USER_INFO
         .prefix(lp_token)
         .range(storage, start, None, Order::Ascending)

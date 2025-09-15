@@ -58,7 +58,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> Result<Binary, ContractErro
             let stakers = list_pool_stakers(deps.storage, &lp_asset, start_after, limit)?;
             Ok(to_json_binary(&stakers)?)
         }
-        QueryMsg::IsFeeExpected { lp_token, reward } => {
+        QueryMsg::IsFeeExpected { lp_token: _, reward } => {
             let reward_asset = determine_asset_info(&reward, deps.api)?;
             let config = CONFIG.load(deps.storage)?;
 
@@ -66,24 +66,9 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> Result<Binary, ContractErro
                 // ORO rewards don't require incentivize fee.
                 false
             } else {
-                let lp_asset = determine_asset_info(&lp_token, deps.api)?;
-                let pool_info = PoolInfo::may_load(deps.storage, &lp_asset)?;
-
-                pool_info
-                    .map(|mut x| -> StdResult<_> {
-                        // update_rewards() removes finished schedules
-                        x.update_rewards(deps.storage, &env, &lp_asset)?;
-
-                        let expected = x
-                            .rewards
-                            .into_iter()
-                            .filter(|x| x.reward.is_external())
-                            .all(|x| x.reward.asset_info() != &reward_asset);
-
-                        Ok(expected)
-                    })
-                    .transpose()?
-                    .unwrap_or(true)
+                // Every schedule now requires incentivization fee to prevent DoS attacks
+                // This makes spam attacks economically unfeasible by requiring payment for each schedule
+                true
             };
 
             Ok(to_json_binary(&is_fee_expected)?)
@@ -120,7 +105,7 @@ fn list_pools(
     start_after: Option<String>,
     limit: Option<u8>,
 ) -> StdResult<Vec<String>> {
-    let limit = limit.unwrap_or(MAX_PAGE_LIMIT) as usize;
+    let limit = limit.unwrap_or(MAX_PAGE_LIMIT).min(MAX_PAGE_LIMIT) as usize;
     POOLS
         .keys_raw(
             deps.storage,
@@ -142,7 +127,7 @@ fn query_blocked_tokens(
     start_after: Option<AssetInfo>,
     limit: Option<u8>,
 ) -> StdResult<Vec<AssetInfo>> {
-    let limit = limit.unwrap_or(MAX_PAGE_LIMIT) as usize;
+    let limit = limit.unwrap_or(MAX_PAGE_LIMIT).min(MAX_PAGE_LIMIT) as usize;
     if let Some(start_after) = start_after {
         let asset_key = asset_info_key(&start_after);
         BLOCKED_TOKENS.range(

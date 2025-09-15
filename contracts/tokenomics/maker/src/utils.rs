@@ -1,7 +1,8 @@
 use cosmwasm_std::{
     coins, to_json_binary, Addr, Binary, CosmosMsg, Decimal, Deps, Env,
-    QuerierWrapper, StdError, StdResult, SubMsg, Uint128, WasmMsg, BankMsg,
+    QuerierWrapper, StdError, StdResult, SubMsg, Uint128, Uint64, WasmMsg, BankMsg,
 };
+use std::str::FromStr;
 use cw20::Cw20ExecuteMsg;
 
 use oroswap::asset::{Asset, AssetInfo, PairInfo};
@@ -295,6 +296,17 @@ pub fn update_second_receiver_cfg(
         });
     }
 
+    // Validate total percentages don't exceed 100% after updating second receiver
+    let total_percentage = Uint128::from(cfg.governance_percent)
+        + Uint128::from(cfg.second_receiver_cfg.as_ref().map(|cfg| cfg.second_receiver_cut).unwrap_or(Uint64::zero()))
+        + (cfg.dev_fund_conf.as_ref().map(|dev_cfg| dev_cfg.share * Decimal::from_str("100").unwrap()).unwrap_or(Decimal::zero())).to_uint_ceil();
+    
+    if total_percentage > Uint128::new(100) {
+        return Err(StdError::generic_err(
+            "Total percentage (governance + second_receiver + dev_fund) cannot exceed 100%"
+        ));
+    }
+
     Ok(())
 }
 
@@ -310,4 +322,9 @@ pub fn validate_cooldown(maybe_cooldown: Option<u64>) -> Result<(), ContractErro
     }
 
     Ok(())
+}
+
+/// Check if a token is in the critical tokens list
+pub fn is_critical_token(token: &AssetInfo, critical_tokens: &[AssetInfo]) -> bool {
+    critical_tokens.contains(token)
 }

@@ -1,5 +1,5 @@
 use cosmwasm_std::{
-    entry_point, from_json, to_json_binary, wasm_execute, Addr, Api, Binary, Decimal, Deps,
+    attr, entry_point, from_json, to_json_binary, wasm_execute, Addr, Api, Binary, Decimal, Deps,
     DepsMut, Empty, Env, MessageInfo, Reply, Response, StdError, StdResult, SubMsg, SubMsgResult,
     Uint128,
 };
@@ -43,7 +43,12 @@ pub fn instantiate(
         },
     )?;
 
-    Ok(Response::default())
+    Ok(Response::new()
+        .add_attributes(vec![
+            attr("action", "instantiate"),
+            attr("contract", CONTRACT_NAME),
+            attr("oroswap_factory", msg.oroswap_factory),
+        ]))
 }
 
 /// Exposes all the execute functions available in the contract.

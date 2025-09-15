@@ -25,3 +25,6 @@ target/
 build_rs_cov.profraw
 tarpaulin-report.html
 ARCHITECTURE.md
+
+# Development contracts (not ready for staging)
+# contracts/periphery/pool_initializer/

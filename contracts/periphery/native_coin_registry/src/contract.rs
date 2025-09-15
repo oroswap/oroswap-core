@@ -25,6 +25,8 @@ pub const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Settings for pagination.
 pub const DEFAULT_LIMIT: u32 = 50;
+/// Maximum pagination limit to prevent DoS attacks
+pub const MAX_LIMIT: u32 = 100;
 /// Allowed decimals
 pub const ALLOWED_DECIMALS: RangeInclusive<u8> = 0..=18u8;
 
@@ -44,7 +46,11 @@ pub fn instantiate(
         },
     )?;
 
-    Ok(Response::default())
+    Ok(Response::new()
+        .add_attributes(vec![
+            attr("action", "instantiate"),
+            attr("contract", CONTRACT_NAME),
+        ]))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -242,7 +248,7 @@ pub fn query_native_tokens(
     start_after: Option<String>,
     limit: Option<u32>,
 ) -> StdResult<Vec<CoinResponse>> {
-    let limit = limit.unwrap_or(DEFAULT_LIMIT) as usize;
+    let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT) as usize;
     let start = start_after.map(Bound::exclusive);
 
     COINS_INFO

@@ -1,6 +1,6 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
-use cosmwasm_std::{DepsMut, Env, MessageInfo, Response, Uint128};
+use cosmwasm_std::{attr, DepsMut, Env, MessageInfo, Response, Uint128};
 
 use oroswap::asset::{addr_opt_validate, validate_native_denom};
 use oroswap::incentives::{Config, InstantiateMsg};
@@ -29,6 +29,8 @@ pub fn instantiate(
         validate_native_denom(&fee_info.fee.denom)?;
     }
 
+    let oro_token_string = msg.oro_token.to_string();
+
     CONFIG.save(
         deps.storage,
         &Config {
@@ -46,5 +48,10 @@ pub fn instantiate(
     )?;
     ACTIVE_POOLS.save(deps.storage, &vec![])?;
 
-    Ok(Response::new())
+    Ok(Response::new()
+        .add_attributes(vec![
+            attr("action", "instantiate"),
+            attr("contract", CONTRACT_NAME),
+            attr("oro_token", oro_token_string),
+        ]))
 }

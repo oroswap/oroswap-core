@@ -52,6 +52,10 @@ pub struct Config {
     pub second_receiver_cfg: Option<SecondReceiverConfig>,
     /// If set defines the period when maker collect can be called
     pub collect_cooldown: Option<u64>,
+    /// List of authorized keepers who can call collect
+    pub authorized_keepers: Vec<Addr>,
+    /// List of critical tokens that only the owner can manage bridges for
+    pub critical_tokens: Vec<AssetInfo>,
 }
 
 /// This structure stores general parameters for the contract.
@@ -77,6 +81,8 @@ pub struct InstantiateMsg {
     pub second_receiver_params: Option<SecondReceiverParams>,
     /// If set defines the period when maker collect can be called
     pub collect_cooldown: Option<u64>,
+    /// List of critical tokens that only the owner can manage bridges for
+    pub critical_tokens: Option<Vec<AssetInfo>>,
 }
 
 #[cw_serde]
@@ -116,6 +122,8 @@ pub enum ExecuteMsg {
         oro_token: Option<AssetInfo>,
         /// Dev tax configuration
         dev_fund_config: Option<Box<UpdateDevFundConfig>>,
+        /// List of critical tokens that only the owner can manage bridges for
+        critical_tokens: Option<Vec<AssetInfo>>,
     },
     /// Add bridge tokens used to swap specific fee tokens to ORO (effectively declaring a swap route)
     UpdateBridges {
@@ -154,6 +162,10 @@ pub enum ExecuteMsg {
         #[serde(default)]
         seizable_assets: Vec<AssetInfo>,
     },
+    /// Add an authorized keeper who can call collect
+    AddKeeper { keeper: String },
+    /// Remove an authorized keeper
+    RemoveKeeper { keeper: String },
 }
 
 /// This structure describes the query functions available in the contract.
@@ -200,6 +212,10 @@ pub struct ConfigResponse {
     pub pre_upgrade_oro_amount: Uint128,
     /// Parameters that describe the second receiver of fees
     pub second_receiver_cfg: Option<SecondReceiverConfig>,
+    /// List of authorized keepers who can call collect
+    pub authorized_keepers: Vec<Addr>,
+    /// List of critical tokens that only the owner can manage bridges for
+    pub critical_tokens: Vec<AssetInfo>,
 }
 
 /// A custom struct used to return multiple asset balances.
