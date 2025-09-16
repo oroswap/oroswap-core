@@ -159,7 +159,16 @@ incentivize_external() {
   echo "Scheduling $AMT $DENOM to $LP over $DUR periods..."
   echo "Incentivization fee: ${INCENTIVE_FEE}uzig"
   echo "Reward amount: ${AMT}${DENOM}"
-  echo "Total amount to send: ${INCENTIVE_FEE}uzig,${AMT}${DENOM}"
+  
+  # Calculate total amount for the same denomination
+  if [[ "$DENOM" == "uzig" ]]; then
+    TOTAL_AMOUNT=$((INCENTIVE_FEE + AMT))
+    echo "Total amount to send: ${TOTAL_AMOUNT}uzig"
+    AMOUNT_FLAG="${TOTAL_AMOUNT}uzig"
+  else
+    echo "Total amount to send: ${INCENTIVE_FEE}uzig,${AMT}${DENOM}"
+    AMOUNT_FLAG="${INCENTIVE_FEE}uzig,${AMT}${DENOM}"
+  fi
   
   $BINARY tx wasm execute "$INC_CONTRACT" '{
     "incentivize": {
@@ -171,7 +180,7 @@ incentivize_external() {
     }
   }' \
     --from "$KEY_NAME" \
-    --amount "${INCENTIVE_FEE}uzig,${AMT}${DENOM}" \
+    --amount "$AMOUNT_FLAG" \
     --chain-id "$CHAIN_ID" \
     --node "$RPC_URL" \
     --gas auto \

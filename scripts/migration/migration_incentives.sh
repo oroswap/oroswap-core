@@ -1,40 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ─── Chain configuration ─────────────────────────────────────────────────────
-export BINARY="zigchaind"
-export RPC_URL="https://devnet-rpc.zigchain.com"
-export CHAIN_ID="zig-devnet-1"
-export KEY_NAME="devnet-key"
-export KEYRING_BACKEND="test"
-
-# ─── Transaction settings ────────────────────────────────────────────────────
-export GAS_PRICES="0.25uzig"
-export GAS_ADJUSTMENT="1.3"
-export FEES="20000uzig"
-export SLEEP_TIME=5
+# ─── Source devnet environment ───────────────────────────────────────────────
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_dir/../devnet.env"
 
 # ─── Migration parameters ────────────────────────────────────────────────────
 # Current incentives contract address to migrate
-export INCENTIVES_CONTRACT="zig1f5u0qsu76gjnwrm6pmvztwjt8n98jq7qpfgugjq3fxrvccczxudqax3ld6"
+export INCENTIVES_CONTRACT="$INC_CONTRACT"
 # New code ID to migrate the incentives contract to
-export NEW_INCENTIVES_CODE_ID="39"
+export NEW_INCENTIVES_CODE_ID="$OROSWAP_INCENTIVES_CODE_ID"
 
 # **Required** new init params:
 # - oro_token: the native denom or CW20 you now use instead of astro_token
 # - vesting_contract: your existing vesting contract address
-# (remove or rename these if you’re using a CW20 oro_token)
-export ORO_DENOM="uzig"
-export VESTING_CONTRACT="zig1…your-vesting-address…"
+# - factory: the correct factory contract address
+export ORO_DENOM="$ZIG_ADDRESS"
+export VESTING_CONTRACT="zig18sytwc03z5j3wge5egf4rdue6gxkzzyf4658vq"
+export FACTORY_CONTRACT="$FACTORY_CONTRACT"
 
-# Build the migrate message with only the non‐optional fields
+# Build the migrate message with the correct factory address
 MIGRATE_MSG=$(
   jq -nc \
     --arg denom   "$ORO_DENOM" \
     --arg vesting "$VESTING_CONTRACT" \
+    --arg factory "$FACTORY_CONTRACT" \
     '{
       oro_token: { native_token: { denom: $denom } },
-      vesting_contract: $vesting
+      vesting_contract: $vesting,
+      factory: $factory
     }'
 )
 

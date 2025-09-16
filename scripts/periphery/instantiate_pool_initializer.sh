@@ -13,7 +13,7 @@ echo ""
 
     # Instantiate the pool initializer contract
     zigchaind tx wasm instantiate $OROSWAP_POOL_INITIALIZER_CODE_ID \
-      "{\"factory_addr\": \"$FACTORY_CONTRACT\", \"pair_creation_fee\": \"101000000\"}" \
+      "{\"factory_addr\": \"$FACTORY_CONTRACT\", \"pair_creation_fee\": \"101000000\", \"fee_denom\": \"uzig\"}" \
       --label "pool-initializer" \
   --admin $(zigchaind keys show $KEY_NAME -a --keyring-backend $KEYRING_BACKEND) \
   --from $KEY_NAME --keyring-backend $KEYRING_BACKEND \
