@@ -1,6 +1,6 @@
 [package]
 name = "oroswap-pair-stable"
-version = "1.0.0"
+version = "1.1.0"
 authors = ["Oroswap"]
 edition = "2021"
 description = "The Oroswap stableswap pair contract implementation"
@@ -21,6 +21,7 @@ exclude = [
 crate-type = ["cdylib", "rlib"]
 
 [features]
+default = ["zigchain"]
 # for quicker tests, cargo test --lib
 # for more explicit tests, cargo test --features=backtraces
 backtraces = ["cosmwasm-std/backtraces"]
@@ -39,7 +40,7 @@ thiserror.workspace = true
 itertools.workspace = true
 cosmwasm-schema.workspace = true
 cw-utils.workspace = true
-oroswap-circular-buffer = { path = "../../packages/circular_buffer", version = "1.0.0" }
+oroswap-circular-buffer = { path = "../../packages/circular_buffer", version = "1.1.0" }
 
 [dev-dependencies]
 anyhow = "1.0"

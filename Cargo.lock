@@ -827,6 +827,26 @@ dependencies = [
 
 [[package]]
 name = "cw-multi-test"
+version = "0.20.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc392a5cb7e778e3f90adbf7faa43c4db7f35b6623224b08886d796718edb875"
+dependencies = [
+ "anyhow",
+ "bech32 0.9.1",
+ "cosmwasm-std 1.5.11",
+ "cw-storage-plus",
+ "cw-utils",
+ "derivative",
+ "itertools 0.12.1",
+ "prost 0.12.6",
+ "schemars",
+ "serde",
+ "sha2 0.10.9",
+ "thiserror",
+]
+
+[[package]]
+name = "cw-multi-test"
 version = "1.0.0"
 source = "git+https://github.com/astroport-fi/cw-multi-test?branch=feat%2Fbank_with_send_hooks_1_0#b4ba6101dfd67b73aff3b75a8759915bd215ae85"
 dependencies = [
@@ -2018,7 +2038,7 @@ checksum = "d05e27ee213611ffe7d6348b942e8f942b37114c00cc03cec254295a4a17852e"
 
 [[package]]
 name = "oroswap-circular-buffer"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "cosmwasm-schema 1.5.11",
  "cosmwasm-std 1.5.11",
@@ -2028,7 +2048,7 @@ dependencies = [
 
 [[package]]
 name = "oroswap-core"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "cosmos-sdk-proto 0.19.0",
  "cosmwasm-schema 1.5.11",
@@ -2048,7 +2068,7 @@ dependencies = [
 
 [[package]]
 name = "oroswap-factory"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "cosmwasm-schema 1.5.11",
@@ -2068,7 +2088,7 @@ dependencies = [
 
 [[package]]
 name = "oroswap-fee-granter"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "cosmos-sdk-proto 0.19.0",
  "cosmwasm-schema 1.5.11",
@@ -2083,7 +2103,7 @@ dependencies = [
 
 [[package]]
 name = "oroswap-incentives"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "cosmwasm-schema 1.5.11",
@@ -2106,7 +2126,7 @@ dependencies = [
 
 [[package]]
 name = "oroswap-maker"
-version = "1.7.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "cosmwasm-schema 1.5.11",
@@ -2125,7 +2145,7 @@ dependencies = [
 
 [[package]]
 name = "oroswap-native-coin-registry"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "cosmwasm-schema 1.5.11",
  "cosmwasm-std 1.5.11",
@@ -2139,7 +2159,7 @@ dependencies = [
 
 [[package]]
 name = "oroswap-pair"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "cosmwasm-schema 1.5.11",
  "cosmwasm-std 1.5.11",
@@ -2161,7 +2181,7 @@ dependencies = [
 
 [[package]]
 name = "oroswap-pair-concentrated"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "cosmwasm-schema 1.5.11",
@@ -2187,7 +2207,7 @@ dependencies = [
 
 [[package]]
 name = "oroswap-pair-stable"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "cosmwasm-schema 1.5.11",
@@ -2210,8 +2230,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "oroswap-pool-initializer"
+version = "1.1.0"
+dependencies = [
+ "cosmwasm-schema 1.5.11",
+ "cosmwasm-std 1.5.11",
+ "cw-multi-test 0.20.1",
+ "cw-storage-plus",
+ "cw-utils",
+ "cw2",
+ "cw20",
+ "oroswap-core",
+ "schemars",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "oroswap-router"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "cosmwasm-schema 1.5.11",
@@ -2232,7 +2269,7 @@ dependencies = [
 
 [[package]]
 name = "oroswap-staking"
-version = "2.3.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "cosmwasm-schema 1.5.11",
@@ -2250,7 +2287,7 @@ dependencies = [
 
 [[package]]
 name = "oroswap-test"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "cosmwasm-schema 1.5.11",
@@ -2272,7 +2309,7 @@ dependencies = [
 
 [[package]]
 name = "oroswap-tokenfactory-tracker"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "cosmwasm-schema 1.5.11",
  "cosmwasm-std 1.5.11",
@@ -2288,7 +2325,7 @@ dependencies = [
 
 [[package]]
 name = "oroswap-vesting"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "cosmwasm-schema 1.5.11",
  "cosmwasm-std 1.5.11",
@@ -2304,7 +2341,7 @@ dependencies = [
 
 [[package]]
 name = "oroswap_pcl_common"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "cosmwasm-schema 1.5.11",

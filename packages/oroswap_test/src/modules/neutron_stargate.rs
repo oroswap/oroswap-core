@@ -70,7 +70,14 @@ impl Module for NeutronStargate {
                     events: vec![],
                     data: Some(
                         MsgCreateDenomResponse {
-                            new_token_denom: format!("factory/{sender}/{}", tf_msg.subdenom),
+                            creator: sender.to_string(),
+                            bank_admin: sender.to_string(),
+                            metadata_admin: sender.to_string(),
+                            denom: format!("factory/{sender}/{}", tf_msg.sub_denom),
+                            minting_cap: "1000000000000000000000000000".to_string(),
+                            can_change_minting_cap: false,
+                            URI: "".to_string(),
+                            URI_hash: "".to_string(),
                         }
                         .into(),
                     ),
@@ -80,9 +87,9 @@ impl Module for NeutronStargate {
             MsgMint::TYPE_URL => {
                 let tf_msg: MsgMint = value.try_into()?;
                 let mint_coins = tf_msg
-                    .amount
-                    .expect("Empty amount in tokenfactory MsgMint!");
-                let to_address = tf_msg.mint_to_address.to_string();
+                    .token
+                    .expect("Empty token in tokenfactory MsgMint!");
+                let to_address = tf_msg.recipient.to_string();
                 let bank_sudo = BankSudo::Mint {
                     to_address,
                     amount: coins(mint_coins.amount.parse()?, mint_coins.denom),
@@ -92,8 +99,8 @@ impl Module for NeutronStargate {
             MsgBurn::TYPE_URL => {
                 let tf_msg: MsgBurn = value.try_into()?;
                 let burn_coins = tf_msg
-                    .amount
-                    .expect("Empty amount in tokenfactory MsgBurn!");
+                    .token
+                    .expect("Empty token in tokenfactory MsgBurn!");
                 let burn_msg = BankMsg::Burn {
                     amount: coins(burn_coins.amount.parse()?, burn_coins.denom),
                 };
