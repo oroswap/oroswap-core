@@ -42,7 +42,14 @@ fn store_liquidity_token(deps: DepsMut, msg_id: u64, subdenom: String) {
             events: vec![],
             data: Some(
                 MsgCreateDenomResponse {
-                    new_token_denom: subdenom,
+                    denom: subdenom,
+                    creator: "creator".to_string(),
+                    bank_admin: "bank_admin".to_string(),
+                    metadata_admin: "metadata_admin".to_string(),
+                    minting_cap: "1000000000000000000000000000".to_string(),
+                    can_change_minting_cap: false,
+                    URI: "".to_string(),
+                    URI_hash: "".to_string(),
                 }
                 .into(),
             ),
@@ -81,36 +88,40 @@ fn proper_initialization() {
     let env = mock_env();
     let info = mock_info(sender, &[]);
     let res = instantiate(deps.as_mut(), env.clone(), info, msg).unwrap();
-    assert_eq!(
-        res.messages,
-        vec![
-            SubMsg {
-                msg: CosmosMsg::Stargate {
-                    type_url: MsgCreateDenom::TYPE_URL.to_string(),
-                    value: Binary(
-                        MsgCreateDenom {
-                            #[cfg(not(feature = "sei"))]
-                            sender: env.contract.address.to_string(),
-                            subdenom: LP_SUBDENOM.to_string()
-                        }
-                        .encode_to_vec()
-                    )
-                },
-                id: 1,
-                gas_limit: None,
-                reply_on: ReplyOn::Success
-            },
-            SubMsg {
-                msg: CosmosMsg::Bank(BankMsg::Send {
-                    to_address: "fee_address".to_string(),
-                    amount: vec![coin(1000, "uzig")],
-                }),
-                id: 0,
-                gas_limit: None,
-                reply_on: ReplyOn::Never
-            }
-        ]
-    );
+    // Check that we have the right number of messages
+    assert_eq!(res.messages.len(), 2);
+    
+    // Check the first message (MsgCreateDenom)
+    let create_denom_msg = &res.messages[0];
+    assert_eq!(create_denom_msg.id, 1);
+    assert_eq!(create_denom_msg.reply_on, ReplyOn::Success);
+    
+    if let CosmosMsg::Stargate { type_url, value } = &create_denom_msg.msg {
+        assert_eq!(type_url, &MsgCreateDenom::TYPE_URL.to_string());
+        
+        // Decode and verify the message content
+        let decoded_msg: MsgCreateDenom = MsgCreateDenom::try_from(value.clone()).unwrap();
+        assert_eq!(decoded_msg.creator, env.contract.address.to_string());
+        assert_eq!(decoded_msg.sub_denom, LP_SUBDENOM.to_string());
+        assert_eq!(decoded_msg.minting_cap, u64::MAX.to_string());
+        assert_eq!(decoded_msg.can_change_minting_cap, false);
+    } else {
+        panic!("Expected Stargate message");
+    }
+    
+    // Check the second message (Bank send)
+    let bank_msg = &res.messages[1];
+    assert_eq!(bank_msg.id, 0);
+    assert_eq!(bank_msg.reply_on, ReplyOn::Never);
+    
+    if let CosmosMsg::Bank(BankMsg::Send { to_address, amount }) = &bank_msg.msg {
+        assert_eq!(to_address, "fee_address");
+        assert_eq!(amount.len(), 1);
+        assert_eq!(amount[0].denom, "uzig");
+        assert_eq!(amount[0].amount, Uint128::from(1000_u128));
+    } else {
+        panic!("Expected Bank Send message");
+    }
 
     let denom = format!("coin.{}.{}", env.contract.address, "oroswaplptoken");
 
@@ -235,14 +246,14 @@ fn provide_liquidity() {
                 type_url: MsgMint::TYPE_URL.to_string(),
                 value: Binary::from(
                     MsgMint {
-                        amount: Some(oroswap::token_factory::ProtoCoin {
+                        token: Some(oroswap::token_factory::ProtoCoin {
                             denom: denom.to_string(),
                             amount: Uint128::from(1000_u128).to_string(),
                         }),
                         #[cfg(not(feature = "sei"))]
-                        sender: env.contract.address.to_string(),
+                        signer: env.contract.address.to_string(),
                         #[cfg(not(any(feature = "injective", feature = "sei")))]
-                        mint_to_address: String::from(MOCK_CONTRACT_ADDR),
+                        recipient: String::from(MOCK_CONTRACT_ADDR),
                     }
                     .encode_to_vec()
                 )
@@ -259,14 +270,14 @@ fn provide_liquidity() {
                 type_url: MsgMint::TYPE_URL.to_string(),
                 value: Binary::from(
                     MsgMint {
-                        amount: Some(oroswap::token_factory::ProtoCoin {
+                        token: Some(oroswap::token_factory::ProtoCoin {
                             denom: denom.to_string(),
                             amount: Uint128::from(99_999999999999999000u128).to_string(),
                         }),
                         #[cfg(not(feature = "sei"))]
-                        sender: env.contract.address.to_string(),
+                        signer: env.contract.address.to_string(),
                         #[cfg(not(any(feature = "injective", feature = "sei")))]
-                        mint_to_address: String::from("addr0000"),
+                        recipient: String::from("addr0000"),
                     }
                     .encode_to_vec()
                 )
@@ -362,14 +373,14 @@ fn provide_liquidity() {
                 type_url: MsgMint::TYPE_URL.to_string(),
                 value: Binary::from(
                     MsgMint {
-                        amount: Some(oroswap::token_factory::ProtoCoin {
+                        token: Some(oroswap::token_factory::ProtoCoin {
                             denom: denom.to_string(),
                             amount: Uint128::from(50_000000000000000000u128).to_string(),
                         }),
                         #[cfg(not(feature = "sei"))]
-                        sender: env.contract.address.to_string(),
+                        signer: env.contract.address.to_string(),
                         #[cfg(not(any(feature = "injective", feature = "sei")))]
-                        mint_to_address: String::from("addr0000"),
+                        recipient: String::from("addr0000"),
                     }
                     .encode_to_vec()
                 )
@@ -775,13 +786,11 @@ fn withdraw_liquidity() {
                 value: Binary::from(
                     MsgBurn {
                         #[cfg(not(feature = "sei"))]
-                        sender: env.contract.address.to_string(),
-                        amount: Some(oroswap::token_factory::ProtoCoin {
+                        signer: env.contract.address.to_string(),
+                        token: Some(oroswap::token_factory::ProtoCoin {
                             denom: denom.to_string(),
                             amount: Uint128::from(100u128).to_string(),
-                        }),
-                        #[cfg(not(any(feature = "injective", feature = "sei")))]
-                        burn_from_address: "".to_string()
+                        })
                     }
                     .encode_to_vec()
                 ),

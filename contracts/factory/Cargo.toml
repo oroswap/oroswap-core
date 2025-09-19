@@ -1,6 +1,6 @@
 [package]
 name = "oroswap-factory"
-version = "1.0.0"
+version = "1.1.0"
 authors = ["Oroswap"]
 edition = "2021"
 description = "Oroswap factory contract - pair contract generator and directory"

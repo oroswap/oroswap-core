@@ -1,6 +1,6 @@
 [package]
 name = "oroswap-router"
-version = "1.0.0"
+version = "1.1.0"
 authors = ["Oroswap"]
 edition = "2021"
 description = "The Oroswap router contract - provides multi-hop swap functionality for Oroswap pools"
@@ -36,8 +36,8 @@ cosmwasm-schema.workspace = true
 
 [dev-dependencies]
 oroswap-factory = { path = "../factory" }
-oroswap-pair-concentrated = { path = "../pair_concentrated", version = "1.0.0" }
-oroswap-native-coin-registry = { path = "../periphery/native_coin_registry", version = "1.0.0" }
+oroswap-pair-concentrated = { path = "../pair_concentrated", version = "1.1.0" }
+oroswap-native-coin-registry = { path = "../periphery/native_coin_registry", version = "1.1.0" }
 cw20-base = "1.1"
 oroswap-pair = { path = "../pair" }
 oroswap-test = { path = "../../packages/oroswap_test" }

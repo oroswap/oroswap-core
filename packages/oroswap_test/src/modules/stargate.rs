@@ -67,17 +67,24 @@ impl Module for MockStargate {
             MsgCreateDenom::TYPE_URL => {
                 let tf_msg: MsgCreateDenom = value.try_into()?;
                 #[cfg(not(any(feature = "injective", feature = "sei")))]
-                let sender_address = tf_msg.sender.to_string();
+                let sender_address = tf_msg.creator.to_string();
                 #[cfg(any(feature = "injective", feature = "sei"))]
                 let sender_address = sender.to_string();
                 let submsg_response = SubMsgResponse {
                     events: vec![],
                     data: Some(
                         MsgCreateDenomResponse {
-                            new_token_denom: format!(
+                            creator: sender_address.clone(),
+                            bank_admin: sender_address.clone(),
+                            metadata_admin: sender_address.clone(),
+                            denom: format!(
                                 "coin.{}.{}",
-                                sender_address, tf_msg.subdenom
+                                sender_address, tf_msg.sub_denom
                             ),
+                            minting_cap: "1000000000000000000000000000".to_string(),
+                            can_change_minting_cap: false,
+                            URI: "".to_string(),
+                            URI_hash: "".to_string(),
                         }
                         .into(),
                     ),
@@ -87,10 +94,10 @@ impl Module for MockStargate {
             MsgMint::TYPE_URL => {
                 let tf_msg: MsgMint = value.try_into()?;
                 let mint_coins = tf_msg
-                    .amount
-                    .expect("Empty amount in tokenfactory MsgMint!");
+                    .token
+                    .expect("Empty token in tokenfactory MsgMint!");
                 #[cfg(not(any(feature = "injective", feature = "sei")))]
-                let to_address = tf_msg.mint_to_address.to_string();
+                let to_address = tf_msg.recipient.to_string();
                 #[cfg(any(feature = "injective", feature = "sei"))]
                 let to_address = sender.to_string();
                 let bank_sudo = BankSudo::Mint {
@@ -102,8 +109,8 @@ impl Module for MockStargate {
             MsgBurn::TYPE_URL => {
                 let tf_msg: MsgBurn = value.try_into()?;
                 let burn_coins = tf_msg
-                    .amount
-                    .expect("Empty amount in tokenfactory MsgBurn!");
+                    .token
+                    .expect("Empty token in tokenfactory MsgBurn!");
                 let burn_msg = BankMsg::Burn {
                     amount: coins(burn_coins.amount.parse()?, burn_coins.denom),
                 };

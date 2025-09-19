@@ -1,6 +1,6 @@
 [package]
 name = "oroswap-core"
-version = "1.0.0"
+version = "1.1.0"
 authors = ["Oroswap"]
 edition = "2021"
 description = "Common Oroswap types, queriers and other utils"
@@ -26,7 +26,7 @@ uint = "0.9"
 cw-storage-plus.workspace = true
 itertools.workspace = true
 cosmwasm-schema.workspace = true
-oroswap-circular-buffer = { version = "1.0.0", path = "../circular_buffer" }
+oroswap-circular-buffer = { version = "1.1.0", path = "../circular_buffer" }
 cw-utils.workspace = true
 cw-asset = "3.0.0"
 prost = "0.11.5"

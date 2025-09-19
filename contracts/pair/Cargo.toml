@@ -1,6 +1,6 @@
 [package]
 name = "oroswap-pair"
-version = "1.0.0"
+version = "1.1.0"
 authors = ["Oroswap"]
 edition = "2021"
 description = "The Oroswap constant product pool contract implementation"
@@ -22,6 +22,7 @@ exclude = [
 crate-type = ["cdylib", "rlib"]
 
 [features]
+default = ["zigchain"]
 # for quicker tests, cargo test --lib
 # for more explicit tests, cargo test --features=backtraces
 backtraces = ["cosmwasm-std/backtraces"]
