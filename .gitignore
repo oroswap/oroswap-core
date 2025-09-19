@@ -28,3 +28,6 @@ ARCHITECTURE.md
 
 # Development contracts (not ready for staging)
 # contracts/periphery/pool_initializer/
+
+# Test and development scripts
+/test-scripts/

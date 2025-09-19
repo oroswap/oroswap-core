@@ -17,7 +17,11 @@ rustup default nightly
 rustup target add wasm32-unknown-unknown
 
 # ── 2) Set the contract name here ───────────────────────────────────────
-contract_name="tokenomics/maker"  # Updated to build the maker contract
+#contract_name="periphery/pool_initializer"  # Updated to build the pool initializer contract
+#contract_name="tokenomics/incentives" 
+contract_name="tokenomics/maker" 
+#contract_name="periphery/native_coin_registry" 
+#contract_name="router" 
 
 # ── 3) Find the contract Cargo.toml file ─────────────────────────────────
 contract_manifest="$project_root/contracts/$contract_name/Cargo.toml"
@@ -43,6 +47,12 @@ fi
 # For tokenomics/maker, the wasm file is named oroswap_maker.wasm
 if [[ "$contract_name" == "tokenomics/maker" ]]; then
   raw_wasm=$(find "$project_root/target/wasm32-unknown-unknown/release" -maxdepth 1 -name "oroswap_maker.wasm" -type f)
+elif [[ "$contract_name" == "tokenomics/incentives" ]]; then
+  raw_wasm=$(find "$project_root/target/wasm32-unknown-unknown/release" -maxdepth 1 -name "oroswap_incentives.wasm" -type f)
+elif [[ "$contract_name" == "periphery/pool_initializer" ]]; then
+  raw_wasm=$(find "$project_root/target/wasm32-unknown-unknown/release" -maxdepth 1 -name "oroswap_pool_initializer.wasm" -type f)
+elif [[ "$contract_name" == "periphery/native_coin_registry" ]]; then
+  raw_wasm=$(find "$project_root/target/wasm32-unknown-unknown/release" -maxdepth 1 -name "oroswap_native_coin_registry.wasm" -type f)
 else
   raw_wasm=$(find "$project_root/target/wasm32-unknown-unknown/release" -maxdepth 1 -name "*${contract_name//\//_}.wasm" -type f)
 fi
