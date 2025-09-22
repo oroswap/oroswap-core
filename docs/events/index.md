@@ -44,7 +44,7 @@ Events during router operations:
 ### Query Examples
 ```bash
 # Get recent pair creations
-zigchaind query txs --events 'wasm-pair_created.contract_address=zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30' --limit 10
+zigchaind query txs --events 'wasm-pair_created.contract_address=<factory_address>' --limit 10
 
 # Get swap events
 zigchaind query txs --events 'wasm-swap.action=swap' --limit 10

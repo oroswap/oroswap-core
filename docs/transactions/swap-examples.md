@@ -4,7 +4,7 @@ This guide shows how to perform token swaps on Oroswap DEX using either the Rout
 
 ## 📋 Overview
 
-**Router Contract**: `zig1g00t6pxg3xn7vk0vt29zu9vztm3wsq5t5wegutlg94uddju0yr5sye3r3a` (Testnet)
+> **Note**: For contract addresses, see the [oroswap-deployments repository](https://github.com/oroswap/oroswap-deployments).
 
 **Supported Assets**:
 - Native tokens (uzig, uoro, usdc, etc.)
@@ -16,7 +16,7 @@ This guide shows how to perform token swaps on Oroswap DEX using either the Rout
 Use the router contract for swaps with custom routing logic.
 
 ```bash
-zigchaind tx wasm execute zig1g00t6pxg3xn7vk0vt29zu9vztm3wsq5t5wegutlg94uddju0yr5sye3r3a '{
+zigchaind tx wasm execute <router_address> '{
   "execute_swap_operations": {
     "operations": [
       {
@@ -58,7 +58,7 @@ zigchaind tx wasm execute <pair_address> '{
 Swap through multiple pairs using the router with custom routing logic.
 
 ```bash
-zigchaind tx wasm execute zig1g00t6pxg3xn7vk0vt29zu9vztm3wsq5t5wegutlg94uddju0yr5sye3r3a '{
+zigchaind tx wasm execute <router_address> '{
   "execute_swap_operations": {
     "operations": [
       {
@@ -111,7 +111,7 @@ zigchaind tx wasm execute zig1g00t6pxg3xn7vk0vt29zu9vztm3wsq5t5wegutlg94uddju0yr
 Swap custom tokens.
 
 ```bash
-zigchaind tx wasm execute zig1g00t6pxg3xn7vk0vt29zu9vztm3wsq5t5wegutlg94uddju0yr5sye3r3a '{
+zigchaind tx wasm execute <router_address> '{
   "execute_swap_operations": {
     "operations": [
       {
@@ -132,7 +132,7 @@ zigchaind tx wasm execute zig1g00t6pxg3xn7vk0vt29zu9vztm3wsq5t5wegutlg94uddju0yr
 Swap through concentrated liquidity pools.
 
 ```bash
-zigchaind tx wasm execute zig1g00t6pxg3xn7vk0vt29zu9vztm3wsq5t5wegutlg94uddju0yr5sye3r3a '{
+zigchaind tx wasm execute <router_address> '{
   "execute_swap_operations": {
     "operations": [
       {
@@ -155,7 +155,7 @@ zigchaind tx wasm execute zig1g00t6pxg3xn7vk0vt29zu9vztm3wsq5t5wegutlg94uddju0yr
 Get expected output before executing.
 
 ```bash
-zigchaind query wasm contract-state smart zig1g00t6pxg3xn7vk0vt29zu9vztm3wsq5t5wegutlg94uddju0yr5sye3r3a '{
+zigchaind query wasm contract-state smart <router_address> '{
   "simulate_swap_operations": {
     "offer_amount": "1000000",
     "operations": [
@@ -193,7 +193,7 @@ zigchaind query wasm contract-state smart zig1g00t6pxg3xn7vk0vt29zu9vztm3wsq5t5w
 Find optimal swap routes.
 
 ```bash
-zigchaind query wasm contract-state smart zig1g00t6pxg3xn7vk0vt29zu9vztm3wsq5t5wegutlg94uddju0yr5sye3r3a '{
+zigchaind query wasm contract-state smart <router_address> '{
   "reverse_simulate_swap_operations": {
     "ask_amount": "1000000",
     "operations": [

@@ -31,30 +31,24 @@ Welcome to the Oroswap DEX documentation! This guide will help you understand, d
 
 ### [Deployment](./deployment/)
 
-- [Testnet Deployment](./deployment/testnet.md) - Deploying to testnet
 - [Configuration](./configuration.md) - Network and contract configuration
 
 ## 🚀 Quick Start
 
 1. **Setup Environment** - [Deployment Guide](./deployment/)
-2. **Deploy Contracts** - [Testnet Deployment](./deployment/testnet.md)
+2. **Deploy Contracts** - [Deployment Guide](./deployment/)
 3. **Create Pairs** - [Pair Creation](./transactions/pair-create.md) or [Factory Contract](./contracts/factory.md)
 4. **Start Trading** - [Transaction Index](./transactions/) or [Swap Examples](./transactions/swap-examples.md)
 
 ## 🔗 Useful Links
 
 - [GitHub Repository](https://github.com/oroswap/oroswap-core)
-- [Testnet Frontend](https://testnet.oroswap.org/)
+- [Frontend](https://oroswap.org/)
 - [Zigchain Explorer](https://explorer.zigchain.com/)
 
 ## 📖 Contract Addresses
 
-### Testnet (v1.0.0)
-
-- **Factory**: `zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30`
-- **Router**: `zig1g00t6pxg3xn7vk0vt29zu9vztm3wsq5t5wegutlg94uddju0yr5sye3r3a`
-- **Incentives**: `zig1sq7mu45and7htxdjwe9htl0q3y33qlnt6cded6z299303pya5d0qda8sg7`
-- **Coin Registry**: `zig1knyre4stvestyn032u9edf9w0fxhgv4szlwdvy2f69jludmunknswaxdsr`
+> **Note**: For contract addresses, see the [oroswap-deployments repository](https://github.com/oroswap/oroswap-deployments).
 
 ## 🏗️ Architecture Overview
 
@@ -146,8 +140,7 @@ We welcome contributions! Please see our [Contributing Guide](https://github.com
 ## 📞 Support
 
 - **Documentation Issues**: Open an issue on GitHub
-- **Technical Questions**: Join our Discord
-- **Bug Reports**: Use the GitHub issue tracker
+- **Technical Questions**: Join our Socials
 - **Feature Requests**: Submit via GitHub discussions
 
 ## 📄 License

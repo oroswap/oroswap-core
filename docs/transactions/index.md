@@ -77,19 +77,20 @@ zigchaind tx wasm execute <incentives_address> '{"deposit": {...}}' --amount <lp
 ### Environment Setup
 ```bash
 # Set up Zigchain CLI
-zigchaind config chain-id zig-test-2
+zigchaind config chain-id <chain_id>
 zigchaind config keyring-backend test
 
 # Export contract addresses
-export FACTORY_CONTRACT="zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30"
-export ROUTER_CONTRACT="zig1g00t6pxg3xn7vk0vt29zu9vztm3wsq5t5wegutlg94uddju0yr5sye3r3a"
+# Note: For contract addresses, see the oroswap-deployments repository
+export FACTORY_CONTRACT="<factory_address>"
+export ROUTER_CONTRACT="<router_address>"
 ```
 
 ### Common Parameters
 - **Gas**: `--gas auto` for automatic estimation
 - **Fees**: `--fees 1000uzig` for transaction fees
-- **Node**: `--node https://testnet-rpc.zigchain.com`
-- **Chain ID**: `--chain-id zig-test-2`
+- **Node**: `--node <rpc_url>`
+- **Chain ID**: `--chain-id <chain_id>`
 
 ## 🚨 Important Notes
 
