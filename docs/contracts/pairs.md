@@ -2,6 +2,8 @@
 
 This document describes the different types of pair contracts available in Oroswap and how to interact with them.
 
+> **Note**: For contract addresses, see the [oroswap-deployments repository](https://github.com/oroswap/oroswap-deployments).
+
 ## 📋 Overview
 
 Oroswap supports three types of pair contracts:
@@ -25,10 +27,48 @@ XYK (x * y = k) pairs use the constant product formula, making them suitable for
 
 ### Create XYK Pair
 
+#### Basic XYK Pair (0.1% fee)
 ```bash
 zigchaind tx wasm execute <factory_address> '{
   "create_pair": {
     "pair_type": {"xyk": {}},
+    "asset_infos": [
+      {"native_token": {"denom": "uzig"}},
+      {"native_token": {"denom": "usdc"}}
+    ],
+    "init_params": null
+  }
+}' --from user --gas auto --fees 1000uzig --amount 101000000uzig
+```
+
+#### Custom XYK Pair Types
+
+Oroswap supports custom XYK pair types with different fee structures:
+
+- **xyk_10**: 0.1% total fee (10 bps)
+- **xyk_25**: 0.25% total fee (25 bps)  
+- **xyk_100**: 1% total fee (100 bps)
+- **xyk_200**: 2% total fee (200 bps)
+
+```bash
+# Create XYK pair with 1% fee
+zigchaind tx wasm execute <factory_address> '{
+  "create_pair": {
+    "pair_type": {"custom": "xyk_100"},
+    "asset_infos": [
+      {"native_token": {"denom": "uzig"}},
+      {"native_token": {"denom": "usdc"}}
+    ],
+    "init_params": null
+  }
+}' --from user --gas auto --fees 1000uzig --amount 101000000uzig
+```
+
+```bash
+# Create XYK pair with 0.25% fee
+zigchaind tx wasm execute <factory_address> '{
+  "create_pair": {
+    "pair_type": {"custom": "xyk_25"},
     "asset_infos": [
       {"native_token": {"denom": "uzig"}},
       {"native_token": {"denom": "usdc"}}
@@ -82,6 +122,29 @@ Stable pairs are optimized for trading between assets with similar values (like 
 - **Lower Fees**: Default swap fee is 0.04%
 
 ### Create Stable Pair
+
+**Important**: Before creating stable pairs, you must first add the stable pair type to the factory configuration.
+
+#### Step 1: Add Stable Pair Type to Factory
+
+```bash
+zigchaind tx wasm execute <factory_address> '{
+  "update_pair_config": {
+    "pair_type": {"stable": {}},
+    "config": {
+      "code_id": 79,
+      "total_fee_bps": 100,
+      "maker_fee_bps": 2000,
+      "pool_creation_fee": "1000000",
+      "is_disabled": false,
+      "is_generator_disabled": false,
+      "permissioned": false
+    }
+  }
+}' --from owner --gas 200000 --fees 1000uzig
+```
+
+#### Step 2: Create Stable Pair
 
 **Important**: The `init_params` must be base64-encoded. Here's how to create it:
 
@@ -210,13 +273,36 @@ zigchaind tx wasm execute <pair_address> '{
 ### Query Pool Information
 
 ```bash
-zigchaind query wasm contract-store <pair_address> '{"pool": {}}' --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+zigchaind query wasm contract-state smart <pair_address> '{"pool": {}}' --node <rpc_url> --chain-id <chain_id>
+```
+
+### Query Pool Configuration (for Stable Pairs)
+
+```bash
+zigchaind query wasm contract-state smart <pair_address> '{"config": {}}' --node <rpc_url> --chain-id <chain_id>
+```
+
+**Example Output for Stable Pair:**
+```json
+{
+  "block_time_last": 1758398317,
+  "factory_addr": "<factory_address>",
+  "owner": "<owner_address>",
+  "params": "eyJhbXAiOiIxMDAiLCJmZWVfc2hhcmUiOm51bGx9"
+}
+```
+
+**Decode AMP Parameter:**
+```bash
+# The params field is base64-encoded
+echo "eyJhbXAiOiIxMDAiLCJmZWVfc2hhcmUiOm51bGx9" | base64 -d
+# Output: {"amp":"100","fee_share":null}
 ```
 
 ### Query Liquidity Provider Balance
 
 ```bash
-zigchaind query wasm contract-store <pair_address> '{"balance": {"address": "zig1..."}}' --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+zigchaind query wasm contract-store <pair_address> '{"balance": {"address": "zig1..."}}' --node <rpc_url> --chain-id <chain_id>
 ```
 
 ### Remove Liquidity

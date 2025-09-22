@@ -4,7 +4,7 @@ The Router contract enables complex trading operations including multi-hop swaps
 
 ## 📋 Overview
 
-**Contract Address**: `zig1g00t6pxg3xn7vk0vt29zu9vztm3wsq5t5wegutlg94uddju0yr5sye3r3a` (Testnet)
+> **Note**: For contract addresses, see the [oroswap-deployments repository](https://github.com/oroswap/oroswap-deployments).
 
 **Purpose**:
 - Execute multi-hop swaps across multiple pairs
@@ -135,7 +135,7 @@ zigchaind query wasm contract-store <router_address> '{
       }
     ]
   }
-}' --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+}' --node <rpc_url> --chain-id <chain_id>
 ```
 
 ### Reverse Simulation
@@ -155,7 +155,7 @@ zigchaind query wasm contract-store <router_address> '{
       }
     ]
   }
-}' --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+}' --node <rpc_url> --chain-id <chain_id>
 ```
 
 ## 📊 Supported Operations
@@ -219,12 +219,12 @@ For additional protection, you can specify maximum spread:
 
 ### Get Router Configuration
 ```bash
-zigchaind query wasm contract-store <router_address> '{"config": {}}' --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+zigchaind query wasm contract-store <router_address> '{"config": {}}' --node <rpc_url> --chain-id <chain_id>
 ```
 
 ### Check Factory Address
 ```bash
-zigchaind query wasm contract-store <router_address> '{"config": {}}' --node https://testnet-rpc.zigchain.com --chain-id zig-test-2 | jq '.data.config.oroswap_factory'
+zigchaind query wasm contract-store <router_address> '{"config": {}}' --node <rpc_url> --chain-id <chain_id> | jq '.data.config.oroswap_factory'
 ```
 
 ## 🔗 Related Examples

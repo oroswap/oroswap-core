@@ -2,9 +2,9 @@
 
 This guide shows how to create different types of pairs on Oroswap, including XYK, Stable, and Concentrated liquidity pairs.
 
-## 📋 Overview
+> **Note**: For contract addresses, see the [oroswap-deployments repository](https://github.com/oroswap/oroswap-deployments).
 
-**Factory Contract**: `zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30` (Testnet)
+## 📋 Overview
 
 **Pool Creation Fee**: 1 ZIG (1,000,000 uzig) required for all pair types
 **LP Token Creation Fee**: 100 ZIG (100,000,000 uzig) required by ZIGChain to create a token
@@ -16,7 +16,7 @@ This guide shows how to create different types of pairs on Oroswap, including XY
 XYK pairs use the constant product formula (x * y = k) and are suitable for most trading pairs.
 
 ```bash
-zigchaind tx wasm execute zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30 '{
+zigchaind tx wasm execute <factory_address> '{
   "create_pair": {
     "pair_type": {"xyk": {}},
     "asset_infos": [
@@ -26,23 +26,23 @@ zigchaind tx wasm execute zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv2
     "init_params": null
   }
 }' --from user --gas auto --fees 1000uzig --amount 101000000uzig \
-  --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+  --node <rpc_url> --chain-id <chain_id>
 ```
 
 ### XYK Pair with CW20 Token
 
 ```bash
-zigchaind tx wasm execute zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30 '{
+zigchaind tx wasm execute <factory_address> '{
   "create_pair": {
     "pair_type": {"xyk": {}},
     "asset_infos": [
       {"native_token": {"denom": "uzig"}},
-      {"token": {"contract_addr": "zig1..."}}
+      {"token": {"contract_addr": "<token_address>"}}
     ],
     "init_params": null
   }
 }' --from user --gas auto --fees 1000uzig --amount 101000000uzig \
-  --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+  --node <rpc_url> --chain-id <chain_id>
 ```
 
 ## 🎯 Creating Stable Pairs
@@ -60,7 +60,7 @@ echo '{"amp": 100}' | base64
 
 #### Step 2: Create the Pair
 ```bash
-zigchaind tx wasm execute zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30 '{
+zigchaind tx wasm execute <factory_address> '{
   "create_pair": {
     "pair_type": {"stable": {}},
     "asset_infos": [
@@ -70,7 +70,7 @@ zigchaind tx wasm execute zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv2
     "init_params": "eyJhbXAiOjEwMH0="
   }
 }' --from user --gas auto --fees 1000uzig --amount 101000000uzig \
-  --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+  --node <rpc_url> --chain-id <chain_id>
 ```
 
 ### Stable Pair with Custom Amplification
@@ -80,7 +80,7 @@ zigchaind tx wasm execute zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv2
 echo '{"amp": 150}' | base64
 # Output: eyJhbXAiOjE1MH0=
 
-zigchaind tx wasm execute zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30 '{
+zigchaind tx wasm execute <factory_address> '{
   "create_pair": {
     "pair_type": {"stable": {}},
     "asset_infos": [
@@ -90,7 +90,7 @@ zigchaind tx wasm execute zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv2
     "init_params": "eyJhbXAiOjE1MH0="
   }
 }' --from user --gas auto --fees 1000uzig --amount 101000000uzig \
-  --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+  --node <rpc_url> --chain-id <chain_id>
 ```
 
 ## 🎯 Creating Concentrated Pairs
@@ -119,7 +119,7 @@ echo '{
 
 #### Step 2: Create the Pair
 ```bash
-zigchaind tx wasm execute zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30 '{
+zigchaind tx wasm execute <factory_address> '{
   "create_pair": {
     "pair_type": {"concentrated": {}},
     "asset_infos": [
@@ -129,7 +129,7 @@ zigchaind tx wasm execute zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv2
     "init_params": "eyJhbXAiOiI0MC4wIiwiZ2FtbWEiOiIwLjAwMDEiLCJtaWRfZmVlIjoiMC4wMDUiLCJvdXRfZmVlIjoiMC4wMSIsImZlZV9nYW1tYSI6IjAuMDAxIiwicmVwZWdfcHJvZml0X3RocmVzaG9sZCI6IjAuMDAwMSIsIm1pbl9wcmljZV9zY2FsZV9kZWx0YSI6IjAuMDAwMDAxIiwicHJpY2Vfc2NhbGUiOiIxLjUiLCJtYV9oYWxmX3RpbWUiOjYwMCwidHJhY2tfYXNzZXRfYmFsYW5jZXMiOmZhbHNlfQ=="
   }
 }' --from user --gas auto --fees 1000uzig --amount 101000000uzig \
-  --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+  --node <rpc_url> --chain-id <chain_id>
 ```
 
 ### Concentrated Pair with Custom Parameters
@@ -150,7 +150,7 @@ echo '{
 }' | base64
 # Output: eyJhbXAiOiI1MC4wIiwiZ2FtbWEiOiIwLjAwMDIiLCJtaWRfZmVlIjoiMC4wMDMiLCJvdXRfZmVlIjoiMC4wMDgiLCJmZWVfZ2FtbWEiOiIwLjAwMDUiLCJyZXBlZ19wcm9maXRfdGhyZXNob2xkIjoiMC4wMDAwNSIsIm1pbl9wcmljZV9zY2FsZV9kZWx0YSI6IjAuMDAwMDAwNSIsInByaWNlX3NjYWxlIjoiMi4wIiwibWFfaGFsZl90aW1lIjozMDAsInRyYWNrX2Fzc2V0X2JhbGFuY2VzIjp0cnVlfQ==
 
-zigchaind tx wasm execute zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30 '{
+zigchaind tx wasm execute <factory_address> '{
   "create_pair": {
     "pair_type": {"concentrated": {}},
     "asset_infos": [
@@ -160,7 +160,7 @@ zigchaind tx wasm execute zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv2
     "init_params": "eyJhbXAiOiI1MC4wIiwiZ2FtbWEiOiIwLjAwMDIiLCJtaWRfZmVlIjoiMC4wMDMiLCJvdXRfZmVlIjoiMC4wMDgiLCJmZWVfZ2FtbWEiOiIwLjAwMDUiLCJyZXBlZ19wcm9maXRfdGhyZXNob2xkIjoiMC4wMDAwNSIsIm1pbl9wcmljZV9zY2FsZV9kZWx0YSI6IjAuMDAwMDAwNSIsInByaWNlX3NjYWxlIjoiMi4wIiwibWFfaGFsZl90aW1lIjozMDAsInRyYWNrX2Fzc2V0X2JhbGFuY2VzIjp0cnVlfQ=="
   }
 }' --from user --gas auto --fees 1000uzig --amount 101000000uzig \
-  --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+  --node <rpc_url> --chain-id <chain_id>
 ```
 
 ## 🔧 Base64 Encoding Helper
@@ -202,33 +202,33 @@ You can also use online base64 encoders:
 ### Get Factory Configuration
 
 ```bash
-zigchaind query wasm contract-store zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30 '{
+zigchaind query wasm contract-state smart <factory_address> '{
   "config": {}
-}' --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+}' --node <rpc_url> --chain-id <chain_id>
 ```
 
 ### List All Pairs
 
 ```bash
-zigchaind query wasm contract-store zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30 '{
+zigchaind query wasm contract-state smart <factory_address> '{
   "pairs": {
     "start_after": null,
     "limit": 30
   }
-}' --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+}' --node <rpc_url> --chain-id <chain_id>
 ```
 
 ### Get Specific Pair Information
 
 ```bash
-zigchaind query wasm contract-store zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30 '{
+zigchaind query wasm contract-state smart <factory_address> '{
   "pair": {
     "asset_infos": [
       {"native_token": {"denom": "uzig"}},
       {"native_token": {"denom": "usdc"}}
     ]
   }
-}' --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+}' --node <rpc_url> --chain-id <chain_id>
 ```
 
 ## 🚨 Important Notes

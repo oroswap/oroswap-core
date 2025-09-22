@@ -2,6 +2,8 @@
 
 This guide shows how to add and remove liquidity from Oroswap pairs.
 
+> **Note**: For contract addresses, see the [oroswap-deployments repository](https://github.com/oroswap/oroswap-deployments).
+
 ## 📋 Overview
 
 **Supported Pair Types**:
@@ -90,29 +92,29 @@ zigchaind tx wasm execute <pair_address> '{
 ### Get LP Token Balance
 
 ```bash
-zigchaind query wasm contract-store <pair_address> '{
+zigchaind query wasm contract-state smart <pair_address> '{
   "balance": {
-    "address": "zig1..."
+    "address": "<user_address>"
   }
-}' --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+}' --node <rpc_url> --chain-id <chain_id>
 ```
 
 ### Get Pool Information
 
 ```bash
-zigchaind query wasm contract-store <pair_address> '{
+zigchaind query wasm contract-state smart <pair_address> '{
   "pool": {}
-}' --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+}' --node <rpc_url> --chain-id <chain_id>
 ```
 
 ### Get Liquidity Provider Info
 
 ```bash
-zigchaind query wasm contract-store <pair_address> '{
+zigchaind query wasm contract-state smart <pair_address> '{
   "liquidity_provider": {
-    "address": "zig1..."
+    "address": "<user_address>"
   }
-}' --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+}' --node <rpc_url> --chain-id <chain_id>
 ```
 
 ## 🎯 Advanced Features

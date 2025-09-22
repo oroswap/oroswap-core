@@ -2,9 +2,9 @@
 
 The Factory contract is the central hub of the Oroswap DEX, responsible for creating and managing all trading pairs.
 
-## 📋 Overview
+> **Note**: For contract addresses, see the [oroswap-deployments repository](https://github.com/oroswap/oroswap-deployments).
 
-**Contract Address**: `zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30` (Testnet)
+## 📋 Overview
 
 **Purpose**:
 
@@ -42,7 +42,7 @@ pub fn create_pair(
 **Example**:
 
 ```bash
-zigchaind tx wasm execute zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30 '{
+zigchaind tx wasm execute <factory_address> '{
   "create_pair": {
     "asset_infos": [
       {"native_token": {"denom": "uzig"}},
@@ -74,10 +74,10 @@ pub fn update_config(
 **Example**:
 
 ```bash
-zigchaind tx wasm execute zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30 '{
+zigchaind tx wasm execute <factory_address> '{
   "update_config": {
-    "fee_address": "zig1...",
-    "generator_address": "zig1..."
+    "fee_address": "<fee_address>",
+    "generator_address": "<generator_address>"
   }
 }' --from owner --gas auto
 ```
@@ -100,7 +100,7 @@ pub fn update_pair_config(
 **Example**:
 
 ```bash
-zigchaind tx wasm execute zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30 '{
+zigchaind tx wasm execute <factory_address> '{
   "update_pair_config": {
     "pair_type": {"xyk": {}},
     "config": {
@@ -118,19 +118,19 @@ zigchaind tx wasm execute zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv2
 ### Get Factory Configuration
 
 ```bash
-zigchaind query wasm contract-store zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30 '{"config": {}}' --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+zigchaind query wasm contract-state smart <factory_address> '{"config": {}}' --node <rpc_url> --chain-id <chain_id>
 ```
 
 ### List All Pairs
 
 ```bash
-zigchaind query wasm contract-store zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30 '{"pairs": {"limit": 10}}' --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+zigchaind query wasm contract-state smart <factory_address> '{"pairs": {"limit": 10}}' --node <rpc_url> --chain-id <chain_id>
 ```
 
 ### Get Pair Information
 
 ```bash
-zigchaind query wasm contract-store zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30 '{
+zigchaind query wasm contract-state smart <factory_address> '{
   "pair": {
     "asset_infos": [
       {"native_token": {"denom": "uzig"}},
@@ -138,7 +138,7 @@ zigchaind query wasm contract-store zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrs
     ],
     "pair_type": {"xyk": {}}
   }
-}' --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+}' --node <rpc_url> --chain-id <chain_id>
 ```
 
 **Parameters**:

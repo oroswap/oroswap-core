@@ -19,7 +19,7 @@ Emitted when a new trading pair is created.
 **Attributes**:
 ```json
 {
-  "contract_address": "zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30",
+  "contract_address": "<factory_address>",
   "action": "create_pair",
   "pair_address": "zig1...",
   "asset_infos": "[{\"native_token\":{\"denom\":\"uzig\"}},{\"native_token\":{\"denom\":\"usdc\"}}]",
@@ -35,7 +35,7 @@ Emitted when a new trading pair is created.
 
 **Example Query**:
 ```bash
-zigchaind query txs --events 'wasm-pair_created.contract_address=zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30' --limit 10
+zigchaind query txs --events 'wasm-pair_created.contract_address=<factory_address>' --limit 10
 ```
 
 ### ConfigUpdated
@@ -46,7 +46,7 @@ Emitted when factory configuration is updated.
 **Attributes**:
 ```json
 {
-  "contract_address": "zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30",
+  "contract_address": "<factory_address>",
   "action": "update_config",
   "fee_address": "zig1...",
   "generator_address": "zig1...",
@@ -62,7 +62,7 @@ Emitted when pair configuration is updated.
 **Attributes**:
 ```json
 {
-  "contract_address": "zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30",
+  "contract_address": "<factory_address>",
   "action": "update_pair_config",
   "pair_type": "{\"xyk\":{}}",
   "total_fee_bps": "30",
@@ -81,7 +81,7 @@ Emitted when a pair is paused.
 **Attributes**:
 ```json
 {
-  "contract_address": "zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30",
+  "contract_address": "<factory_address>",
   "action": "pause_pair",
   "asset_infos": "[{\"native_token\":{\"denom\":\"uzig\"}},{\"native_token\":{\"denom\":\"usdc\"}}]",
   "pair_type": "{\"xyk\":{}}",
@@ -97,7 +97,7 @@ Emitted when a pair is unpaused.
 **Attributes**:
 ```json
 {
-  "contract_address": "zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30",
+  "contract_address": "<factory_address>",
   "action": "unpause_pair",
   "asset_infos": "[{\"native_token\":{\"denom\":\"uzig\"}},{\"native_token\":{\"denom\":\"usdc\"}}]",
   "pair_type": "{\"xyk\":{}}",
@@ -115,7 +115,7 @@ Emitted when a pause authority is added.
 **Attributes**:
 ```json
 {
-  "contract_address": "zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30",
+  "contract_address": "<factory_address>",
   "action": "add_pause_authorities",
   "authorities": "[\"zig1...\",\"zig1...\"]",
   "added_by": "zig1..."
@@ -130,7 +130,7 @@ Emitted when a pause authority is removed.
 **Attributes**:
 ```json
 {
-  "contract_address": "zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30",
+  "contract_address": "<factory_address>",
   "action": "remove_pause_authorities",
   "authorities": "[\"zig1...\"]",
   "removed_by": "zig1..."
@@ -142,7 +142,7 @@ Emitted when a pause authority is removed.
 ### Get Recent Pair Creations
 ```bash
 zigchaind query txs \
-  --events 'wasm-pair_created.contract_address=zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30' \
+  --events 'wasm-pair_created.contract_address=<factory_address>' \
   --limit 20 \
   --output json
 ```
@@ -150,14 +150,14 @@ zigchaind query txs \
 ### Get Pause Events
 ```bash
 zigchaind query txs \
-  --events 'wasm-pair_paused.contract_address=zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30' \
+  --events 'wasm-pair_paused.contract_address=<factory_address>' \
   --limit 10
 ```
 
 ### Get Config Updates
 ```bash
 zigchaind query txs \
-  --events 'wasm-config_updated.contract_address=zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30' \
+  --events 'wasm-config_updated.contract_address=<factory_address>' \
   --limit 5
 ```
 
@@ -182,7 +182,7 @@ events.txs.forEach(tx => {
 ```bash
 # Count total pairs created
 zigchaind query txs \
-  --events 'wasm-pair_created.contract_address=zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30' \
+  --events 'wasm-pair_created.contract_address=<factory_address>' \
   --limit 1000 | grep -c "pair_created"
 ```
 

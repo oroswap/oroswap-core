@@ -2,25 +2,24 @@
 layout: default
 title: Deployment Documentation
 ---
-
 # Deployment Documentation
 
 This section contains guides for deploying and configuring Oroswap DEX on different networks.
 
 ## 🔗 Deployment Guides
 
-### [Testnet Deployment](./testnet.md)
-Complete guide for deploying Oroswap contracts to the Zigchain testnet.
+This section provides generic deployment guidance for Oroswap DEX contracts.
 
 **Key Features:**
-- Step-by-step deployment instructions
-- Contract instantiation scripts
+
+- Generic deployment instructions
+- Contract instantiation guidance
 - Environment configuration
 - Testing and verification
 
 ## 🚀 Quick Start
 
-1. **Setup Environment** - Configure Zigchain CLI and get testnet tokens
+1. **Setup Environment** - Configure Zigchain CLI and get network tokens
 2. **Build Contracts** - Compile optimized contract artifacts
 3. **Deploy Contracts** - Instantiate all core contracts
 4. **Configure Contracts** - Set up factory and incentives addresses
@@ -30,6 +29,7 @@ Complete guide for deploying Oroswap contracts to the Zigchain testnet.
 ## 📋 Prerequisites
 
 ### Required Tools
+
 ```bash
 # Install Zigchain CLI
 curl -sSfL https://get.zigchain.com/install.sh | sh
@@ -42,56 +42,56 @@ cargo install wasm-opt
 ```
 
 ### Environment Setup
+
 ```bash
 # Set up Zigchain configuration
-zigchaind config chain-id zig-test-2
+zigchaind config chain-id <chain_id>
 zigchaind config keyring-backend test
 
 # Create a test wallet
-zigchaind keys add testnet-key --keyring-backend test
+zigchaind keys add <key_name> --keyring-backend test
 
-# Get testnet tokens from faucet
+# Get network tokens from faucet
 # Visit: https://faucet.zigchain.com/
 ```
 
 ## 🏗️ Deployment Architecture
 
 ### Contract Deployment Order
+
 1. **Coin Registry** - Token metadata management
 2. **Factory** - Pair creation and management
 3. **Incentives** - Reward distribution system
 4. **Router** - Multi-hop swap routing
 
 ### Configuration Dependencies
+
 - Factory needs incentives address
 - Router needs factory address
 - All contracts need coin registry address
 
 ## 📊 Contract Addresses
 
-**Testnet (v1.0.0):**
-- **Factory**: `zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30`
-- **Router**: `zig1g00t6pxg3xn7vk0vt29zu9vztm3wsq5t5wegutlg94uddju0yr5sye3r3a`
-- **Incentives**: `zig1sq7mu45and7htxdjwe9htl0q3y33qlnt6cded6z299303pya5d0qda8sg7`
-- **Coin Registry**: `zig1knyre4stvestyn032u9edf9w0fxhgv4szlwdvy2f69jludmunknswaxdsr`
+> **Note**: For contract addresses, see the [oroswap-deployments repository](https://github.com/oroswap/oroswap-deployments).
 
 ## 🔧 Configuration
 
 ### Environment Variables
+
 ```bash
 #!/bin/bash
 
 # Network configuration
-export CHAIN_ID="zig-test-2"
-export RPC_URL="https://testnet-rpc.zigchain.com"
-export KEY_NAME="testnet-key"
+export CHAIN_ID="<chain_id>"
+export RPC_URL="<rpc_url>"
+export KEY_NAME="<key_name>"
 export KEYRING_BACKEND="test"
 
 # Contract addresses
-export FACTORY_CONTRACT="zig17a7mlm84taqmd3enrpcxhrwzclj9pga8efz83vrswnnywr8tv26s7mpq30"
-export ROUTER_CONTRACT="zig1g00t6pxg3xn7vk0vt29zu9vztm3wsq5t5wegutlg94uddju0yr5sye3r3a"
-export INC_CONTRACT="zig1sq7mu45and7htxdjwe9htl0q3y33qlnt6cded6z299303pya5d0qda8sg7"
-export COIN_REGISTRY_ADDR="zig1knyre4stvestyn032u9edf9w0fxhgv4szlwdvy2f69jludmunknswaxdsr"
+export FACTORY_CONTRACT="<factory_address>"
+export ROUTER_CONTRACT="<router_address>"
+export INC_CONTRACT="incentive_address"
+export COIN_REGISTRY_ADDR="<coin_registry_address>"
 
 # Transaction settings
 export GAS_PRICES="0.25uzig"
@@ -102,15 +102,17 @@ export FEES="1000uzig"
 ## 🧪 Testing
 
 ### Verification Steps
+
 1. **Query Factory Config** - Verify factory is properly configured
 2. **List Pairs** - Check if pairs are created correctly
 3. **Test Swap Simulation** - Verify router can simulate swaps
 4. **Check Contract State** - Ensure all contracts are active
 
 ### Common Issues
+
 - **Gas Estimation Errors** - Use higher gas adjustment
 - **Contract Not Found** - Verify contract addresses
-- **Insufficient Funds** - Get more testnet tokens
+- **Insufficient Funds** - Get more network tokens
 - **Transaction Failures** - Check transaction logs for errors
 
 ## 🔗 Related Documentation
@@ -118,4 +120,4 @@ export FEES="1000uzig"
 - **[Main Documentation](../index.md)** - Return to main documentation
 - **[Contract Documentation](../contracts/)** - Contract-specific details
 - **[Transaction Examples](../transactions/)** - How to interact with deployed contracts
-- **[Events Documentation](../events/)** - Monitor contract events 
+- **[Events Documentation](../events/)** - Monitor contract events

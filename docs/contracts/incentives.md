@@ -4,8 +4,6 @@ The Incentives contract manages liquidity mining rewards, staking mechanisms, an
 
 ## 📋 Overview
 
-**Contract Address**: `zig1sq7mu45and7htxdjwe9htl0q3y33qlnt6cded6z299303pya5d0qda8sg7` (Testnet)
-
 **Purpose**:
 
 - Distribute rewards for liquidity provision (rewards can be in ORO or other tokens)
@@ -111,7 +109,7 @@ zigchaind tx wasm execute <incentives_address> '{
 ```bash
 zigchaind query wasm contract-store <incentives_address> '{
   "config": {}
-}' --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+}' --node <rpc_url> --chain-id <chain_id>
 ```
 
 ### Get User Deposit
@@ -122,7 +120,7 @@ zigchaind query wasm contract-store <incentives_address> '{
     "lp_token": "coin.zig1..lptoken",
     "user": "zig1..."
   }
-}' --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+}' --node <rpc_url> --chain-id <chain_id>
 ```
 
 ### Get Pending Rewards
@@ -133,7 +131,7 @@ zigchaind query wasm contract-store <incentives_address> '{
     "lp_token": "coin.zig1..lptoken",
     "user": "zig1..."
   }
-}' --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+}' --node <rpc_url> --chain-id <chain_id>
 ```
 
 ### Get Pool Information
@@ -143,7 +141,7 @@ zigchaind query wasm contract-store <incentives_address> '{
   "pool_info": {
     "lp_token": "coin.zig1..lptoken"
   }
-}' --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+}' --node <rpc_url> --chain-id <chain_id>
 ```
 
 ### Get Reward Info
@@ -153,7 +151,7 @@ zigchaind query wasm contract-store <incentives_address> '{
   "reward_info": {
     "lp_token": "coin.zig1..lptoken"
   }
-}' --node https://testnet-rpc.zigchain.com --chain-id zig-test-2
+}' --node <rpc_url> --chain-id <chain_id>
 ```
 
 ## 🔗 Related Examples
