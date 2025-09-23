@@ -12,9 +12,14 @@ echo "   Output dir: $OUTPUT_DIR"
 
 # ── 1) Clone and build CW20 ───────────────────────────────────────────────
 CW20_DIR="/tmp/cw20-build"
+CW20_VERSION="v2.0.0"  # Pin to latest stable version for reproducible builds
+
 if [[ ! -d "$CW20_DIR" ]]; then
-  echo "📦 Cloning CW20 repository..."
+  echo "📦 Cloning CW20 repository (version: $CW20_VERSION)..."
   git clone https://github.com/CosmWasm/cw-plus.git "$CW20_DIR"
+  cd "$CW20_DIR"
+  git checkout "$CW20_VERSION"
+  cd - > /dev/null
 fi
 
 cd "$CW20_DIR"

@@ -57,3 +57,8 @@ Deployed contract addresses and deployment information can be found in the [Oros
 ## Docs
 
 Docs can be generated using `cargo doc --no-deps`
+
+## Attribution
+
+Forked from Astroport ([https://github.com/astroport-fi/astroport-core](https://github.com/astroport-fi/astroport-core))
+Modified by OroSwap Team - [https://github.com/oroswap/oroswap-core](https://github.com/oroswap/oroswap-core)
