@@ -19,8 +19,8 @@ Instantiate message
 
 ```json
 {
-  "tracked_denom": "factory/creator/denom",
-  "tokenfactory_module_address": "wasm19ejy8n9qsectrf4semdp9cpknflld0j6el50hx"
+  "tracked_denom": "coin.creator.address.denom",
+  "tokenfactory_module_address": "zig19ejy8n9qsectrf4semdp9cpknflld0j6el50hx"
 }
 ```
 
@@ -28,7 +28,7 @@ Once the contract is instantiated it will only track the denom specified.
 Attach this contract to TokenFactory (only admin can do this)
 
 ```shell
-wasmd tx tokenfactory set-beforesend-hook factory/creator/denom wasm1trackingcontract
+zigchaind tx tokenfactory set-beforesend-hook coin.creator.address.denom zig1trackingcontract
 ```
 
 ## ExecuteMsg
@@ -46,7 +46,7 @@ If timestamp is not set, it will return the value at the current timestamp.
 ```json
 {
   "balance_at": {
-    "address": "wasm1...addr",
+    "address": "zig1...addr",
     "timestamp": 1698745413
   }
 }

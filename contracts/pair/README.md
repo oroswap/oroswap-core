@@ -20,7 +20,7 @@ As an example, let's say the global ratio between two tokens x:y is 10:2 (i.e. 1
 
 If a user specifies a slippage tolerance when they provide liquidity in a constant product pool, the pool contract makes sure that the transaction goes through only if the pool price does not change more than tolerance.
 
-As an example, let's say someone LPs in a pool and specifies a 1% slippage tolerance. The user LPs 200 UST and 1 `ASSET`. With a 1% slippage tolerance, `amountUSTMin` (the minimum amount of UST to LP) should be set to 198 UST, and `amountASSETMin` (the minimum amount of `ASSET` to LP) should be set to .99 `ASSET`. This means that, in a worst case scenario, liquidity will be added at a pool rate of 198 `ASSET`/1 UST or 202.02 UST/1 `ASSET` (200 UST + .99 `ASSET`). If the contract cannot add liquidity within these bounds (because the pool ratio changed more than the tolerance), the transaction will revert.
+As an example, let's say someone LPs in a pool and specifies a 1% slippage tolerance. The user LPs 200 UZIG and 1 `ASSET`. With a 1% slippage tolerance, `amountUZIGMin` (the minimum amount of UZIG to LP) should be set to 198 UZIG, and `amountASSETMin` (the minimum amount of `ASSET` to LP) should be set to .99 `ASSET`. This means that, in a worst case scenario, liquidity will be added at a pool rate of 198 `ASSET`/1 UZIG or 202.02 UZIG/1 `ASSET` (200 UZIG + .99 `ASSET`). If the contract cannot add liquidity within these bounds (because the pool ratio changed more than the tolerance), the transaction will revert.
 
 ## Traders
 
@@ -108,7 +108,7 @@ __NOTE__: you should increase your token allowance for the pool before providing
         }
       ],
       "auto_stake": false,
-      "receiver": "terra..."
+      "receiver": "zig..."
     }
   }
 ```

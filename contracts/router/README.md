@@ -1,6 +1,6 @@
 # Oroswap Router
 
-The Router contract contains logic to facilitate multi-hop swaps for Terra native & Oroswap tokens.
+The Router contract contains logic to facilitate multi-hop swaps for ZIGChain native & Oroswap tokens.
 
 ---
 
@@ -14,7 +14,7 @@ Initializes the contract with the Oroswap factory contract address.
 
 ```json
 {
-  "oroswap_factory": "terra..."
+  "oroswap_factory": "zig..."
 }
 ```
 
@@ -27,7 +27,7 @@ CW20 receive msg.
 ```json
 {
   "receive": {
-    "sender": "terra...",
+    "sender": "zig...",
     "amount": "123",
     "msg": "<base64_encoded_json_string>"
   }
@@ -41,7 +41,7 @@ This message is for internal use.
 
 ### Example
 
-Swap UST => mABNB
+Swap UZIG => CWBNB
 
 ```json
 {
@@ -50,17 +50,17 @@ Swap UST => mABNB
         "oro_swap": {
           "offer_asset_info": {
             "native_token": {
-              "denom": "uusd"
+              "denom": "uzig"
             }
           },
           "ask_asset_info": {
             "token": {
-              "contract_addr": "terra..."
+              "contract_addr": "zig..."
             }
           }
         }
       },
-     "to": "terra...",
+     "to": "zig...",
      "max_spread": "0.05",
      "single": false
    }
@@ -75,7 +75,7 @@ Note: Response data makes sense ONLY if the first token in multi-hop swap is nat
 
 ### Example
 
-Swap KRT => UST => mABNB
+Swap UZIG => CWBNB
 
 ```json
 {
@@ -83,27 +83,27 @@ Swap KRT => UST => mABNB
     "operations": [
       {
         "native_swap":{
-          "offer_denom":"ukrw",
-          "ask_denom":"uusd"
+          "offer_denom":"uzig",
+          "ask_denom":"uzig"
         }
       },
       {
         "oro_swap": {
           "offer_asset_info": {
             "native_token": {
-              "denom": "uusd"
+              "denom": "uzig"
             }
           },
           "ask_asset_info": {
             "token": {
-              "contract_addr": "terra..."
+              "contract_addr": "zig..."
             }
           }
         }
       }
     ],
     "minimum_receive": "123",
-    "to": "terra...",
+    "to": "zig...",
     "max_spread": "0.05"
   }
 }
@@ -118,12 +118,12 @@ Checks that an amount of ask tokens exceeds `minimum_receive`. This message is f
   "assert_minimum_receive": {
     "asset_info": {
       "token": {
-        "contract_addr": "terra..."
+        "contract_addr": "zig..."
       }
     },
     "prev_balance": "123",
     "minimum_receive": "123",
-    "receiver": "terra..."
+    "receiver": "zig..."
   }
 }
 ```
@@ -146,7 +146,7 @@ Returns the general configuration for the router contract.
 
 Simulates multi-hop swap operations. Examples:
 
-- KRT => UST => mABNB
+- UZIG => CWBNB
 
 ```json
 {
@@ -155,20 +155,20 @@ Simulates multi-hop swap operations. Examples:
     "operations": [
       {
         "native_swap": {
-          "offer_denom": "ukrw",
-          "ask_denom": "uusd"
+          "offer_denom": "uzig",
+          "ask_denom": "uzig"
         }
       },
       {
         "oro_swap": {
           "offer_asset_info": {
             "native_token": {
-              "denom": "uusd"
+              "denom": "uzig"
             }
           },
           "ask_asset_info": {
             "token": {
-              "contract_addr": "terra..."
+              "contract_addr": "zig..."
             }
           }
         }
@@ -178,7 +178,7 @@ Simulates multi-hop swap operations. Examples:
 }
 ```
 
-- mABNB => UST => KRT
+- CWBNB => UZIG
 
 ```json
 {
@@ -187,20 +187,20 @@ Simulates multi-hop swap operations. Examples:
     "operations": [
     {
       "native_swap": {
-        "offer_denom": "uusd",
-        "ask_denom": "ukrw"
+        "offer_denom": "uzig",
+        "ask_denom": "uzig"
       }
     },
     {
       "oro_swap": {
         "offer_asset_info": {
           "token": {
-            "contract_addr": "terra..."
+            "contract_addr": "zig..."
           }
         },
         "ask_asset_info": {
           "native_token": {
-            "denom": "uusd"
+            "denom": "uzig"
           }
         }
       }
