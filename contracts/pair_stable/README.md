@@ -1,6 +1,6 @@
 # Oroswap Base Stableswap Pair
 
-The stableswap pool uses the 4A(Rx+Ry) + D formula, resulting in a constant price ∆x / ∆y = 1. More details around how the pool functions can be found [here](https://docs.astroport.fi/astroport/astroport/astro-pools/stableswap-invariant-pools).
+The stableswap pool uses the 4A(Rx+Ry) + D formula, resulting in a constant price ∆x / ∆y = 1. This makes it ideal for trading assets with similar values, such as stablecoins or pegged assets, providing low slippage and maintaining stable exchange rates.
 
 ---
 
@@ -26,7 +26,7 @@ As an example, let's say someone LPs in a pool and specifies a 1% slippage toler
 
 ### Slippage Tolerance for Swaps
 
-Astroport has two options to protect traders against slippage during swaps:
+Oroswap has two options to protect traders against slippage during swaps:
 
 1. Providing `max_spread`
 The spread is calculated as the difference between the ask amount (using the constant pool price) before and after the swap operation. Once `max_spread` is set, it will be compared against the actual swap spread. In case the swap spread exceeds the provided max limit, the swap will fail.
@@ -45,24 +45,22 @@ Initializes a new stableswap pair.
 ```json
 {
   "token_code_id": 123,
-  "factory_addr": "terra...",
+  "factory_addr": "zig...",
   "asset_infos": [
     {
       "token": {
-        "contract_addr": "terra..."
+        "contract_addr": "zig..."
       }
     },
     {
       "native_token": {
-        "denom": "uusd"
+        "denom": "uzig"
       }
     }
   ],
   "init_params": "<base64_encoded_json_string: optional binary serialised parameters for custom pool types>"
 }
 ```
-
-## ExecuteMsg
 
 ## ExecuteMsg
 
@@ -73,7 +71,7 @@ Withdraws liquidity or assets that were swapped to (ask assets from a swap opera
 ```json
 {
   "receive": {
-    "sender": "terra...",
+    "sender": "zig...",
     "amount": "123",
     "msg": "<base64_encoded_json_string>"
   }
@@ -95,7 +93,7 @@ __NOTE__: you should increase your token allowance for the pool before providing
         {
           "info": {
             "token": {
-              "contract_addr": "terra..."
+              "contract_addr": "zig..."
             }
           },
           "amount": "1000000"
@@ -103,14 +101,14 @@ __NOTE__: you should increase your token allowance for the pool before providing
         {
           "info": {
             "native_token": {
-              "denom": "uusd"
+              "denom": "uzig"
             }
           },
           "amount": "1000000"
         }
       ],
       "auto_stake": false,
-      "receiver": "terra..."
+      "receiver": "zig..."
     }
   }
 ```
@@ -124,14 +122,14 @@ __NOTE__: you should increase your token allowance for the pool before providing
         {
           "info": {
             "token": {
-              "contract_addr": "terra..."
+              "contract_addr": "zig..."
             }
           },
           "amount": "1000000"
         }
       ],
       "auto_stake": false,
-      "receiver": "terra..."
+      "receiver": "zig..."
     }
   }
 ```
@@ -158,14 +156,14 @@ NOTE: You should increase your token allowance for the pool before the swap.
       "offer_asset": {
         "info": {
           "native_token": {
-            "denom": "uluna"
+            "denom": "uzig"
           }
         },
         "amount": "123"
       },
       "belief_price": "123",
       "max_spread": "123",
-      "to": "terra..."
+      "to": "zig..."
     }
   }
 ```
@@ -238,7 +236,7 @@ Simulates a swap and returns the spread and commission amounts.
     "offer_asset": {
       "info": {
         "native_token": {
-          "denom": "uusd"
+          "denom": "uzig"
         }
       },
       "amount": "1000000"
@@ -257,7 +255,7 @@ Reverse simulates a swap (specifies the ask instead of the offer) and returns th
     "ask_asset": {
       "info": {
         "token": {
-          "contract_addr": "terra..."
+          "contract_addr": "zig..."
         }
       },
       "amount": "1000000"

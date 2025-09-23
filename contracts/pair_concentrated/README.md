@@ -1,6 +1,6 @@
 # Oroswap Concentrated Liquidity Pair
 
-[//]: # (TODO: write README)
+Advanced concentrated liquidity pair with adaptive price ranges and optimized capital efficiency.
 
 ## InstantiateMsg
 
@@ -9,16 +9,16 @@ Initializes a new concentrated liquidity pair.
 ```json
 {
   "token_code_id": 123,
-  "factory_addr": "terra...",
+  "factory_addr": "zig...",
   "asset_infos": [
     {
       "token": {
-        "contract_addr": "terra..."
+        "contract_addr": "zig..."
       }
     },
     {
       "native_token": {
-        "denom": "uusd"
+        "denom": "uzig"
       }
     }
   ],
@@ -39,7 +39,7 @@ where `<base64_encoded_json_string>` is
   "min_price_scale_delta": "0.000001",
   "initial_price_scale": "1.5",
   "ma_half_time": 600,
-  "owner": "terra..."
+  "owner": "zig..."
 }
 ```
 
@@ -54,7 +54,7 @@ Withdraws liquidity or assets that were swapped to (ask assets from a swap opera
 ```json
 {
   "receive": {
-    "sender": "terra...",
+    "sender": "zig...",
     "amount": "123",
     "msg": "<base64_encoded_json_string>"
   }
@@ -74,7 +74,7 @@ __NOTE__: you should increase your token allowance for the pool before providing
       {
         "info": {
           "token": {
-            "contract_addr": "terra..."
+            "contract_addr": "zig..."
           }
         },
         "amount": "1000000"
@@ -82,14 +82,14 @@ __NOTE__: you should increase your token allowance for the pool before providing
       {
         "info": {
           "native_token": {
-            "denom": "uusd"
+            "denom": "uzig"
           }
         },
         "amount": "1000000"
       }
     ],
     "auto_stake": false,
-    "receiver": "terra...",
+    "receiver": "zig...",
     "slippage_tolerance": "0.01"
   }
 }
@@ -117,14 +117,14 @@ are optional except `offer_asset`.
     "offer_asset": {
       "info": {
         "native_token": {
-          "denom": "uluna"
+          "denom": "uzig"
         }
       },
       "amount": "123"
     },
     "belief_price": "123",
     "max_spread": "123",
-    "to": "terra..."
+    "to": "zig..."
   }
 }
 ```
@@ -231,7 +231,7 @@ Simulates a swap and returns the spread and commission amounts.
     "offer_asset": {
       "info": {
         "native_token": {
-          "denom": "uusd"
+          "denom": "uzig"
         }
       },
       "amount": "1000000"
@@ -250,7 +250,7 @@ Reverse simulates a swap (specifies the ask instead of the offer) and returns th
     "ask_asset": {
       "info": {
         "token": {
-          "contract_addr": "terra..."
+          "contract_addr": "zig..."
         }
       },
       "amount": "1000000"
@@ -291,7 +291,7 @@ Query LP token virtual price.
 
 ### `amp_gamma`
 
-Query curremt Amp and Gamma parameters.
+Query current Amp and Gamma parameters.
 
 ```json
 {
@@ -308,7 +308,7 @@ Returns the balance of the specified asset that was in the pool just preceeding 
   "asset_balance_at": {
     "asset_info": {
       "native_token": {
-        "denom": "stake"
+        "denom": "uzig"
       }
     },
     "block_height": "12345678"

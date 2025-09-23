@@ -1,10 +1,9 @@
 # Oroswap Incentives (formerly Generator)
 
 The Oroswap Incentives contract allocates token rewards for various LP tokens and distributes them pro-rata to LP stakers.
-This is completely reworked version of the original [Generator](https://github.com/oroswap/oroswap-core-core/tree/main/contracts/tokenomics/generator) contract.
-In this version we support both cw20 and native LP tokens. New generator also got rid of proxy contracts and made it much easier to add incentives (permissonless!).
+This is completely reworked version of the original Generator contract.
+In this version we support both cw20 and native LP tokens. 
 However, generator could require incentivization fee to be paid to add new reward schedule which is exclusively needed to prevent spamming.
-One more improvement is that ORO emissions are counted by seconds instead of blocks which makes more sense since Oroswap is multichain protocol.
 
 ## Endpoints Description
 Contract supports following execute endpoints:
@@ -24,12 +23,10 @@ Contract supports following execute endpoints:
 Anyone can deposit either through direct `deposit` call with native LP tokens supplied or via cw20 send hook.
 Contract checks if LP token corresponds to a pair registered in factory. Any LP token is stakable by default although it doesn't mean that it is incentivized in generator.
 
-![deposit_figure](./assets/deposit.png "Deposit figure")
 
 ### Withdraw
 Partially or fully withdraw LP tokens from the generator. Rewards are updated and withdrawn automatically.
 
-![withdraw_figure](./assets/withdraw.png "Withdraw figure")
 
 ### Incentivize
 Add new reward schedule to a specific pool. All overlapped schedules are thoroughly considered and summed up.
@@ -37,21 +34,10 @@ This is permissonless endpoint. However, it requires to pay incentivization fee 
 Reward schedules are counted by periods where period is one week. Each period starts on Monday 00:00 UTC and ends on Sunday 23:59 UTC.
 New reward schedule always starts right away and lasts **till the next Monday + X weeks**, where X - number of weeks specified in the schedule.
 
-See in figure below possible scenarios. The first line represents current reward schedule,
-2nd red line shows new reward schedule and 3rd line shows the result.
+The reward schedule system works as follows: the first period represents the current reward schedule, the second period shows the new reward schedule, and the third period shows the combined result.
 
-![incentivize_figure](./assets/incentivize.png "Incentivize figure")
 
 ### Update pool rewards
 This is internal logic which is launched whenever LP tokens amount changes, new reward schedule is added or rewards are claimed.
 Each time _update_rewards_ is called, accrued rewards / total LP staked value is added to the current reward index.
 _rps_ - rewards per second
-
-![update_rewards_figure](./assets/schedules_flow.png "Update rewards figure")
-
-## Limitations and requirements
-1. Chain doesn't allow to mint native tokens in the form of bech32 addresses.
-I.e. `wasm1xxxxxxx` denom is prohibited but `factory/wasm1xxxxxxx/oroswap_lp` is allowed.
-2. Chain has TokenFactory module. Produced denom strictly follows these [rules](https://github.com/osmosis-labs/osmosis/tree/main/x/tokenfactory#expectations-from-the-chain)
-3. Generator assumes active pool set size is bounded to a reasonable value (i.e. max 30). Generator controller and owner must consider this.
-Otherwise, some endpoints working with active pools might fail due to gas limit.

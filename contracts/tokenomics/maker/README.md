@@ -17,7 +17,7 @@ The Maker contract is responsible for collecting fees from pairs and swapping th
 ```json
 {
   "owner": "zig1...",
-  "default_bridge": {"native_token": {"denom": "usdc"}},
+  "default_bridge": {"native_token": {"denom": "uusd"}},
   "oro_token": {"native_token": {"denom": "uzig"}},
   "factory_contract": "zig1...",
   "staking_contract": "zig1...",
@@ -27,8 +27,8 @@ The Maker contract is responsible for collecting fees from pairs and swapping th
   "collect_cooldown": "3600",
   "critical_tokens": [
     {"native_token": {"denom": "uzig"}},
-    {"native_token": {"denom": "usdc"}},
-    {"native_token": {"denom": "usdt"}}
+    {"native_token": {"denom": "uzig"}},
+    {"native_token": {"denom": "uzig"}}
   ]
 }
 ```
@@ -45,14 +45,14 @@ Updates contract configuration. Only owner can execute.
     "staking_contract": "zig1...",
     "governance_contract": {"set": "zig1..."},
     "governance_percent": "50",
-    "default_bridge": {"native_token": {"denom": "usdc"}},
+    "default_bridge": {"native_token": {"denom": "uzig"}},
     "max_spread": "0.1",
     "collect_cooldown": "3600",
     "oro_token": {"native_token": {"denom": "uzig"}},
     "critical_tokens": [
       {"native_token": {"denom": "uzig"}},
-      {"native_token": {"denom": "usdc"}},
-      {"native_token": {"denom": "usdt"}}
+      {"native_token": {"denom": "uzig"}},
+      {"native_token": {"denom": "uzig"}}
     ]
   }
 }
@@ -130,7 +130,7 @@ Response:
 ```json
 {
   "owner": "zig1...",
-  "default_bridge": {"native_token": {"denom": "usdc"}},
+  "default_bridge": {"native_token": {"denom": "uzig"}},
   "oro_token": {"native_token": {"denom": "uzig"}},
   "factory_contract": "zig1...",
   "staking_contract": "zig1...",
@@ -140,8 +140,8 @@ Response:
   "authorized_keepers": ["zig1...", "zig1..."],
   "critical_tokens": [
     {"native_token": {"denom": "uzig"}},
-    {"native_token": {"denom": "usdc"}},
-    {"native_token": {"denom": "usdt"}}
+    {"native_token": {"denom": "uzig"}},
+    {"native_token": {"denom": "uzig"}}
   ]
 }
 ```

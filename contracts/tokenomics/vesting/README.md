@@ -10,7 +10,7 @@ Initializes the contract with the address of the ORO token.
 
 ```json
 {
-  "token_addr": "terra..."
+  "token_addr": "zig..."
 }
 ```
 
@@ -21,7 +21,7 @@ CW20 receive msg.
 ```json
 {
   "receive": {
-    "sender": "terra...",
+    "sender": "zig...",
     "amount": "123",
     "msg": "<base64_encoded_json_string>"
   }
@@ -51,7 +51,7 @@ In `send.msg`, you may encode this JSON string into base64 encoding.
   "RegisterVestingAccounts": {
     "vesting_accounts": [
       {
-        "address": "terra...",
+        "address": "zig...",
         "schedules": {
           "start_point": {
             "time": "1634125119000000000",
@@ -75,7 +75,7 @@ Transfer vested tokens from all vesting schedules that have the same `VestingCon
 ```json
 {
   "claim": {
-    "recipient": "terra...",
+    "recipient": "zig...",
     "amount": "123"
   }
 }
@@ -90,8 +90,8 @@ This endpoint terminates current active schedule (updates end_point) and creates
 ```json
 {
   "withdraw_from_active_schedule": {
-    "account": "terra...",
-    "recipient": "terra...",
+    "account": "zig...",
+    "recipient": "zig...",
     "withdraw_amount": "123"
   }
 }
@@ -118,7 +118,7 @@ Returns all vesting schedules with their details for a specific vesting recipien
 ```json
 {
   "vesting_account": {
-    "address": "terra..."
+    "address": "zig..."
   }
 }
 ```
@@ -130,7 +130,7 @@ Returns a paginated list of vesting schedules in chronological order. Given fiel
 ```json
 {
   "vesting_accounts": {
-    "start_after": "terra...",
+    "start_after": "zig...",
     "limit": 10,
     "order_by": {
       "desc": {}
@@ -146,7 +146,7 @@ Returns the claimable amount (vested but not yet claimed) of ORO tokens that a v
 ```json
 {
   "available_amount": {
-    "address": "terra..."
+    "address": "zig..."
   }
 }
 ```
