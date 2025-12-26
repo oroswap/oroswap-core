@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- CW721 NFT support scripts (`mainnet-scripts/cw-721-nft/`)
+  - NFT minting, batch minting, transfers, burns
+- Added `cw721_base.wasm` v0.20.0 from [cw-nfts](https://github.com/public-awesome/cw-nfts) (external dependency)
+
 ## [1.1.0] – 2025-09-24
 
 ### Added
