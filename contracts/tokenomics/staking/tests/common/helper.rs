@@ -12,7 +12,7 @@ use cw_multi_test::{
     Executor, FailingModule, StakeKeeper, WasmKeeper, TOKEN_FACTORY_MODULE,
 };
 
-use oroswap::staking::{Config, ExecuteMsg, InstantiateMsg, QueryMsg, TrackerData};
+use oroswap::staking::{Config, ExecuteMsg, InstantiateMsg, QueryMsg};
 
 use crate::common::stargate::StargateKeeper;
 
@@ -27,18 +27,6 @@ fn staking_contract() -> Box<dyn Contract<Empty>> {
     )
 }
 
-fn tracker_contract() -> Box<dyn Contract<Empty>> {
-    Box::new(
-        ContractWrapper::new_with_empty(
-            |_: DepsMut, _: Env, _: MessageInfo, _: Empty| -> StdResult<Response> {
-                unimplemented!()
-            },
-            oroswap_tokenfactory_tracker::contract::instantiate,
-            oroswap_tokenfactory_tracker::query::query,
-        )
-        .with_sudo_empty(oroswap_tokenfactory_tracker::contract::sudo),
-    )
-}
 
 pub type CustomizedApp = App<
     BankKeeper,
@@ -57,7 +45,6 @@ pub struct Helper {
     pub app: CustomizedApp,
     pub owner: Addr,
     pub staking: Addr,
-    pub tracker_addr: String,
     pub xoro_denom: String,
 }
 
@@ -75,14 +62,14 @@ impl Helper {
             });
 
         let staking_code_id = app.store_code(staking_contract());
-        let tracker_code_id = app.store_code(tracker_contract());
 
         let msg = InstantiateMsg {
             deposit_token_denom: ORO_DENOM.to_string(),
-            tracking_admin: owner.to_string(),
-            tracking_code_id: tracker_code_id,
             token_factory_addr: TOKEN_FACTORY_MODULE.to_string(),
             bootstrap_amount: None, // Use default MINIMUM_STAKE_AMOUNT
+            unbonding_period: 7 * 24 * 60 * 60, // 7 days
+            xoro_decimals: Some(6),
+            xoro_uri: Some("https://example.com/metadata.json".to_string()),
         };
         let staking = app
             .instantiate_contract(
@@ -91,14 +78,10 @@ impl Helper {
                 &msg,
                 &coins(1000, ORO_DENOM), // Bootstrap amount
                 String::from("Oroswap Staking"),
-                None,
+                Some(owner.to_string()),
             )
             .unwrap();
 
-        let TrackerData { tracker_addr, .. } = app
-            .wrap()
-            .query_wasm_smart(&staking, &QueryMsg::TrackerConfig {})
-            .unwrap();
         let Config { xoro_denom, .. } = app
             .wrap()
             .query_wasm_smart(&staking, &QueryMsg::Config {})
@@ -108,7 +91,6 @@ impl Helper {
             app,
             owner: owner.clone(),
             staking,
-            tracker_addr,
             xoro_denom,
         })
     }
@@ -159,6 +141,33 @@ impl Helper {
         )
     }
 
+    pub fn claim(&mut self, sender: &Addr, receiver: Option<String>) -> AnyResult<AppResponse> {
+        self.app.execute_contract(
+            sender.clone(),
+            self.staking.clone(),
+            &ExecuteMsg::Claim { receiver },
+            &[],
+        )
+    }
+
+    pub fn pause(&mut self, sender: &Addr) -> AnyResult<AppResponse> {
+        self.app.execute_contract(
+            sender.clone(),
+            self.staking.clone(),
+            &ExecuteMsg::Pause {},
+            &[],
+        )
+    }
+
+    pub fn unpause(&mut self, sender: &Addr) -> AnyResult<AppResponse> {
+        self.app.execute_contract(
+            sender.clone(),
+            self.staking.clone(),
+            &ExecuteMsg::Unpause {},
+            &[],
+        )
+    }
+
     pub fn query_balance(&self, sender: &Addr, denom: &str) -> StdResult<Uint128> {
         self.app
             .wrap()
@@ -184,6 +193,12 @@ impl Helper {
         self.app
             .wrap()
             .query_wasm_smart(&self.staking, &QueryMsg::TotalSupplyAt { timestamp })
+    }
+
+    pub fn query_total_locked(&self) -> StdResult<Uint128> {
+        self.app
+            .wrap()
+            .query_wasm_smart(&self.staking, &QueryMsg::TotalLocked {})
     }
 
     pub fn mint_coin(&mut self, to: &Addr, coin: Coin) {

@@ -7,7 +7,7 @@ use cosmwasm_std::{
     coin, Addr, Api, BankMsg, Binary, BlockInfo, CustomQuery, Querier, Storage, SubMsgResponse,
 };
 use cw_multi_test::{AppResponse, BankSudo, CosmosRouter, Stargate};
-use osmosis_std::types::osmosis::tokenfactory::v1beta1::{
+use oroswap::token_factory::{
     MsgBurn, MsgCreateDenom, MsgCreateDenomResponse, MsgMint, MsgSetBeforeSendHook,
     MsgSetDenomMetadata,
 };
@@ -37,10 +37,14 @@ impl Stargate for StargateKeeper {
                     events: vec![],
                     data: Some(
                         MsgCreateDenomResponse {
-                            new_token_denom: format!(
-                                "coin.{}.{}",
-                                tf_msg.sender, tf_msg.subdenom
-                            ),
+                            denom: format!("coin.{}.{}", tf_msg.creator, tf_msg.sub_denom),
+                            creator: tf_msg.creator,
+                            bank_admin: "".to_string(),
+                            metadata_admin: "".to_string(),
+                            minting_cap: tf_msg.minting_cap,
+                            can_change_minting_cap: tf_msg.can_change_minting_cap,
+                            URI: "".to_string(),
+                            URI_hash: "".to_string(),
                         }
                         .into(),
                     ),
@@ -50,11 +54,11 @@ impl Stargate for StargateKeeper {
             MsgMint::TYPE_URL => {
                 let tf_msg: MsgMint = value.try_into()?;
                 let mint_coins = tf_msg
-                    .amount
+                    .token
                     .expect("Empty amount in tokenfactory MsgMint!");
                 let cw_coin = coin(mint_coins.amount.parse()?, mint_coins.denom);
                 let bank_sudo = BankSudo::Mint {
-                    to_address: tf_msg.mint_to_address.clone(),
+                    to_address: tf_msg.recipient.clone(),
                     amount: vec![cw_coin.clone()],
                 };
 
@@ -63,7 +67,7 @@ impl Stargate for StargateKeeper {
             MsgBurn::TYPE_URL => {
                 let tf_msg: MsgBurn = value.try_into()?;
                 let burn_coins = tf_msg
-                    .amount
+                    .token
                     .expect("Empty amount in tokenfactory MsgBurn!");
                 let cw_coin = coin(burn_coins.amount.parse()?, burn_coins.denom);
                 let burn_msg = BankMsg::Burn {
@@ -74,13 +78,9 @@ impl Stargate for StargateKeeper {
                     api,
                     storage,
                     block,
-                    Addr::unchecked(&tf_msg.sender),
+                    Addr::unchecked(&tf_msg.signer),
                     burn_msg.into(),
                 )
-            }
-            MsgSetDenomMetadata::TYPE_URL => {
-                // TODO: Implement this if needed
-                Ok(AppResponse::default())
             }
             MsgSetBeforeSendHook::TYPE_URL => {
                 let tf_msg: MsgSetBeforeSendHook = value.try_into()?;
@@ -91,6 +91,10 @@ impl Stargate for StargateKeeper {
                 };
 
                 router.sudo(api, storage, block, bank_sudo.into())
+            }
+            MsgSetDenomMetadata::TYPE_URL => {
+                // Just return success for metadata
+                Ok(AppResponse::default())
             }
             _ => Err(anyhow::anyhow!(
                 "Unexpected exec msg {type_url} from {sender:?}",
@@ -108,17 +112,5 @@ impl Stargate for StargateKeeper {
         _data: Binary,
     ) -> AnyResult<Binary> {
         unimplemented!("Stargate queries are not implemented")
-        // match path.as_str() {
-        //     "/osmosis.poolmanager.v1beta1.Query/Params" => {
-        //         Ok(to_json_binary(&poolmanager::v1beta1::ParamsResponse {
-        //             params: Some(poolmanager::v1beta1::Params {
-        //                 pool_creation_fee: vec![coin(1000_000000, "uosmo").into()],
-        //                 taker_fee_params: None,
-        //                 authorized_quote_denoms: vec![],
-        //             }),
-        //         })?)
-        //     }
-        //     _ => Err(anyhow::anyhow!("Unexpected stargate query request {path}")),
-        // }
     }
 }

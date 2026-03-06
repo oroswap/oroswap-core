@@ -1,96 +1,91 @@
-# Oroswap xORO Staking
+# Oroswap xORO Staking (Native)
 
-This staking contract allows ORO holders to stake their tokens in exchange for xORO. The amount of ORO they can claim later increases as accrued fees in the Maker contract get swapped to ORO which is then sent to stakers.
+This contract allows ORO holders to stake their native tokens in exchange for xORO (a TokenFactory-denominated stake). The value of xORO relative to ORO increases over time as protocol rewards are injected into the contract, naturally increasing the exchange rate.
+
+## Features
+
+- **Native Token Staking**: Fully compatible with ZigChain's native `uzig`/`ORO` denoms.
+- **Auto-Compounding**: Rewards increase the value of all xORO shares simultaneously.
+- **Unbonding Period**: Secure unstaking with a configurable unbonding duration.
+- **TokenFactory Integration**: Automatically creates and manages the `xoro` denom via the chain's TokenFactory module.
 
 ---
 
 ## InstantiateMsg
 
-Initializes the contract with the token code ID used by ORO and the ORO token address.
+Initializes the contract and bootstraps the initial liquidity pool.
 
 ```json
 {
-  "token_code_id": 123,
-  "deposit_token_addr": "zig..."
+  "deposit_token_denom": "coin.zig1...",
+  "token_factory_addr": "zig1qmy2...",
+  "bootstrap_amount": "1000",
+  "unbonding_duration": 86400
 }
 ```
 
 ## ExecuteMsg
 
-### `receive`
-
-CW20 receive msg.
+### `Stake`
+Deposits native ORO tokens into the contract to receive xORO shares.
+**Note**: You must send the `ORO` tokens along with the transaction.
 
 ```json
 {
-  "receive": {
-    "sender": "zig...",
-    "amount": "123",
-    "msg": "<base64_encoded_json_string>"
+  "stake": {
+    "receiver": "zig1..."
   }
 }
 ```
 
-#### `Enter`
+### `Leave`
+Burns xORO shares to begin the unstaking process. The underlying ORO will be available for claiming after the unbonding duration.
 
-Deposits ORO in the xORO staking contract.
-
-Execute this message by calling the ORO token contract and use a message like this:
 ```json
 {
-  "send": {
-    "contract": "oroswap_staking",
-    "amount": "1000000",
-    "msg": "eyJlbnRlciI6eyJyZWNlaXZlciI6InVzZXIxIn19"
-  }
+  "leave": {}
 }
 ```
 
-#### `leave`
+### `Claim`
+Withdraws all matured unbonding entries (tokens that have finished their unbonding period).
 
-Burns xORO and unstakes underlying ORO (initial staked amount + accrued ORO since staking).
-
-Execute this message by calling the xORO token contract and use a message like this:
 ```json
 {
-  "send": {
-    "contract": "oroswap_staking",
-    "amount": "1000000",
-    "msg": "eyJsZWF2ZSI6eyJyZWNlaXZlciI6InVzZXIxIn19"
-  }
+  "claim": {}
 }
 ```
+
+---
 
 ## QueryMsg
 
-All query messages are described below. A custom struct is defined for each query response.
-
-### `config`
-
-Returns the ORO and xORO addresses.
+### `State`
+Returns the current exchange rate and pool health metrics.
 
 ```json
 {
-  "config": {}
+  "state": {}
 }
 ```
 
-### `get_total_shares`
-
-Returns the total amount of xORO tokens.
-
+**Response Example:**
 ```json
 {
-  "get_total_shares": {}
+  "total_shares": "1000000",
+  "total_deposit": "1050000",
+  "exchange_rate": "1.05"
 }
 ```
 
-### `get_total_deposit`
+### `Config`
+Returns general contract settings.
 
-Returns the total amount of ORO deposits in the staking contract.
+### `StakingInfo`
+Returns the current staking and unbonding status for a specific user.
 
 ```json
 {
-  "get_total_deposit": {}
+  "staking_info": { "address": "zig1..." }
 }
 ```

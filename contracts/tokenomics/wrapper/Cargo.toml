@@ -1,0 +1,39 @@
+[package]
+name = "oroswap-wrapper"
+version = "1.0.0"
+authors = ["Oroswap"]
+edition = "2021"
+description = "Oroswap Wrapper Contract - lock native/IBC tokens and receive 1:1 minted tokenfactory tokens"
+license = "GPL-3.0-only"
+repository = "https://github.com/oroswap/oroswap-core"
+homepage = "https://www.oroswap.org"
+
+exclude = [
+    "contract.wasm",
+    "hash.txt",
+]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["zigchain"]
+# for more explicit tests, cargo test --features=backtraces
+backtraces = ["cosmwasm-std/backtraces"]
+library = []
+zigchain = ["oroswap/zigchain"]
+
+[dependencies]
+cosmwasm-std = { workspace = true, features = ["cosmwasm_1_1"] }
+cw-storage-plus.workspace = true
+thiserror.workspace = true
+cw2.workspace = true
+oroswap.workspace = true
+cw-utils.workspace = true
+cosmwasm-schema.workspace = true
+
+[dev-dependencies]
+anyhow = "1"
+itertools.workspace = true
+cosmwasm-schema.workspace = true
+cw-multi-test = { git = "https://github.com/astroport-fi/cw-multi-test", branch = "feat/bank_with_send_hooks", features = ["cosmwasm_1_1"] }

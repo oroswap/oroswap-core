@@ -11,7 +11,7 @@ use cw_multi_test::{Contract, ContractWrapper, Executor, TOKEN_FACTORY_MODULE};
 use cw_utils::PaymentError;
 use itertools::Itertools;
 
-use oroswap::staking::{Config, ExecuteMsg, QueryMsg, StakingResponse, TrackerData};
+use oroswap::staking::{Config, ExecuteMsg, QueryMsg, StakingResponse};
 use oroswap_staking::error::ContractError;
 
 use crate::common::helper::{Helper, ORO_DENOM};
@@ -33,23 +33,13 @@ fn test_instantiate() {
         response,
         Config {
             oro_denom: ORO_DENOM.to_string(),
-            xoro_denom: format!("coin.{}.xORO", &helper.staking),
+            xoro_denom: format!("coin.{}.xoro", &helper.staking),
             bootstrap_amount: Uint128::new(1000),
-        }
-    );
-
-    let response: TrackerData = helper
-        .app
-        .wrap()
-        .query_wasm_smart(&helper.staking, &QueryMsg::TrackerConfig {})
-        .unwrap();
-    assert_eq!(
-        response,
-        TrackerData {
-            code_id: 2,
-            admin: owner.to_string(),
-            token_factory_addr: TOKEN_FACTORY_MODULE.to_string(),
-            tracker_addr: "contract1".to_string(),
+            owner: "owner".to_string(),
+            unbonding_period: 7 * 24 * 60 * 60,
+            xoro_decimals: 6,
+            xoro_uri: Some("https://example.com/metadata.json".to_string()),
+            paused: false,
         }
     );
 }
@@ -206,7 +196,17 @@ fn test_enter_and_leave() {
     let amount = helper.query_balance(&alice, &xoro_denom).unwrap();
     assert_eq!(amount.u128(), 1090);
 
-    // Check if Alice's ORO balance is 8910 (10000 - 1100 + 10)
+    // Check if Alice's ORO balance is still 8900 (10000 - 1100, unstaked 10 but not claimed)
+    let amount = helper.query_balance(&alice, ORO_DENOM).unwrap();
+    assert_eq!(amount.u128(), 8900);
+
+    // Fast forward time by 7 days
+    helper.next_block(7 * 24 * 60 * 60);
+
+    // Claim Alice's ORO
+    helper.claim(&alice, None).unwrap();
+
+    // Now Alice's ORO balance is 8910 (8900 + 10)
     let amount = helper.query_balance(&alice, ORO_DENOM).unwrap();
     assert_eq!(amount.u128(), 8910);
 
@@ -287,7 +287,17 @@ fn should_work_with_more_than_one_participant() {
     // Check Bob's xORO balance is 5
     let amount = helper.query_balance(&bob, &xoro_denom).unwrap();
     assert_eq!(amount.u128(), 5);
-    // Check Bob's ORO balance is 9995 (10000 minted - 10 entered + 5 by leaving)
+    // Check Bob's ORO balance is 9990 (10000 minted - 10 entered; unstaked 5 but not claimed)
+    let amount = helper.query_balance(&bob, ORO_DENOM).unwrap();
+    assert_eq!(amount.u128(), 9990);
+
+    // Fast forward time by 7 days
+    helper.next_block(7 * 24 * 60 * 60);
+
+    // Claim Bob's ORO
+    helper.claim(&bob, None).unwrap();
+
+    // Check Bob's ORO balance is 9995 (9990 + 5 by leaving)
     let amount = helper.query_balance(&bob, ORO_DENOM).unwrap();
     assert_eq!(amount.u128(), 9995);
 
@@ -331,13 +341,6 @@ fn test_historical_queries() {
     helper.give_oro(1_000_000000, &user2);
     helper.stake(&user2, 1_000_000000).unwrap();
 
-    struct Entry {
-        user1_bal: Uint128,
-        user2_bal: Uint128,
-        total_supply: Uint128,
-    }
-    let mut history: HashMap<u64, Entry> = Default::default();
-
     for _ in 0..10 {
         helper.next_block(100);
 
@@ -356,62 +359,6 @@ fn test_historical_queries() {
 
         // Unstake to impact total supply
         helper.unstake(&user2, 3_000000).unwrap();
-
-        history.insert(
-            helper.app.block_info().time.seconds() + 1, // balance change takes effect from the next block
-            Entry {
-                user1_bal: helper
-                    .app
-                    .wrap()
-                    .query_balance(&user1, &xoro_denom)
-                    .unwrap()
-                    .amount,
-                user2_bal: helper
-                    .app
-                    .wrap()
-                    .query_balance(&user2, &xoro_denom)
-                    .unwrap()
-                    .amount,
-                total_supply: helper
-                    .app
-                    .wrap()
-                    .query_supply(&xoro_denom)
-                    .unwrap()
-                    .amount,
-            },
-        );
-    }
-
-    for (
-        timestamp,
-        Entry {
-            user1_bal,
-            user2_bal,
-            total_supply,
-        },
-    ) in history.into_iter().sorted_by(|(t1, _), (t2, _)| t1.cmp(t2))
-    {
-        let historical_user1_bal = helper
-            .query_xoro_balance_at(&user1, Some(timestamp))
-            .unwrap();
-        assert_eq!(
-            historical_user1_bal, user1_bal,
-            "Invalid balance for user1 at {timestamp}"
-        );
-
-        let historical_user2_bal = helper
-            .query_xoro_balance_at(&user2, Some(timestamp))
-            .unwrap();
-        assert_eq!(
-            historical_user2_bal, user2_bal,
-            "Invalid balance for user2 at {timestamp}"
-        );
-
-        let historical_total_supply = helper.query_xoro_supply_at(Some(timestamp)).unwrap();
-        assert_eq!(
-            historical_total_supply, total_supply,
-            "Invalid total supply at {timestamp}"
-        );
     }
 
     // Check the rest of the queries
@@ -435,80 +382,20 @@ fn test_historical_queries() {
         .wrap()
         .query_wasm_smart(&helper.staking, &QueryMsg::TotalDeposit {})
         .unwrap();
+    let total_locked: Uint128 = helper
+        .app
+        .wrap()
+        .query_wasm_smart(&helper.staking, &QueryMsg::TotalLocked {})
+        .unwrap();
     let staking_oro_balance = helper
         .app
         .wrap()
         .query_balance(&staking, ORO_DENOM)
         .unwrap()
         .amount;
-    assert_eq!(total_deposit, staking_oro_balance);
+    assert_eq!(total_deposit + total_locked, staking_oro_balance);
 }
 
-#[test]
-fn test_different_query_results() {
-    let owner = Addr::unchecked("owner");
-    let mut helper = Helper::new(&owner).unwrap();
-    let alice = Addr::unchecked("alice");
-    // Mint 10000 ORO for Alice
-    helper.give_oro(10000, &alice);
-    // Stake Alice's 1100 ORO for 1100 xORO
-    let resp_data = helper.stake(&alice, 1100).unwrap().data.unwrap();
-    let staking_resp: StakingResponse = from_json(&resp_data).unwrap();
-    assert_eq!(
-        staking_resp,
-        StakingResponse {
-            oro_amount: 1100u128.into(),
-            xoro_amount: 1100u128.into(),
-        }
-    );
-    // get current time
-    let time_now = helper.app.block_info().time.seconds();
-    // query with None, which uses deps.querier.query_balance
-    let total_supply_none: Uint128 = helper
-        .app
-        .wrap()
-        .query_wasm_smart(
-            &helper.staking,
-            &QueryMsg::TotalSupplyAt { timestamp: None },
-        )
-        .unwrap();
-    // query with Some(_), which uses SnapshotMap
-    let total_supply_some: Uint128 = helper
-        .app
-        .wrap()
-        .query_wasm_smart(
-            &helper.staking,
-            &QueryMsg::TotalSupplyAt {
-                timestamp: Some(time_now),
-            },
-        )
-        .unwrap();
-    assert_eq!(total_supply_none, total_supply_some);
-
-    let balance_none: Uint128 = helper
-        .app
-        .wrap()
-        .query_wasm_smart(
-            &helper.staking,
-            &QueryMsg::BalanceAt {
-                timestamp: None,
-                address: alice.to_string(),
-            },
-        )
-        .unwrap();
-    let balance_some: Uint128 = helper
-        .app
-        .wrap()
-        .query_wasm_smart(
-            &helper.staking,
-            &QueryMsg::BalanceAt {
-                timestamp: Some(time_now),
-                address: alice.to_string(),
-            },
-        )
-        .unwrap();
-    assert_eq!(balance_none, balance_some);
-}
 
 #[test]
 fn test_hooks() {
@@ -626,7 +513,146 @@ fn test_zero_return_amount_prevention() {
     // 2. Normal operations continue to work
     // 3. The check `if return_amount.is_zero()` is present in execute_leave function
     
-    println!("✅ Zero return amount prevention fix is implemented and working");
-    println!("✅ Contract compiles successfully with the new check");
     println!("✅ Normal staking/unstaking operations continue to work");
+}
+
+#[test]
+fn test_pause_unpause() {
+    let owner = Addr::unchecked("owner");
+    let alice = Addr::unchecked("alice");
+    let bob = Addr::unchecked("bob");
+
+    let mut helper = Helper::new(&owner).unwrap();
+    helper.give_oro(10000, &alice);
+    helper.give_oro(10000, &bob);
+
+    // 1. Only owner can pause
+    let err = helper.pause(&alice).unwrap_err();
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::Unauthorized {}
+    );
+
+    helper.pause(&owner).unwrap();
+
+    // 2. Actions blocked when paused
+    let err = helper.stake(&alice, 1000).unwrap_err();
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::ContractPaused {}
+    );
+
+    // Setup for leave and claim (staking while unpaused)
+    helper.unpause(&owner).unwrap();
+    helper.stake(&alice, 1000).unwrap();
+    helper.pause(&owner).unwrap();
+
+    let err = helper.unstake(&alice, 100).unwrap_err();
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::ContractPaused {}
+    );
+
+    // Setup for claim
+    helper.unpause(&owner).unwrap();
+    let _ = helper.unstake(&alice, 100).unwrap();
+    helper.pause(&owner).unwrap();
+
+    let err = helper.claim(&alice, None).unwrap_err();
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::ContractPaused {}
+    );
+
+    // 3. Unpause restores actions
+    helper.unpause(&owner).unwrap();
+    helper.stake(&bob, 1000).unwrap();
+    helper.unstake(&bob, 100).unwrap();
+    
+    // Fast forward to claim
+    helper.next_block(7 * 24 * 60 * 60);
+    helper.claim(&alice, None).unwrap();
+    helper.claim(&bob, None).unwrap();
+}
+
+#[test]
+fn test_migration() {
+    let owner = Addr::unchecked("owner");
+    let mut helper = Helper::new(&owner).unwrap();
+    let staking_addr = helper.staking.clone();
+
+    // 1. Manually set an "old" state and version
+    // We'll use the current contract but overwrite its state with a legacy format
+    // and set its cw2 version to an older one.
+    
+    // Define legacy config locally for simulation
+    #[cw_serde]
+    pub struct LegacyConfig {
+        pub oro_denom: String,
+        pub xoro_denom: String,
+        pub bootstrap_amount: Uint128,
+        pub owner: String,
+        pub unbonding_period: u64,
+        pub xoro_decimals: u32,
+        pub xoro_uri: Option<String>,
+    }
+
+    let legacy_config = LegacyConfig {
+        oro_denom: "coin.assembly.oro".to_string(),
+        xoro_denom: helper.xoro_denom.clone(),
+        bootstrap_amount: Uint128::new(1000),
+        owner: owner.to_string(),
+        unbonding_period: 604800,
+        xoro_decimals: 6,
+        xoro_uri: Some("https://example.com".to_string()),
+    };
+
+    helper.app.init_modules(|router, _, storage| {
+        // Save legacy config
+        let config_item: cw_storage_plus::Item<LegacyConfig> = cw_storage_plus::Item::new("config");
+        config_item.save(storage, &legacy_config).unwrap();
+        
+        // Set old version - use 2.1.0 which is in the migrate list
+        cw2::set_contract_version(storage, "oroswap-staking", "2.1.0").unwrap();
+
+        // Verify it's set in this closure
+        let v = cw2::get_contract_version(storage).unwrap();
+        assert_eq!(v.version, "2.1.0");
+    });
+
+    // Verify it's still set after the closure (if possible, but cw-multi-test storage is tricky)
+    // We'll trust init_modules for now but use 2.1.0 just in case 1.2.0 was somehow confusing
+
+    // 2. Perform migration
+    use oroswap::pair::MigrateMsg;
+    // We need to store the code again to get a code ID for migration
+    fn staking_contract() -> Box<dyn Contract<Empty>> {
+        Box::new(
+            ContractWrapper::new_with_empty(
+                oroswap_staking::contract::execute,
+                oroswap_staking::contract::instantiate,
+                oroswap_staking::contract::query,
+            )
+            .with_reply_empty(oroswap_staking::contract::reply)
+            .with_migrate_empty(oroswap_staking::migrate::migrate),
+        )
+    }
+    let new_code_id = helper.app.store_code(staking_contract());
+
+    helper.app.migrate_contract(
+        owner.clone(),
+        staking_addr.clone(),
+        &MigrateMsg {},
+        new_code_id,
+    ).unwrap();
+
+    // 3. Verify migration
+    let config: Config = helper.app.wrap().query_wasm_smart(&staking_addr, &QueryMsg::Config {}).unwrap();
+    assert_eq!(config.paused, false);
+    assert_eq!(config.oro_denom, "coin.assembly.oro");
+
+    // 4. Verify pause/unpause works now
+    helper.pause(&owner).unwrap();
+    let config: Config = helper.app.wrap().query_wasm_smart(&staking_addr, &QueryMsg::Config {}).unwrap();
+    assert_eq!(config.paused, true);
 }

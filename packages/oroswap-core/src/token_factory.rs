@@ -112,6 +112,49 @@ pub struct MsgCreateDenom {
     pub can_change_minting_cap: bool,
 }
 
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MsgSetDenomMetadata {
+    #[prost(string, tag = "1")]
+    pub signer: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub metadata: ::core::option::Option<Metadata>,
+}
+
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Metadata {
+    #[prost(string, tag = "1")]
+    pub description: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "2")]
+    pub denom_units: ::prost::alloc::vec::Vec<DenomUnit>,
+    #[prost(string, tag = "3")]
+    pub base: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub display: ::prost::alloc::string::String,
+    #[prost(string, tag = "5")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(string, tag = "6")]
+    pub symbol: ::prost::alloc::string::String,
+    #[prost(string, tag = "7")]
+    pub uri: ::prost::alloc::string::String,
+    #[prost(string, tag = "8")]
+    pub uri_hash: ::prost::alloc::string::String,
+}
+
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DenomUnit {
+    #[prost(string, tag = "1")]
+    pub denom: ::prost::alloc::string::String,
+    #[prost(uint32, tag = "2")]
+    pub exponent: u32,
+    #[prost(string, repeated, tag = "3")]
+    pub aliases: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+
+impl MsgSetDenomMetadata {
+    #[cfg(feature = "zigchain")]
+    pub const TYPE_URL: &'static str = "/zigchain.factory.MsgSetDenomMetadata";
+}
+
 impl MsgCreateDenom {
     #[cfg(not(any(feature = "zigchain")))]
     pub const TYPE_URL: &'static str = "/osmosis.tokenfactory.v1beta1.MsgCreateDenom";
@@ -237,6 +280,7 @@ impl TryFrom<Binary> for MsgMint {
     }
 }
 
+#[cfg(not(any(feature = "zigchain")))]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgSetBeforeSendHook {
     #[prost(string, tag = "1")]
@@ -247,8 +291,22 @@ pub struct MsgSetBeforeSendHook {
     pub cosmwasm_address: ::prost::alloc::string::String,
 }
 
+#[cfg(feature = "zigchain")]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MsgSetBeforeSendHook {
+    #[prost(string, tag = "1")]
+    pub signer: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub denom: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub cosmwasm_address: ::prost::alloc::string::String,
+}
+
 impl MsgSetBeforeSendHook {
+    #[cfg(not(any(feature = "zigchain")))]
     pub const TYPE_URL: &'static str = "/osmosis.tokenfactory.v1beta1.MsgSetBeforeSendHook";
+    #[cfg(feature = "zigchain")]
+    pub const TYPE_URL: &'static str = "/zigchain.factory.MsgSetBeforeSendHook";
 }
 
 impl TryFrom<Binary> for MsgSetBeforeSendHook {
@@ -400,14 +458,65 @@ pub fn tf_before_send_hook_msg<T>(
 where
     T: CustomMsg,
 {
+    #[cfg(not(any(feature = "zigchain")))]
     let msg = MsgSetBeforeSendHook {
         sender: sender.into(),
         denom: denom.into(),
         cosmwasm_address: cosmwasm_address.into(),
     };
 
+    #[cfg(feature = "zigchain")]
+    let msg = MsgSetBeforeSendHook {
+        signer: sender.into(),
+        denom: denom.into(),
+        cosmwasm_address: cosmwasm_address.into(),
+    };
+
     CosmosMsg::Stargate {
         type_url: MsgSetBeforeSendHook::TYPE_URL.to_string(),
+        value: Binary::from(msg.encode_to_vec()),
+    }
+}
+
+#[cfg(feature = "zigchain")]
+pub fn tf_set_denom_metadata_msg<T>(
+    sender: impl Into<String>,
+    denom: String,
+    symbol: String,
+    decimals: u32,
+    uri: Option<String>,
+) -> CosmosMsg<T>
+where
+    T: CustomMsg,
+{
+    let metadata_uri = uri.unwrap_or_default();
+    let msg = MsgSetDenomMetadata {
+        signer: sender.into(),
+        metadata: Some(Metadata {
+            description: format!("Oroswap {} Token", symbol),
+            denom_units: vec![
+                DenomUnit {
+                    denom: denom.clone(),
+                    exponent: 0,
+                    aliases: vec![],
+                },
+                DenomUnit {
+                    denom: symbol.clone().to_lowercase(),
+                    exponent: decimals,
+                    aliases: vec![],
+                },
+            ],
+            base: denom.clone(),
+            display: symbol.to_lowercase(),
+            name: format!("Oroswap {}", symbol),
+            symbol: symbol,
+            uri: metadata_uri,
+            uri_hash: "".to_string(), // Optional or handled by chain if uri provided
+        }),
+    };
+
+    CosmosMsg::Stargate {
+        type_url: MsgSetDenomMetadata::TYPE_URL.to_string(),
         value: Binary::from(msg.encode_to_vec()),
     }
 }

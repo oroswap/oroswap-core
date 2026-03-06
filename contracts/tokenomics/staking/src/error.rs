@@ -28,5 +28,9 @@ pub enum ContractError {
     #[error("Contract can't be migrated!")]
     MigrationError {},
 
+    #[error("Unauthorized")]
+    Unauthorized {},
 
+    #[error("Contract is paused")]
+    ContractPaused {},
 }
