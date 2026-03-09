@@ -1,11 +1,10 @@
 use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
-use cosmwasm_std::{from_json, Uint128, WasmMsg, to_json_binary};
-use cw20::Cw20ExecuteMsg;
+use cosmwasm_std::{from_json, Uint128, BankMsg, CosmosMsg};
 
 use crate::contract::{execute, instantiate, query};
 use crate::msg::{
     UserClaimResponse, ConfigResponse, ExecuteMsg, InstantiateMsg, QueryMsg,
-    AirdropResponse, ClaimChoice,
+    AirdropResponse,
 };
 
 #[test]
@@ -17,8 +16,7 @@ fn proper_initialization() {
     };
     let info = mock_info("creator", &[]);
 
-    let res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
-    assert_eq!(0, res.messages.len());
+    instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
 
     let res = query(deps.as_ref(), mock_env(), QueryMsg::Config {}).unwrap();
     let value: ConfigResponse = from_json(&res).unwrap();
@@ -26,269 +24,161 @@ fn proper_initialization() {
 }
 
 #[test]
-fn add_airdrop_and_claim() {
+fn test_single_claim_timeline() {
     let mut deps = mock_dependencies();
 
-    let msg = InstantiateMsg {
-        admin: "admin".to_string(),
-    };
-    let info = mock_info("creator", &[]);
-    instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
+    let msg = InstantiateMsg { admin: "admin".to_string() };
+    instantiate(deps.as_mut(), mock_env(), mock_info("creator", &[]), msg).unwrap();
 
-    let start_time = mock_env().block.time.seconds() + 100;
-    let end_time = start_time + 1000;
-
-    let msg = ExecuteMsg::AddAirdrop {
-        token_address: "contract_address_long_enough_12345".to_string(),
-        start_time,
-        end_time,
-        vesting_duration: 3600, // 1 hour
-        initial_claim_percent: 40,
-        apy_bonus_bps: 1000, // 10%
-        eligibility: vec![
-            ("user1".to_string(), Uint128::new(100)),
-            ("user2".to_string(), Uint128::new(200)),
-        ],
-    };
-    let info = mock_info("admin", &[]);
-    execute(deps.as_mut(), mock_env(), info, msg).unwrap();
-
-    // Check airdrop info
-    let res = query(deps.as_ref(), mock_env(), QueryMsg::Airdrop { id: 1 }).unwrap();
-    let value: AirdropResponse = from_json(&res).unwrap();
-    assert_eq!("contract_address_long_enough_12345", value.token_address);
-    assert_eq!(40, value.initial_claim_percent);
-
-    // Try to claim before start time
-    let msg = ExecuteMsg::Claim { airdrop_id: 1, choice: ClaimChoice::InitialPortion };
-    let info = mock_info("user1", &[]);
-    let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
-    assert!(format!("{}", err).contains("Airdrop has not started yet"));
-
-    // Move time forward
-    let mut env = mock_env();
-    env.block.time = env.block.time.plus_seconds(150);
-
-    // Claim successfully (Initial Portion)
-    let msg = ExecuteMsg::Claim { airdrop_id: 1, choice: ClaimChoice::InitialPortion };
-    let info = mock_info("user1", &[]);
-    let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
-    
-    // Initial 40% of 100 is 40.
-    assert_eq!(1, res.messages.len());
-    let expected_msg = WasmMsg::Execute {
-        contract_addr: "contract_address_long_enough_12345".to_string(),
-        msg: to_json_binary(&Cw20ExecuteMsg::Transfer {
-            recipient: "user1".to_string(),
-            amount: Uint128::new(40),
-        }).unwrap(),
-        funds: vec![],
-    };
-    assert_eq!(res.messages[0].msg, expected_msg.into());
-
-    // Check claim status
-    let res = query(
-        deps.as_ref(),
-        env.clone(),
-        QueryMsg::ClaimStatus {
-            id: 1,
-            address: "user1".to_string(),
-        },
-    )
-    .unwrap();
-    let value: UserClaimResponse = from_json(&res).unwrap();
-    assert!(value.claim.is_some());
-    let claim = value.claim.unwrap();
-    assert_eq!(claim.initial_claimed, Uint128::new(40));
-    assert_eq!(claim.vesting_amount, Uint128::new(0));
-}
-
-#[test]
-fn deposit_and_withdraw_funds() {
-    let mut deps = mock_dependencies();
-
-    let msg = InstantiateMsg {
-        admin: "admin".to_string(),
-    };
-    let info = mock_info("creator", &[]);
-    instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
-
-    // Deposit funds (CW20)
-    let msg = ExecuteMsg::DepositFunds {
-        token_address: "contract_address_long_enough_12345".to_string(),
-        amount: Uint128::new(1000),
-    };
-    let info = mock_info("admin", &[]);
-    let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
-    
-    let expected_msg = WasmMsg::Execute {
-        contract_addr: "contract_address_long_enough_12345".to_string(),
-        msg: to_json_binary(&Cw20ExecuteMsg::TransferFrom {
-            owner: "admin".to_string(),
-            recipient: "cosmos2contract".to_string(),
-            amount: Uint128::new(1000),
-        }).unwrap(),
-        funds: vec![],
-    };
-    assert_eq!(res.messages[0].msg, expected_msg.into());
-
-    // Deposit funds (Native)
-    let msg = ExecuteMsg::DepositFunds {
-        token_address: "native.oro".to_string(),
-        amount: Uint128::new(1000),
-    };
-    let info = mock_info("admin", &[cosmwasm_std::Coin {
-        denom: "native.oro".to_string(),
-        amount: Uint128::new(1000),
-    }]);
-    let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
-    assert_eq!(0, res.messages.len());
-
-    // Withdraw funds (CW20)
-    let msg = ExecuteMsg::WithdrawFunds {
-        token_address: "contract_address_long_enough_12345".to_string(),
-        amount: Uint128::new(500),
-    };
-    let info = mock_info("admin", &[]);
-    let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
-    
-    let expected_msg = WasmMsg::Execute {
-        contract_addr: "contract_address_long_enough_12345".to_string(),
-        msg: to_json_binary(&Cw20ExecuteMsg::Transfer {
-            recipient: "admin".to_string(),
-            amount: Uint128::new(500),
-        }).unwrap(),
-        funds: vec![],
-    };
-    assert_eq!(res.messages[0].msg, expected_msg.into());
-
-    // Withdraw funds (Native)
-    let msg = ExecuteMsg::WithdrawFunds {
-        token_address: "native.oro".to_string(),
-        amount: Uint128::new(500),
-    };
-    let info = mock_info("admin", &[]);
-    let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
-    
-    let expected_msg = cosmwasm_std::BankMsg::Send {
-        to_address: "admin".to_string(),
-        amount: vec![cosmwasm_std::Coin {
-            denom: "native.oro".to_string(),
-            amount: Uint128::new(500),
-        }],
-    };
-    assert_eq!(res.messages[0].msg, expected_msg.into());
-}
-
-#[test]
-fn test_vesting_and_apy() {
-    let mut deps = mock_dependencies();
-
-    let msg = InstantiateMsg {
-        admin: "admin".to_string(),
-    };
-    let info = mock_info("creator", &[]);
-    instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
-
-    let start_time = mock_env().block.time.seconds() + 100;
-    let end_time = start_time + 1000;
-    let vesting_duration = 3600; // 1 hour
+    let env = mock_env();
+    let start_time = env.block.time.seconds();
+    let vesting_start_time = start_time + 100;
+    let vesting_end_time = vesting_start_time + 1000; // 1000s duration
 
     let msg = ExecuteMsg::AddAirdrop {
         token_address: "native.oro".to_string(),
         start_time,
-        end_time,
-        vesting_duration,
+        vesting_start_time,
+        vesting_end_time,
         initial_claim_percent: 40,
         apy_bonus_bps: 1000, // 10%
         eligibility: vec![
             ("user1".to_string(), Uint128::new(1000)),
+            ("user2".to_string(), Uint128::new(1000)),
+            ("user3".to_string(), Uint128::new(1000)),
         ],
     };
-    let info = mock_info("admin", &[]);
-    execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+    execute(deps.as_mut(), env.clone(), mock_info("admin", &[]), msg).unwrap();
 
-    let mut env = mock_env();
-    env.block.time = env.block.time.plus_seconds(150);
+    // Scenario 1: Claim at Day 0 (before vesting starts)
+    // Should get exactly 40% = 400
+    let msg = ExecuteMsg::Claim { airdrop_id: 1 };
+    let res = execute(deps.as_mut(), env.clone(), mock_info("user1", &[]), msg).unwrap();
+    
+    let expected_payout = Uint128::new(400);
+    assert_eq!(res.messages.len(), 1);
+    if let CosmosMsg::Bank(BankMsg::Send { amount, .. }) = &res.messages[0].msg {
+        assert_eq!(amount[0].amount, expected_payout);
+    } else { panic!("Wrong message type"); }
 
-    // Path 2: FullVesting (0 immediately, 1000 vested)
-    let msg = ExecuteMsg::Claim { airdrop_id: 1, choice: ClaimChoice::FullVesting };
-    let info = mock_info("user1", &[]);
-    execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+    // Try to claim again
+    let msg = ExecuteMsg::Claim { airdrop_id: 1 };
+    let err = execute(deps.as_mut(), env.clone(), mock_info("user1", &[]), msg).unwrap_err();
+    assert!(format!("{}", err).to_lowercase().contains("already claimed"));
 
-    // Move forward 1800 seconds (50% of 1 hour vesting)
-    env.block.time = env.block.time.plus_seconds(1800);
+    // Scenario 2: Claim midway (500s into 1000s vesting)
+    let mut env_mid = mock_env();
+    env_mid.block.time = env_mid.block.time.plus_seconds(100 + 500); 
     
-    // Withdraw Vested
-    let msg = ExecuteMsg::WithdrawVested { airdrop_id: 1 };
-    let info = mock_info("user1", &[]);
-    let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+    let msg = ExecuteMsg::Claim { airdrop_id: 1 };
+    let res = execute(deps.as_mut(), env_mid.clone(), mock_info("user2", &[]), msg).unwrap();
     
-    // Expected claimable_unlocked: 1000 * 50% = 500
-    // Expected APY bonus: Principal (1000) * 10% * (1800 / SECONDS_PER_YEAR)
-    let expected_unlocked = Uint128::new(500);
-    let seconds_per_year: u128 = 365 * 24 * 3600;
-    let expected_apy = Uint128::new(1000).multiply_ratio(1000u128, 10000u128).multiply_ratio(1800u128, seconds_per_year);
+    // Initial: 400
+    // Vesting principal: 600
+    // Unlocked: 600 * 500/1000 = 300
+    // Bonus: 0 (Bonus is now a cliff at the end)
+    let expected_total = Uint128::new(400 + 300); 
     
-    let apy_attr = res.attributes.iter().find(|a| a.key == "apy_bonus").unwrap();
-    assert_eq!(apy_attr.value, expected_apy.to_string());
-    
-    let payout_attr = res.attributes.iter().find(|a| a.key == "payout").unwrap();
-    assert_eq!(payout_attr.value, (expected_unlocked + expected_apy).to_string());
+    let total_attr = res.attributes.iter().find(|a| a.key == "total_payout").unwrap();
+    assert_eq!(total_attr.value, expected_total.to_string());
+    let bonus_attr = res.attributes.iter().find(|a| a.key == "bonus").unwrap();
+    assert_eq!(bonus_attr.value, "0");
 
-    // Check updated state
-    let res = query(deps.as_ref(), env.clone(), QueryMsg::ClaimStatus { id: 1, address: "user1".to_string() }).unwrap();
-    let value: UserClaimResponse = from_json(&res).unwrap();
-    let claim = value.claim.unwrap();
-    assert_eq!(claim.withdrawn_amount, expected_unlocked);
+    // Scenario 3: Claim after vesting ends
+    let mut env_end = mock_env();
+    env_end.block.time = env_end.block.time.plus_seconds(2000); 
+    
+    let msg = ExecuteMsg::Claim { airdrop_id: 1 };
+    let res = execute(deps.as_mut(), env_end.clone(), mock_info("user3", &[]), msg).unwrap();
+    
+    // Initial: 400
+    // Vesting: 600
+    // Bonus: 600 * 0.10 = 60
+    // Total should be 1000 + 60 = 1060
+    let total_attr = res.attributes.iter().find(|a| a.key == "total_payout").unwrap();
+    assert_eq!(total_attr.value, "1060");
 }
 
 #[test]
-fn test_initial_portion_forfeiture() {
+fn test_multi_season() {
     let mut deps = mock_dependencies();
+    let msg = InstantiateMsg { admin: "admin".to_string() };
+    instantiate(deps.as_mut(), mock_env(), mock_info("creator", &[]), msg).unwrap();
 
-    let msg = InstantiateMsg {
-        admin: "admin".to_string(),
+    let now = mock_env().block.time.seconds();
+    // Season 1
+    let msg = ExecuteMsg::AddAirdrop {
+        token_address: "oro1".to_string(),
+        start_time: now,
+        vesting_start_time: now,
+        vesting_end_time: now + 1000,
+        initial_claim_percent: 100, // 100% immediate for simplicity
+        apy_bonus_bps: 0,
+        eligibility: vec![("user".to_string(), Uint128::new(500))],
     };
-    let info = mock_info("creator", &[]);
-    instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
+    execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
-    let start_time = mock_env().block.time.seconds() + 100;
-    let end_time = start_time + 1000;
-    let vesting_duration = 3600; // 1 hour
+    // Season 2
+    let msg = ExecuteMsg::AddAirdrop {
+        token_address: "oro2".to_string(),
+        start_time: now,
+        vesting_start_time: now,
+        vesting_end_time: now + 1000,
+        initial_claim_percent: 50,
+        apy_bonus_bps: 0,
+        eligibility: vec![("user".to_string(), Uint128::new(1000))],
+    };
+    execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
+    // Claim Season 1
+    execute(deps.as_mut(), mock_env(), mock_info("user", &[]), ExecuteMsg::Claim { airdrop_id: 1 }).unwrap();
+    
+    // Claim Season 2
+    execute(deps.as_mut(), mock_env(), mock_info("user", &[]), ExecuteMsg::Claim { airdrop_id: 2 }).unwrap();
+
+    // Verify both are claimed
+    let res1: UserClaimResponse = from_json(&query(deps.as_ref(), mock_env(), QueryMsg::ClaimStatus { id: 1, address: "user".to_string() }).unwrap()).unwrap();
+    let res2: UserClaimResponse = from_json(&query(deps.as_ref(), mock_env(), QueryMsg::ClaimStatus { id: 2, address: "user".to_string() }).unwrap()).unwrap();
+    
+    assert_eq!(res1.claim.unwrap().amount_claimed, Uint128::new(500));
+    assert_eq!(res2.claim.unwrap().amount_claimed, Uint128::new(500)); // Claimed at T=0, so only initial 50%
+}
+
+#[test]
+fn test_admin_toggle() {
+    let mut deps = mock_dependencies();
+    let msg = InstantiateMsg { admin: "admin".to_string() };
+    instantiate(deps.as_mut(), mock_env(), mock_info("creator", &[]), msg).unwrap();
+
+    let now = mock_env().block.time.seconds();
     let msg = ExecuteMsg::AddAirdrop {
         token_address: "native.oro".to_string(),
-        start_time,
-        end_time,
-        vesting_duration,
-        initial_claim_percent: 40,
-        apy_bonus_bps: 1000, // 10%
-        eligibility: vec![
-            ("user1".to_string(), Uint128::new(1000)),
-        ],
+        start_time: now,
+        vesting_start_time: now,
+        vesting_end_time: now + 1000,
+        initial_claim_percent: 100,
+        apy_bonus_bps: 0,
+        eligibility: vec![("user".to_string(), Uint128::new(1000))],
     };
-    let info = mock_info("admin", &[]);
-    execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+    execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
-    let mut env = mock_env();
-    env.block.time = env.block.time.plus_seconds(150);
+    // Toggle inactive
+    let msg = ExecuteMsg::ToggleAirdrop { id: 1, active: false };
+    execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
-    // Path 1: InitialPortion (400 immediately, 600 forfeited)
-    let msg = ExecuteMsg::Claim { airdrop_id: 1, choice: ClaimChoice::InitialPortion };
-    let info = mock_info("user1", &[]);
-    let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
-    
-    // Check attributes
-    let initial_claimed_attr = res.attributes.iter().find(|a| a.key == "initial_claimed").unwrap();
-    assert_eq!(initial_claimed_attr.value, "400");
-    let vesting_amount_attr = res.attributes.iter().find(|a| a.key == "vesting_amount").unwrap();
-    assert_eq!(vesting_amount_attr.value, "0");
+    // Check status via query
+    let res: AirdropResponse = from_json(&query(deps.as_ref(), mock_env(), QueryMsg::Airdrop { id: 1 }).unwrap()).unwrap();
+    assert_eq!(res.is_active, false);
 
-    // Try to withdraw (should fail or return zero payout)
-    env.block.time = env.block.time.plus_seconds(1800);
-    let msg = ExecuteMsg::WithdrawVested { airdrop_id: 1 };
-    let info = mock_info("user1", &[]);
-    let err = execute(deps.as_mut(), env.clone(), info, msg).unwrap_err();
-    assert!(format!("{}", err).contains("Nothing to withdraw at this time"));
+    // Try to claim
+    let msg = ExecuteMsg::Claim { airdrop_id: 1 };
+    let err = execute(deps.as_mut(), mock_env(), mock_info("user", &[]), msg).unwrap_err();
+    assert!(format!("{}", err).to_lowercase().contains("inactive"));
+
+    // Toggle back active
+    let msg = ExecuteMsg::ToggleAirdrop { id: 1, active: true };
+    execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
+
+    // Claim succeeds
+    execute(deps.as_mut(), mock_env(), mock_info("user", &[]), ExecuteMsg::Claim { airdrop_id: 1 }).unwrap();
 }

@@ -33,4 +33,7 @@ pub enum ContractError {
 
     #[error("Contract is paused")]
     ContractPaused {},
+
+    #[error("Invalid duration")]
+    InvalidDuration {},
 }

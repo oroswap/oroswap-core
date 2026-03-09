@@ -1,5 +1,5 @@
 use cosmwasm_std::{
-    entry_point, to_json_binary, Addr, Binary, CosmosMsg, Deps, DepsMut, Env, MessageInfo, Response, StdResult,
+    entry_point, to_json_binary, Binary, CosmosMsg, Deps, DepsMut, Env, MessageInfo, Response, StdResult,
     Uint128, WasmMsg, StdError,
 };
 use cw2::set_contract_version;
@@ -7,7 +7,7 @@ use cw20::Cw20ExecuteMsg;
 
 use crate::error::ContractError;
 use crate::msg::{
-    AirdropResponse, ClaimChoice, UserClaimInfo, UserClaimResponse, ConfigResponse, EligibilityResponse, ExecuteMsg,
+    AirdropResponse, UserClaimInfo, UserClaimResponse, ConfigResponse, EligibilityResponse, ExecuteMsg,
     InstantiateMsg, LatestAirdropIdResponse, QueryMsg,
 };
 use crate::state::{Config, AIRDROPS, USER_CLAIMS, CONFIG, ELIGIBILITY, LATEST_AIRDROP_ID, AirdropInfo, UserClaim};
@@ -46,8 +46,8 @@ pub fn execute(
         ExecuteMsg::AddAirdrop {
             token_address,
             start_time,
-            end_time,
-            vesting_duration,
+            vesting_start_time,
+            vesting_end_time,
             initial_claim_percent,
             apy_bonus_bps,
             eligibility,
@@ -56,14 +56,16 @@ pub fn execute(
             info,
             token_address,
             start_time,
-            end_time,
-            vesting_duration,
+            vesting_start_time,
+            vesting_end_time,
             initial_claim_percent,
             apy_bonus_bps,
             eligibility,
         ),
-        ExecuteMsg::Claim { airdrop_id, choice } => execute_claim(deps, env, info, airdrop_id, choice),
-        ExecuteMsg::WithdrawVested { airdrop_id } => execute_withdraw_vested(deps, env, info, airdrop_id),
+        ExecuteMsg::ToggleAirdrop { id, active } => {
+            execute_toggle_airdrop(deps, info, id, active)
+        }
+        ExecuteMsg::Claim { airdrop_id } => execute_claim(deps, env, info, airdrop_id),
         ExecuteMsg::DepositFunds { token_address, amount } => execute_deposit_funds(deps, env, info, token_address, amount),
         ExecuteMsg::WithdrawFunds { token_address, amount } => execute_withdraw_funds(deps, info, token_address, amount),
         ExecuteMsg::UpdateConfig { admin } => {
@@ -77,8 +79,8 @@ pub fn execute_add_airdrop(
     info: MessageInfo,
     token_address: String,
     start_time: u64,
-    end_time: u64,
-    vesting_duration: u64,
+    vesting_start_time: u64,
+    vesting_end_time: u64,
     initial_claim_percent: u64,
     apy_bonus_bps: u64,
     eligibility: Vec<(String, Uint128)>,
@@ -88,8 +90,15 @@ pub fn execute_add_airdrop(
         return Err(ContractError::Unauthorized {});
     }
 
-    if start_time >= end_time {
-        return Err(ContractError::InvalidTime {});
+    if vesting_start_time < start_time {
+        return Err(ContractError::Std(cosmwasm_std::StdError::generic_err(
+            "vesting_start_time must be >= start_time",
+        )));
+    }
+    if vesting_start_time >= vesting_end_time {
+        return Err(ContractError::Std(cosmwasm_std::StdError::generic_err(
+            "vesting_start_time must be before vesting_end_time",
+        )));
     }
 
     if initial_claim_percent > 100 {
@@ -105,12 +114,14 @@ pub fn execute_add_airdrop(
         deps.storage,
         airdrop_id,
         &AirdropInfo {
+            id: airdrop_id,
             token_address: token_address.clone(),
             start_time,
-            end_time,
-            vesting_duration,
+            vesting_start_time,
+            vesting_end_time,
             initial_claim_percent,
             apy_bonus_bps,
+            is_active: true,
         },
     )?;
 
@@ -122,9 +133,31 @@ pub fn execute_add_airdrop(
     Ok(Response::new()
         .add_attribute("action", "add_airdrop")
         .add_attribute("airdrop_id", airdrop_id.to_string())
-        .add_attribute("token_address", token_address)
-        .add_attribute("start_time", start_time.to_string())
-        .add_attribute("end_time", end_time.to_string()))
+        .add_attribute("token_address", token_address))
+}
+
+pub fn execute_toggle_airdrop(
+    deps: DepsMut,
+    info: MessageInfo,
+    id: u64,
+    active: bool,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.admin {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    let mut airdrop = AIRDROPS
+        .may_load(deps.storage, id)?
+        .ok_or(ContractError::AirdropNotFound {})?;
+
+    airdrop.is_active = active;
+    AIRDROPS.save(deps.storage, id, &airdrop)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "toggle_airdrop")
+        .add_attribute("id", id.to_string())
+        .add_attribute("active", active.to_string()))
 }
 
 pub fn execute_claim(
@@ -132,7 +165,6 @@ pub fn execute_claim(
     env: Env,
     info: MessageInfo,
     airdrop_id: u64,
-    choice: ClaimChoice,
 ) -> Result<Response, ContractError> {
     let airdrop = AIRDROPS
         .may_load(deps.storage, airdrop_id)?
@@ -144,10 +176,11 @@ pub fn execute_claim(
         return Err(ContractError::AirdropNotStarted {});
     }
 
-    if current_time > airdrop.end_time {
-        return Err(ContractError::AirdropExpired {});
+    if !airdrop.is_active {
+        return Err(ContractError::AirdropInactive {});
     }
 
+    // Single claim check
     if USER_CLAIMS.has(deps.storage, (airdrop_id, &info.sender)) {
         return Err(ContractError::AlreadyClaimed {});
     }
@@ -156,138 +189,74 @@ pub fn execute_claim(
         .may_load(deps.storage, (airdrop_id, &info.sender))?
         .ok_or(ContractError::NotEligible {})?;
 
-    let mut messages: Vec<CosmosMsg> = vec![];
-    let (initial_claimed, vesting_amount) = if choice == ClaimChoice::InitialPortion {
-        let initial = amount_eligible.multiply_ratio(airdrop.initial_claim_percent, 100u128);
-        if !initial.is_zero() {
-            let msg: CosmosMsg = if airdrop.token_address.contains('.') || airdrop.token_address.len() < 20 {
-                cosmwasm_std::BankMsg::Send {
-                    to_address: info.sender.to_string(),
-                    amount: vec![cosmwasm_std::Coin {
-                        denom: airdrop.token_address.clone(),
-                        amount: initial,
-                    }],
-                }.into()
-            } else {
-                WasmMsg::Execute {
-                    contract_addr: airdrop.token_address.clone(),
-                    msg: to_json_binary(&Cw20ExecuteMsg::Transfer {
-                        recipient: info.sender.to_string(),
-                        amount: initial,
-                    })?,
-                    funds: vec![],
-                }.into()
-            };
-            messages.push(msg);
+    // 1. Initial Portion (e.g. 40%)
+    let initial_payout = amount_eligible.multiply_ratio(airdrop.initial_claim_percent, 100u128);
+
+    // 2. Vesting portion (60% of original)
+    let vesting_base = amount_eligible.saturating_sub(initial_payout);
+    
+    let mut unlocked_vesting = Uint128::zero();
+    let mut bonus = Uint128::zero();
+
+    if current_time > airdrop.vesting_start_time {
+        let elapsed = current_time.min(airdrop.vesting_end_time).saturating_sub(airdrop.vesting_start_time);
+        let duration = airdrop.vesting_end_time.saturating_sub(airdrop.vesting_start_time);
+
+        if duration > 0 {
+            unlocked_vesting = vesting_base.multiply_ratio(elapsed, duration);
+            
+            // 3. APY Bonus - ONLY if claiming at or after vesting_end_time
+            if current_time >= airdrop.vesting_end_time {
+                bonus = Uint128::from(vesting_base.u128() * airdrop.apy_bonus_bps as u128 / 10000);
+            }
         }
-        (initial, Uint128::zero())
-    } else {
-        (Uint128::zero(), amount_eligible)
-    };
+    }
 
-    let user_claim = UserClaim {
-        amount_eligible,
-        initial_claimed,
-        vesting_amount,
-        start_time: current_time,
-        last_withdrawal_time: current_time,
-        withdrawn_amount: Uint128::zero(),
-    };
+    let total_payout = initial_payout.checked_add(unlocked_vesting).map_err(StdError::from)?
+                                   .checked_add(bonus).map_err(StdError::from)?;
 
-    USER_CLAIMS.save(deps.storage, (airdrop_id, &info.sender), &user_claim)?;
+    USER_CLAIMS.save(
+        deps.storage,
+        (airdrop_id, &info.sender),
+        &UserClaim {
+            amount_eligible,
+            amount_claimed: total_payout,
+            claim_time: current_time,
+        },
+    )?;
+
+    let mut messages: Vec<CosmosMsg> = vec![];
+    if !total_payout.is_zero() {
+        let msg: CosmosMsg = if airdrop.token_address.contains('.') || airdrop.token_address.len() < 20 {
+            cosmwasm_std::BankMsg::Send {
+                to_address: info.sender.to_string(),
+                amount: vec![cosmwasm_std::Coin {
+                    denom: airdrop.token_address,
+                    amount: total_payout,
+                }],
+            }.into()
+        } else {
+            WasmMsg::Execute {
+                contract_addr: airdrop.token_address,
+                msg: to_json_binary(&Cw20ExecuteMsg::Transfer {
+                    recipient: info.sender.to_string(),
+                    amount: total_payout,
+                })?,
+                funds: vec![],
+            }.into()
+        };
+        messages.push(msg);
+    }
 
     Ok(Response::new()
         .add_messages(messages)
         .add_attribute("action", "claim")
         .add_attribute("airdrop_id", airdrop_id.to_string())
         .add_attribute("user", info.sender)
-        .add_attribute("amount_eligible", amount_eligible)
-        .add_attribute("initial_claimed", initial_claimed)
-        .add_attribute("vesting_amount", vesting_amount))
-}
-
-pub fn execute_withdraw_vested(
-    deps: DepsMut,
-    env: Env,
-    info: MessageInfo,
-    airdrop_id: u64,
-) -> Result<Response, ContractError> {
-    let airdrop = AIRDROPS
-        .may_load(deps.storage, airdrop_id)?
-        .ok_or(ContractError::AirdropNotFound {})?;
-
-    let mut user_claim = USER_CLAIMS
-        .may_load(deps.storage, (airdrop_id, &info.sender))?
-        .ok_or(ContractError::Std(cosmwasm_std::StdError::generic_err(
-            "No active claim found for user",
-        )))?;
-
-    let current_time = env.block.time.seconds();
-    
-    // 1. Calculate Unlocked Amount (Linear Vesting)
-    let elapsed = current_time.saturating_sub(user_claim.start_time);
-    let unlocked_total = if elapsed >= airdrop.vesting_duration {
-        user_claim.vesting_amount
-    } else {
-        user_claim.vesting_amount.multiply_ratio(elapsed, airdrop.vesting_duration)
-    };
-    
-    let claimable_unlocked = unlocked_total.saturating_sub(user_claim.withdrawn_amount);
-
-    // 2. Calculate APY Bonus
-    const SECONDS_PER_YEAR: u64 = 365 * 24 * 3600;
-    
-    let time_held = current_time.saturating_sub(user_claim.last_withdrawal_time);
-    
-    let remaining_principal = user_claim.vesting_amount.saturating_sub(user_claim.withdrawn_amount);
-    
-    let apy_bonus = if !remaining_principal.is_zero() && airdrop.apy_bonus_bps > 0 && time_held > 0 {
-        remaining_principal
-            .multiply_ratio(airdrop.apy_bonus_bps, 10000u128)
-            .multiply_ratio(time_held, SECONDS_PER_YEAR)
-    } else {
-        Uint128::zero()
-    };
-
-    let total_payout = claimable_unlocked.checked_add(apy_bonus).map_err(StdError::from)?;
-
-    if total_payout.is_zero() {
-        return Err(ContractError::Std(cosmwasm_std::StdError::generic_err(
-            "Nothing to withdraw at this time",
-        )));
-    }
-
-    // Update State
-    user_claim.withdrawn_amount = user_claim.withdrawn_amount.checked_add(claimable_unlocked).map_err(StdError::from)?;
-    user_claim.last_withdrawal_time = current_time;
-    USER_CLAIMS.save(deps.storage, (airdrop_id, &info.sender), &user_claim)?;
-
-    let msg: CosmosMsg = if airdrop.token_address.contains('.') || airdrop.token_address.len() < 20 {
-        cosmwasm_std::BankMsg::Send {
-            to_address: info.sender.to_string(),
-            amount: vec![cosmwasm_std::Coin {
-                denom: airdrop.token_address.clone(),
-                amount: total_payout,
-            }],
-        }.into()
-    } else {
-        WasmMsg::Execute {
-            contract_addr: airdrop.token_address.clone(),
-            msg: to_json_binary(&Cw20ExecuteMsg::Transfer {
-                recipient: info.sender.to_string(),
-                amount: total_payout,
-            })?,
-            funds: vec![],
-        }.into()
-    };
-
-    Ok(Response::new()
-        .add_message(msg)
-        .add_attribute("action", "withdraw_vested")
-        .add_attribute("airdrop_id", airdrop_id.to_string())
-        .add_attribute("user", info.sender)
-        .add_attribute("payout", total_payout)
-        .add_attribute("apy_bonus", apy_bonus))
+        .add_attribute("total_payout", total_payout)
+        .add_attribute("initial_payout", initial_payout)
+        .add_attribute("unlocked_vesting", unlocked_vesting)
+        .add_attribute("bonus", bonus))
 }
 
 pub fn execute_deposit_funds(
@@ -417,10 +386,11 @@ fn query_airdrop(deps: Deps, id: u64) -> StdResult<AirdropResponse> {
         id,
         token_address: airdrop.token_address,
         start_time: airdrop.start_time,
-        end_time: airdrop.end_time,
-        vesting_duration: airdrop.vesting_duration,
+        vesting_start_time: airdrop.vesting_start_time,
+        vesting_end_time: airdrop.vesting_end_time,
         initial_claim_percent: airdrop.initial_claim_percent,
         apy_bonus_bps: airdrop.apy_bonus_bps,
+        is_active: airdrop.is_active,
     })
 }
 
@@ -436,11 +406,8 @@ fn query_claim_status(deps: Deps, id: u64, address: String) -> StdResult<UserCla
     let addr = deps.api.addr_validate(&address)?;
     let claim = USER_CLAIMS.may_load(deps.storage, (id, &addr))?.map(|c| UserClaimInfo {
         amount_eligible: c.amount_eligible,
-        initial_claimed: c.initial_claimed,
-        vesting_amount: c.vesting_amount,
-        start_time: c.start_time,
-        last_withdrawal_time: c.last_withdrawal_time,
-        withdrawn_amount: c.withdrawn_amount,
+        amount_claimed: c.amount_claimed,
+        claim_time: c.claim_time,
     });
     Ok(UserClaimResponse { claim })
 }

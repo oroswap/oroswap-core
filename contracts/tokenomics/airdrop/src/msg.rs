@@ -11,17 +11,18 @@ pub enum ExecuteMsg {
     AddAirdrop {
         token_address: String,
         start_time: u64,
-        end_time: u64,
-        vesting_duration: u64,
+        vesting_start_time: u64,
+        vesting_end_time: u64,
         initial_claim_percent: u64,
         apy_bonus_bps: u64,
         eligibility: Vec<(String, Uint128)>,
     },
-    Claim {
-        airdrop_id: u64,
-        choice: ClaimChoice,
+    ToggleAirdrop {
+        id: u64,
+        active: bool,
     },
-    WithdrawVested {
+    /// Claim airdrop tokens. One-time settlement.
+    Claim {
         airdrop_id: u64,
     },
     DepositFunds {
@@ -37,11 +38,6 @@ pub enum ExecuteMsg {
     },
 }
 
-#[cw_serde]
-pub enum ClaimChoice {
-    InitialPortion,
-    FullVesting,
-}
 
 #[cw_serde]
 #[derive(QueryResponses)]
@@ -68,10 +64,11 @@ pub struct AirdropResponse {
     pub id: u64,
     pub token_address: String,
     pub start_time: u64,
-    pub end_time: u64,
-    pub vesting_duration: u64,
+    pub vesting_start_time: u64,
+    pub vesting_end_time: u64,
     pub initial_claim_percent: u64,
     pub apy_bonus_bps: u64,
+    pub is_active: bool,
 }
 
 #[cw_serde]
@@ -87,11 +84,8 @@ pub struct UserClaimResponse {
 #[cw_serde]
 pub struct UserClaimInfo {
     pub amount_eligible: Uint128,
-    pub initial_claimed: Uint128,
-    pub vesting_amount: Uint128,
-    pub start_time: u64,
-    pub last_withdrawal_time: u64,
-    pub withdrawn_amount: Uint128,
+    pub amount_claimed: Uint128,
+    pub claim_time: u64,
 }
 
 #[cw_serde]

@@ -23,6 +23,9 @@ pub struct InstantiateMsg {
 pub struct UnbondingEntry {
     /// The fixed ORO amount to be returned, calculated at the time of Leave.
     pub oro_amount: Uint128,
+    /// Accrued reward tokens to be returned alongside ORO.
+    #[serde(default)]
+    pub reward_coins: Vec<cosmwasm_std::Coin>,
     /// Unix timestamp (in seconds) after which ORO can be claimed.
     pub unlock_time: u64,
 }
@@ -45,6 +48,12 @@ pub enum ExecuteMsg {
     /// Claims all matured unbonding entries for the sender.
     /// Optional `receiver` overrides the destination set during Leave.
     Claim { receiver: Option<String> },
+    /// Adds reward tokens to the contract to be distributed to stakers.
+    /// Admin only.
+    AddReward {
+        /// Number of seconds over which rewards are distributed.
+        duration: u64,
+    },
     /// Updates the contract configuration. Only callable by the owner.
     UpdateConfig {
         owner: Option<String>,
@@ -92,6 +101,9 @@ pub enum QueryMsg {
     /// Returns the configured unbonding period in seconds.
     #[returns(u64)]
     UnbondingPeriod {},
+    /// Returns all pending rewards for the given address.
+    #[returns(Vec<cosmwasm_std::Coin>)]
+    PendingRewards { address: String },
 }
 
 /// This structure stores the main parameters for the staking contract.

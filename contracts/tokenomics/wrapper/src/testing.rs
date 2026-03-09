@@ -53,7 +53,7 @@ fn test_lock_unlock() {
     // 1. Setup config with a mock mint_denom (skipping reply for simplicity in unit test)
     let owner = "owner".to_string();
     let lock_denom = "uzig".to_string();
-    let mint_denom = "factory/contract/wzig".to_string();
+    let mint_denom = "coin.contract.wzig".to_string();
 
     crate::state::CONFIG.save(&mut deps.storage, &Config {
         lock_denom: lock_denom.clone(),
@@ -84,7 +84,7 @@ fn test_pause_unpause() {
     let mut deps = mock_dependencies();
     let owner = "owner".to_string();
     let lock_denom = "uzig".to_string();
-    let mint_denom = "factory/contract/wzig".to_string();
+    let mint_denom = "coin.contract.wzig".to_string();
 
     crate::state::CONFIG.save(&mut deps.storage, &Config {
         lock_denom: lock_denom.clone(),

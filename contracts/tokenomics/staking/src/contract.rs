@@ -1,12 +1,12 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    attr, coin, ensure, to_json_binary, BankMsg, Binary, Coin, CosmosMsg, Decimal, Deps,
-    DepsMut, Env, MessageInfo, Reply, Response, StdError, StdResult, SubMsg, Uint128,
-    WasmMsg,
+    attr, coin, ensure, to_json_binary, Addr, BankMsg, Binary, Coin, CosmosMsg, Decimal,
+    Decimal256, Deps, DepsMut, Env, MessageInfo, Reply, Response, StdError, StdResult, Storage,
+    SubMsg, Uint128, WasmMsg,
 };
 use cw2::set_contract_version;
-use cw_utils::{must_pay, parse_reply_instantiate_data, MsgInstantiateContractResponse};
+use cw_utils::{must_pay, one_coin};
 
 use oroswap::staking::{
     Config, ExecuteMsg, InstantiateMsg, QueryMsg, StateResponse, StakingResponse, UnbondingEntry,
@@ -17,7 +17,10 @@ use oroswap::token_factory::{
 };
 
 use crate::error::ContractError;
-use crate::state::{CONFIG, TOTAL_LOCKED, UNBONDING};
+use crate::state::{
+    CONFIG, REWARD_ORO_RESERVE, REWARDS, TOTAL_LOCKED, UNBONDING, USER_REWARDS, RewardInfo,
+    UserRewardInfo,
+};
 
 /// Contract name that is used for migration.
 pub const CONTRACT_NAME: &str = env!("CARGO_PKG_NAME");
@@ -116,6 +119,8 @@ pub fn instantiate(
 
     // Initialize total locked to zero
     TOTAL_LOCKED.save(deps.storage, &0u128)?;
+    // Initialize ORO reward reserve to zero
+    REWARD_ORO_RESERVE.save(deps.storage, &Uint128::zero())?;
 
     // Store tracker config for queries if needed
     // (We'll just keep the token_factory_addr for reference in tracker_config query if we keep it, but let's skip state entry for now)
@@ -182,6 +187,7 @@ pub fn execute(
         } => execute_update_config(deps, info, owner, unbonding_period),
         ExecuteMsg::Pause {} => execute_pause(deps, info),
         ExecuteMsg::Unpause {} => execute_unpause(deps, info),
+        ExecuteMsg::AddReward { duration } => execute_add_reward(deps, env, info, duration),
     }
 }
 
@@ -238,14 +244,19 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractEr
 }
 
 /// Returns the effective ORO balance for ratio calculations:
-/// `effective = total_balance - total_locked`.
-/// This prevents unbonding ORO from diluting rewards for active stakers.
-fn effective_deposit(total_balance: Uint128, total_locked: u128) -> Result<Uint128, ContractError> {
+/// `effective = total_balance - total_locked - reward_oro_reserve`.
+/// This prevents unbonding ORO AND ORO rewards from diluting the staker pool.
+fn effective_deposit(
+    total_balance: Uint128,
+    total_locked: u128,
+    reward_oro_reserve: Uint128,
+) -> Result<Uint128, ContractError> {
     total_balance
         .checked_sub(Uint128::new(total_locked))
+        .and_then(|b| b.checked_sub(reward_oro_reserve))
         .map_err(|_| {
             ContractError::Std(StdError::generic_err(
-                "total_locked exceeds oro_balance; state is inconsistent",
+                "total_locked + reward_reserve exceeds oro_balance; state is inconsistent",
             ))
         })
 }
@@ -263,6 +274,7 @@ fn execute_enter(
     let amount = must_pay(&info, &config.oro_denom)?;
 
     let total_locked = TOTAL_LOCKED.load(deps.storage)?;
+    let reward_oro_reserve = REWARD_ORO_RESERVE.load(deps.storage)?;
 
     // Compute effective deposit (excluding user's incoming deposit, which is already in balance)
     let raw_balance = deps
@@ -274,9 +286,13 @@ fn execute_enter(
     let pre_deposit_balance = raw_balance
         .checked_sub(amount)
         .map_err(|e| ContractError::Std(e.into()))?;
-    let effective = effective_deposit(pre_deposit_balance, total_locked)?;
+    let effective = effective_deposit(pre_deposit_balance, total_locked, reward_oro_reserve)?;
 
     let total_shares = deps.querier.query_supply(&config.xoro_denom)?.amount;
+    let global_rewards = update_rewards(deps.storage, &env, total_shares)?;
+    // Sync the user's last_rewards_index so they don't earn for time before this Enter.
+    // user_shares=0 means no pending accrual — just advances their index checkpoint.
+    sync_user_rewards(deps.storage, &info.sender, &global_rewards, Uint128::zero(), false)?;
 
     let mint_amount = if total_shares.is_zero() || effective.is_zero() {
         amount
@@ -325,14 +341,26 @@ fn execute_leave(
     let xoro_amount = must_pay(&info, &config.xoro_denom)?;
 
     let total_locked = TOTAL_LOCKED.load(deps.storage)?;
+    let reward_oro_reserve = REWARD_ORO_RESERVE.load(deps.storage)?;
 
     let total_balance = deps
         .querier
         .query_balance(&env.contract.address, &config.oro_denom)?
         .amount;
 
-    let effective = effective_deposit(total_balance, total_locked)?;
+    let effective = effective_deposit(total_balance, total_locked, reward_oro_reserve)?;
     let total_shares = deps.querier.query_supply(&config.xoro_denom)?.amount;
+
+    let global_rewards = update_rewards(deps.storage, &env, total_shares)?;
+    // Pass the xORO amount being burned as this user's weight for reward calculation.
+    // Anyone holding xORO (even via transfer) can Leave — no stored shares needed.
+    let accrued_rewards = sync_user_rewards(
+        deps.storage,
+        &info.sender,
+        &global_rewards,
+        xoro_amount,
+        true,
+    )?;
 
     // Calculate the ORO return amount from the current effective pool.
     let return_amount = xoro_amount.multiply_ratio(effective, total_shares);
@@ -351,6 +379,7 @@ fn execute_leave(
     let unlock_time = env.block.time.seconds() + config.unbonding_period;
     let entry = UnbondingEntry {
         oro_amount: return_amount,
+        reward_coins: accrued_rewards,
         unlock_time,
     };
 
@@ -410,6 +439,16 @@ fn execute_claim(
     }
 
     let total_claim: Uint128 = matured.iter().map(|e| e.oro_amount).sum();
+    let mut total_rewards: Vec<Coin> = vec![];
+    for entry in matured.iter() {
+        for c in entry.reward_coins.iter() {
+            if let Some(total_c) = total_rewards.iter_mut().find(|tc| tc.denom == c.denom) {
+                total_c.amount += c.amount;
+            } else {
+                total_rewards.push(c.clone());
+            }
+        }
+    }
 
     // Update state: keep only pending entries
     if pending.is_empty() {
@@ -423,10 +462,25 @@ fn execute_claim(
         Ok(locked.saturating_sub(total_claim.u128()))
     })?;
 
-    // Send ORO to recipient
+    // Reduce REWARD_ORO_RESERVE for any ORO rewards being paid out
+    let oro_rewards: Uint128 = total_rewards
+        .iter()
+        .filter(|c| c.denom == config.oro_denom)
+        .map(|c| c.amount)
+        .sum();
+    if !oro_rewards.is_zero() {
+        REWARD_ORO_RESERVE.update(deps.storage, |r| -> StdResult<Uint128> {
+            Ok(r.saturating_sub(oro_rewards))
+        })?;
+    }
+
+    // Send ORO + Rewards to recipient
+    let mut send_coins = vec![coin(total_claim.u128(), &config.oro_denom)];
+    send_coins.extend(total_rewards);
+
     let send_msg: CosmosMsg = BankMsg::Send {
         to_address: recipient.clone(),
-        amount: vec![coin(total_claim.u128(), &config.oro_denom)],
+        amount: send_coins,
     }
     .into();
 
@@ -588,5 +642,232 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
             let config = CONFIG.load(deps.storage)?;
             to_json_binary(&config.unbonding_period)
         }
+        QueryMsg::PendingRewards { address } => {
+            let addr = deps.api.addr_validate(&address)?;
+            let config = CONFIG.load(deps.storage)?;
+            let total_shares = deps.querier.query_supply(&config.xoro_denom)?.amount;
+            
+            let mut rewards = REWARDS.may_load(deps.storage)?.unwrap_or_default();
+            let current_ts = env.block.time.seconds();
+
+            // Calculate updated global indexes (read-only)
+            for reward in rewards.iter_mut() {
+                let last_ts = reward.last_update_ts;
+                if last_ts < current_ts {
+                    let applicable_end_ts = current_ts.min(reward.end_ts);
+                    if applicable_end_ts > last_ts && !total_shares.is_zero() {
+                        let time_passed = applicable_end_ts - last_ts;
+                        let total_reward = reward.rps * Decimal256::from_ratio(time_passed, 1u64);
+                        reward.index += total_reward / Decimal256::from_ratio(total_shares, 1u64);
+                    }
+                }
+            }
+
+            let existing_entry = USER_REWARDS.may_load(deps.storage, &addr)?;
+            let is_entered_user = existing_entry.is_some();
+
+            let user_reward_info = existing_entry
+                .unwrap_or_else(|| UserRewardInfo {
+                    last_rewards_index: vec![],
+                    pending_rewards: vec![],
+                });
+
+            let mut pending = user_reward_info.pending_rewards.clone();
+            // Use the user's actual xORO balance as their weight for the query projection.
+            // Also note the config could have been loaded earlier, we skip reloading if possible, but keep it simple here.
+            let config = CONFIG.load(deps.storage)?;
+            let user_xoro_balance = deps.querier.query_balance(&addr, &config.xoro_denom)?.amount;
+
+            for global_reward in rewards {
+                // Consistent with sync_user_rewards: two-tier default logic
+                let user_index = user_reward_info
+                    .last_rewards_index
+                    .iter()
+                    .find(|(denom, _)| denom == &global_reward.denom)
+                    .map(|(_, index)| *index)
+                    .unwrap_or_else(|| {
+                        if is_entered_user {
+                            Decimal256::zero()
+                        } else {
+                            global_reward.index
+                        }
+                    });
+
+                if global_reward.index > user_index && !user_xoro_balance.is_zero() {
+                    let diff = global_reward.index - user_index;
+                    let pending_amount_u256 = diff * Decimal256::from_ratio(user_xoro_balance, 1u64);
+                    let pending_amount: Uint128 = pending_amount_u256.to_uint_floor().try_into()?;
+
+                    if !pending_amount.is_zero() {
+                        if let Some(c) = pending.iter_mut().find(|c| c.denom == global_reward.denom) {
+                            c.amount += pending_amount;
+                        } else {
+                            pending.push(coin(pending_amount.u128(), &global_reward.denom));
+                        }
+                    }
+                }
+            }
+            to_json_binary(&pending)
+        }
     }
+}
+
+pub fn execute_add_reward(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    duration: u64,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender.to_string() != config.owner {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    if duration == 0 {
+        return Err(ContractError::InvalidDuration {});
+    }
+
+    let reward_coin = one_coin(&info)?;
+    let total_shares = deps.querier.query_supply(&config.xoro_denom)?.amount;
+    
+    let mut global_rewards = update_rewards(deps.storage, &env, total_shares)?;
+
+    let current_ts = env.block.time.seconds();
+    let end_ts = current_ts + duration;
+
+    // If the reward token is ORO, track it in REWARD_ORO_RESERVE so it doesn't
+    // inflate the ORO:xORO exchange rate.
+    if reward_coin.denom == config.oro_denom {
+        REWARD_ORO_RESERVE.update(deps.storage, |r| -> StdResult<Uint128> {
+            Ok(r + reward_coin.amount)
+        })?;
+    }
+
+    if let Some(reward) = global_rewards.iter_mut().find(|r| r.denom == reward_coin.denom) {
+        let remaining_time = reward.end_ts.saturating_sub(current_ts);
+        let remaining_amount = reward.rps * Decimal256::from_ratio(remaining_time, 1u64);
+        let new_total_amount = remaining_amount + Decimal256::from_ratio(reward_coin.amount, 1u64);
+        
+        reward.rps = new_total_amount / Decimal256::from_ratio(duration, 1u64);
+        reward.end_ts = end_ts;
+    } else {
+        global_rewards.push(RewardInfo {
+            denom: reward_coin.denom.clone(),
+            rps: Decimal256::from_ratio(reward_coin.amount, duration),
+            index: Decimal256::zero(),
+            last_update_ts: current_ts,
+            end_ts,
+        });
+    }
+
+    REWARDS.save(deps.storage, &global_rewards)?;
+
+    Ok(Response::new().add_attributes([
+        attr("action", "add_reward"),
+        attr("denom", reward_coin.denom),
+        attr("amount", reward_coin.amount),
+        attr("duration", duration.to_string()),
+    ]))
+}
+
+fn update_rewards(storage: &mut dyn Storage, env: &Env, total_shares: Uint128) -> StdResult<Vec<RewardInfo>> {
+    let mut rewards = REWARDS.may_load(storage)?.unwrap_or_default();
+    let current_ts = env.block.time.seconds();
+
+    for reward in rewards.iter_mut() {
+        let last_ts = reward.last_update_ts;
+        if last_ts >= current_ts {
+            continue;
+        }
+
+        let applicable_end_ts = current_ts.min(reward.end_ts);
+        if applicable_end_ts > last_ts && !total_shares.is_zero() {
+            let time_passed = applicable_end_ts - last_ts;
+            let total_reward = reward.rps * Decimal256::from_ratio(time_passed, 1u64);
+            let index_diff = total_reward / Decimal256::from_ratio(total_shares, 1u64);
+            reward.index += index_diff;
+        }
+        reward.last_update_ts = current_ts;
+    }
+
+    REWARDS.save(storage, &rewards)?;
+    Ok(rewards)
+}
+
+fn sync_user_rewards(
+    storage: &mut dyn Storage,
+    user: &Addr,
+    global_rewards: &[RewardInfo],
+    user_shares: Uint128,
+    clear_pending: bool,
+) -> StdResult<Vec<Coin>> {
+    let existing_entry = USER_REWARDS.may_load(storage, user)?;
+    // A user who has called Enter at least once will have an entry.
+    // A user who received xORO via transfer and never called Enter will have None.
+    let is_entered_user = existing_entry.is_some();
+
+    let mut user_reward_info = existing_entry.unwrap_or_else(|| UserRewardInfo {
+        last_rewards_index: vec![],
+        pending_rewards: vec![],
+    });
+
+    for global_reward in global_rewards {
+        // Two-tier default logic:
+        // - Entered users: unknown new reward denoms default to 0
+        //   → they earn from the moment the reward was added (correct, they were already staking)
+        // - Non-entered users (transferred xORO): default to CURRENT global index
+        //   → they earn nothing retroactively (prevents abuse)
+        let user_index = user_reward_info
+            .last_rewards_index
+            .iter()
+            .find(|(denom, _)| denom == &global_reward.denom)
+            .map(|(_, index)| *index)
+            .unwrap_or_else(|| {
+                if is_entered_user {
+                    Decimal256::zero()     // existing staker earns from reward start
+                } else {
+                    global_reward.index   // newcomer (transferred xORO) earns nothing retroactive
+                }
+            });
+
+        if global_reward.index > user_index && !user_shares.is_zero() {
+            let diff = global_reward.index - user_index;
+            let pending_amount_u256 = diff * Decimal256::from_ratio(user_shares, 1u64);
+            let pending_amount: Uint128 = pending_amount_u256.to_uint_floor().try_into()?;
+
+            if !pending_amount.is_zero() {
+                if let Some(c) = user_reward_info
+                    .pending_rewards
+                    .iter_mut()
+                    .find(|c| c.denom == global_reward.denom)
+                {
+                    c.amount += pending_amount;
+                } else {
+                    user_reward_info
+                        .pending_rewards
+                        .push(coin(pending_amount.u128(), &global_reward.denom));
+                }
+            }
+        }
+
+        if let Some(user_reward) = user_reward_info
+            .last_rewards_index
+            .iter_mut()
+            .find(|(denom, _)| denom == &global_reward.denom)
+        {
+            user_reward.1 = global_reward.index;
+        } else {
+            user_reward_info
+                .last_rewards_index
+                .push((global_reward.denom.clone(), global_reward.index));
+        }
+    }
+
+    let rewards_to_return = user_reward_info.pending_rewards.clone();
+    if clear_pending {
+        user_reward_info.pending_rewards.clear();
+    }
+
+    USER_REWARDS.save(storage, user, &user_reward_info)?;
+    Ok(rewards_to_return)
 }

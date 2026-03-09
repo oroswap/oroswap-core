@@ -21,8 +21,8 @@ Admin only. Creates a new airdrop record with specific eligibility and vesting r
   "add_airdrop": {
     "token_address": "native.oro",
     "start_time": 1710000000,
-    "end_time": 1710003600,
-    "vesting_duration": 15552000,
+    "vesting_start_time": 1710000000,
+    "vesting_end_time": 1711555200,
     "initial_claim_percent": 40,
     "apy_bonus_bps": 1000,
     "eligibility": [
@@ -34,25 +34,26 @@ Admin only. Creates a new airdrop record with specific eligibility and vesting r
 ```
 
 ### `Claim`
-Users must call this before `end_time` to participate.
+Users can call this at any time to receive their settlement. One-time settlement.
+Payout = (Initial %) + (Prorated vested portion of remainder) + (Accrued APY bonus).
+*Note: APY bonus is a cliff reward only paid out if claiming after `vesting_end_time`.*
 
 ```json
 {
   "claim": {
-    "airdrop_id": 1,
-    "choice": "initial_portion" 
+    "airdrop_id": 1
   }
 }
 ```
-*Note: choice can be `"initial_portion"` or `"full_vesting"`.*
 
-### `WithdrawVested`
-Withdraws currently unlocked tokens plus the accrued APY bonus.
+### `ToggleAirdrop`
+Admin only. Enables or disables claims for a specific airdrop season.
 
 ```json
 {
-  "withdraw_vested": {
-    "airdrop_id": 1
+  "toggle_airdrop": {
+    "id": 1,
+    "active": false
   }
 }
 ```
@@ -63,7 +64,7 @@ Withdraws currently unlocked tokens plus the accrued APY bonus.
 Returns the configuration and status of a specific airdrop.
 
 ### `ClaimStatus`
-Returns the detailed claim record for a user, including eligibile amount and vesting progress.
+Returns the detailed claim record for a user, or their eligibility if not yet claimed.
 
 ```json
 {

@@ -24,6 +24,6 @@ pub enum ContractError {
     #[error("Airdrop has not started yet")]
     AirdropNotStarted {},
 
-    #[error("Airdrop has expired")]
-    AirdropExpired {},
+    #[error("Airdrop is currently inactive")]
+    AirdropInactive {},
 }

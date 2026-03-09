@@ -168,6 +168,29 @@ impl Helper {
         )
     }
 
+    pub fn add_reward(
+        &mut self,
+        sender: &Addr,
+        coin: Coin,
+        duration: u64,
+    ) -> AnyResult<AppResponse> {
+        self.app.execute_contract(
+            sender.clone(),
+            self.staking.clone(),
+            &ExecuteMsg::AddReward { duration },
+            &[coin],
+        )
+    }
+
+    pub fn query_pending_rewards(&self, address: &Addr) -> StdResult<Vec<Coin>> {
+        self.app.wrap().query_wasm_smart(
+            &self.staking,
+            &QueryMsg::PendingRewards {
+                address: address.to_string(),
+            },
+        )
+    }
+
     pub fn query_balance(&self, sender: &Addr, denom: &str) -> StdResult<Uint128> {
         self.app
             .wrap()

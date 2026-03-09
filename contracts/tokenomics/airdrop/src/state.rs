@@ -9,22 +9,21 @@ pub struct Config {
 
 #[cw_serde]
 pub struct AirdropInfo {
+    pub id: u64,
     pub token_address: String,
     pub start_time: u64,
-    pub end_time: u64,
-    pub vesting_duration: u64,
+    pub vesting_start_time: u64,
+    pub vesting_end_time: u64,
     pub initial_claim_percent: u64,
     pub apy_bonus_bps: u64,
+    pub is_active: bool,
 }
 
 #[cw_serde]
 pub struct UserClaim {
     pub amount_eligible: Uint128,
-    pub initial_claimed: Uint128,
-    pub vesting_amount: Uint128,
-    pub start_time: u64,
-    pub last_withdrawal_time: u64,
-    pub withdrawn_amount: Uint128,
+    pub amount_claimed: Uint128,
+    pub claim_time: u64,
 }
 
 pub const CONFIG: Item<Config> = Item::new("config");

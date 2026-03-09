@@ -656,3 +656,89 @@ fn test_migration() {
     let config: Config = helper.app.wrap().query_wasm_smart(&staking_addr, &QueryMsg::Config {}).unwrap();
     assert_eq!(config.paused, true);
 }
+
+#[test]
+fn test_incentives() {
+    let owner = Addr::unchecked("owner");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    let alice = Addr::unchecked("alice");
+    let bob = Addr::unchecked("bob");
+    let usdc_denom = "coin.osmo123.usdc";
+
+    helper.give_oro(100_000, &alice);
+    helper.give_oro(100_000, &bob);
+    helper.mint_coin(&owner, coin(10_000, usdc_denom));
+
+    // 1. Alice stakes 10,000 ORO -> receives 10,000 xORO
+    helper.stake(&alice, 10_000).unwrap();
+
+    // 2. Admin adds 1,000 ORO and 10,000 USDC as rewards for 100 seconds
+    helper.add_reward(&owner, coin(1_000, ORO_DENOM), 100).unwrap();
+    helper.add_reward(&owner, coin(10_000, usdc_denom), 100).unwrap();
+
+    // 3. Fast forward 50 seconds. Alice should have earned 50% of rewards.
+    // Total shares = 1000 (bootstrap) + 10,000 (Alice) = 11,000
+    // But wait, the reward distribution is pro-rata to xORO shares.
+    // Alice has 10,000 / 11,000 shares.
+    helper.next_block(50);
+
+    let pending = helper.query_pending_rewards(&alice).unwrap();
+    // ORO: 1000 * 50/100 * 10000/11000 = 454.54 -> 454
+    // USDC: 10000 * 50/100 * 10000/11000 = 4545.45 -> 4545
+    let oro_pending = pending.iter().find(|c| c.denom == ORO_DENOM).unwrap().amount.u128();
+    let usdc_pending = pending.iter().find(|c| c.denom == usdc_denom).unwrap().amount.u128();
+    assert_eq!(oro_pending, 454);
+    assert_eq!(usdc_pending, 4545);
+
+    // 4. Bob stakes 10,000 ORO.
+    // Alice's rewards should be stashed in pending_rewards in state.
+    helper.stake(&bob, 10_000).unwrap();
+
+    // 5. Fast forward another 50 seconds.
+    // Total shares = 11,000 + 10,000 = 21,000
+    // Alice shares: 10,000 / 21,000
+    // Bob shares: 10,000 / 21,000
+    // Remaining rewards: 50%
+    helper.next_block(50);
+
+    // Alice Total: 454 (stashed) + (1000 * 50/100 * 10000/21000) = 454 + 238 = 692
+    // Bob Total: 1000 * 50/100 * 10000/21000 = 238
+    let alice_pending = helper.query_pending_rewards(&alice).unwrap();
+    let bob_pending = helper.query_pending_rewards(&bob).unwrap();
+
+    assert_eq!(alice_pending.iter().find(|c| c.denom == ORO_DENOM).unwrap().amount.u128(), 692);
+    assert_eq!(bob_pending.iter().find(|c| c.denom == ORO_DENOM).unwrap().amount.u128(), 238);
+
+    // 6. Alice unstakes all. Rewards should move to unbonding.
+    helper.unstake(&alice, 10_000).unwrap();
+
+    // Verify Alice has no pending rewards now (they moved to unbonding)
+    let alice_pending_after = helper.query_pending_rewards(&alice).unwrap();
+    assert!(alice_pending_after.is_empty());
+
+    // Verify unbonding entry contains rewards
+    let entries: Vec<oroswap::staking::UnbondingEntry> = helper.app.wrap().query_wasm_smart(
+        &helper.staking,
+        &QueryMsg::UnbondingEntries { address: alice.to_string() }
+    ).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].reward_coins.len(), 2);
+    assert_eq!(entries[0].reward_coins.iter().find(|c| c.denom == ORO_DENOM).unwrap().amount.u128(), 692);
+
+    // 7. Fast forward unbonding period and claim.
+    helper.next_block(7 * 24 * 60 * 60);
+    let alice_oro_before = helper.query_balance(&alice, ORO_DENOM).unwrap().u128();
+    helper.claim(&alice, None).unwrap();
+    let alice_oro_after = helper.query_balance(&alice, ORO_DENOM).unwrap().u128();
+    let alice_usdc_after = helper.query_balance(&alice, usdc_denom).unwrap().u128();
+
+    // Alice received: principal + reward ORO
+    // Principal: 10,000. Reward ORO: 692 (floor of exact Decimal256 math).
+    assert_eq!(alice_oro_after - alice_oro_before, 10692);
+    // USDC:
+    // Part 1: floor(10000 * 50/100 * 10000 / 11000) = floor(4545.45...) = 4545
+    // Part 2: floor(10000 * 50/100 * 10000 / 21000) = floor(2380.95...) = 2380
+    // But Decimal256 internally accumulates without flooring each step, so total = 6926.
+    assert_eq!(alice_usdc_after, 6926);
+}
