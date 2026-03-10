@@ -70,7 +70,8 @@ pub fn execute(
         ExecuteMsg::WithdrawFunds { token_address, amount } => execute_withdraw_funds(deps, info, token_address, amount),
         ExecuteMsg::UpdateConfig { admin } => {
             execute_update_config(deps, info, admin)
-        }
+        },
+        ExecuteMsg::UpdateEligibility { airdrop_id, eligibility } => execute_update_eligibility(deps, env, info, airdrop_id, eligibility)
     }
 }
 
@@ -360,6 +361,37 @@ pub fn execute_update_config(
     CONFIG.save(deps.storage, &config)?;
 
     Ok(Response::new().add_attribute("action", "update_config"))
+}
+
+pub fn execute_update_eligibility(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    airdrop_id: u64,
+    eligibility: Vec<(String, Uint128)>,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.admin {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    let airdrop = AIRDROPS
+        .may_load(deps.storage, airdrop_id)?
+        .ok_or(ContractError::AirdropNotFound {})?;
+
+    if env.block.time.seconds() >= airdrop.start_time {
+        return Err(ContractError::AirdropAlreadyStarted {});
+    }
+
+    // Update eligibility entries
+    for (addr, amount) in eligibility {
+        let validated_addr = deps.api.addr_validate(&addr)?;
+        ELIGIBILITY.save(deps.storage, (airdrop_id, &validated_addr), &amount)?;
+    }
+
+    Ok(Response::new()
+        .add_attribute("action", "update_eligibility")
+        .add_attribute("airdrop_id", airdrop_id.to_string()))
 }
 
 #[entry_point]

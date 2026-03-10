@@ -36,6 +36,10 @@ pub enum ExecuteMsg {
     UpdateConfig {
         admin: Option<String>,
     },
+    UpdateEligibility {
+        airdrop_id: u64,
+        eligibility: Vec<(String, Uint128)>,
+    },
 }
 
 

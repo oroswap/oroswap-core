@@ -26,4 +26,7 @@ pub enum ContractError {
 
     #[error("Airdrop is currently inactive")]
     AirdropInactive {},
+
+    #[error("Airdrop already started")]
+    AirdropAlreadyStarted {},
 }
