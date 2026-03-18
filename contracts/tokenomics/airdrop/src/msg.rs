@@ -50,12 +50,10 @@ pub enum QueryMsg {
     Config {},
     #[returns(AirdropResponse)]
     Airdrop { id: u64 },
-    #[returns(EligibilityResponse)]
-    Eligibility { id: u64, address: String },
-    #[returns(UserClaimResponse)]
-    ClaimStatus { id: u64, address: String },
     #[returns(LatestAirdropIdResponse)]
     LatestAirdropId {},
+    #[returns(UserAirdropStatusResponse)]
+    UserAirdropStatus { id: u64, address: String },
 }
 
 #[cw_serde]
@@ -75,24 +73,23 @@ pub struct AirdropResponse {
     pub is_active: bool,
 }
 
-#[cw_serde]
-pub struct EligibilityResponse {
-    pub amount: Uint128,
-}
 
-#[cw_serde]
-pub struct UserClaimResponse {
-    pub claim: Option<UserClaimInfo>,
-}
-
-#[cw_serde]
-pub struct UserClaimInfo {
-    pub amount_eligible: Uint128,
-    pub amount_claimed: Uint128,
-    pub claim_time: u64,
-}
 
 #[cw_serde]
 pub struct LatestAirdropIdResponse {
     pub id: u64,
+}
+
+#[cw_serde]
+pub struct UserAirdropStatusResponse {
+    /// Total tokens allocated to this user (from ELIGIBILITY)
+    pub total_allocation: Uint128,
+    /// Amount claimable right now (vesting-aware calculation)
+    pub current_claimable: Uint128,
+    /// Claim status
+    pub is_claimed: bool,
+    pub amount_claimed: Uint128,
+    pub claim_time: Option<u64>,
+    /// Vesting phase info for UX: "not_started" | "in_progress" | "completed"
+    pub vesting_status: String,
 }

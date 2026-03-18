@@ -3,8 +3,8 @@ use cosmwasm_std::{from_json, Uint128, BankMsg, CosmosMsg};
 
 use crate::contract::{execute, instantiate, query};
 use crate::msg::{
-    UserClaimResponse, ConfigResponse, ExecuteMsg, InstantiateMsg, QueryMsg,
-    AirdropResponse,
+    ConfigResponse, ExecuteMsg, InstantiateMsg, QueryMsg,
+    AirdropResponse, UserAirdropStatusResponse,
 };
 
 #[test]
@@ -136,12 +136,14 @@ fn test_multi_season() {
     // Claim Season 2
     execute(deps.as_mut(), mock_env(), mock_info("user", &[]), ExecuteMsg::Claim { airdrop_id: 2 }).unwrap();
 
-    // Verify both are claimed
-    let res1: UserClaimResponse = from_json(&query(deps.as_ref(), mock_env(), QueryMsg::ClaimStatus { id: 1, address: "user".to_string() }).unwrap()).unwrap();
-    let res2: UserClaimResponse = from_json(&query(deps.as_ref(), mock_env(), QueryMsg::ClaimStatus { id: 2, address: "user".to_string() }).unwrap()).unwrap();
+    // Verify both are claimed via UserAirdropStatus
+    let res1: UserAirdropStatusResponse = from_json(&query(deps.as_ref(), mock_env(), QueryMsg::UserAirdropStatus { id: 1, address: "user".to_string() }).unwrap()).unwrap();
+    let res2: UserAirdropStatusResponse = from_json(&query(deps.as_ref(), mock_env(), QueryMsg::UserAirdropStatus { id: 2, address: "user".to_string() }).unwrap()).unwrap();
     
-    assert_eq!(res1.claim.unwrap().amount_claimed, Uint128::new(500));
-    assert_eq!(res2.claim.unwrap().amount_claimed, Uint128::new(500)); // Claimed at T=0, so only initial 50%
+    assert_eq!(res1.is_claimed, true);
+    assert_eq!(res1.amount_claimed, Uint128::new(500));
+    assert_eq!(res2.is_claimed, true);
+    assert_eq!(res2.amount_claimed, Uint128::new(500)); // Claimed at T=0, so only initial 50%
 }
 
 #[test]
@@ -181,4 +183,96 @@ fn test_admin_toggle() {
 
     // Claim succeeds
     execute(deps.as_mut(), mock_env(), mock_info("user", &[]), ExecuteMsg::Claim { airdrop_id: 1 }).unwrap();
+}
+
+#[test]
+fn test_user_airdrop_status_query() {
+    let mut deps = mock_dependencies();
+
+    let msg = InstantiateMsg { admin: "admin".to_string() };
+    instantiate(deps.as_mut(), mock_env(), mock_info("creator", &[]), msg).unwrap();
+
+    let env = mock_env();
+    let start_time = env.block.time.seconds() + 50; // starts in 50s
+    let vesting_start_time = start_time + 100;       // vesting starts 100s after start
+    let vesting_end_time = vesting_start_time + 1000; // 1000s vesting duration
+
+    let msg = ExecuteMsg::AddAirdrop {
+        token_address: "native.oro".to_string(),
+        start_time,
+        vesting_start_time,
+        vesting_end_time,
+        initial_claim_percent: 40,
+        apy_bonus_bps: 1000, // 10%
+        eligibility: vec![
+            ("user1".to_string(), Uint128::new(1000)),
+        ],
+    };
+    execute(deps.as_mut(), env.clone(), mock_info("admin", &[]), msg).unwrap();
+
+    // --- Scenario 1: Before airdrop starts ---
+    let res: UserAirdropStatusResponse = from_json(
+        &query(deps.as_ref(), env.clone(), QueryMsg::UserAirdropStatus { id: 1, address: "user1".to_string() }).unwrap()
+    ).unwrap();
+    assert_eq!(res.total_allocation, Uint128::new(1000));
+    assert_eq!(res.current_claimable, Uint128::zero());
+    assert_eq!(res.is_claimed, false);
+    assert_eq!(res.vesting_status, "not_started");
+
+    // --- Scenario 2: After start, before vesting begins ---
+    let mut env2 = mock_env();
+    env2.block.time = env2.block.time.plus_seconds(60); // 60s in, start_time was +50
+    let res: UserAirdropStatusResponse = from_json(
+        &query(deps.as_ref(), env2.clone(), QueryMsg::UserAirdropStatus { id: 1, address: "user1".to_string() }).unwrap()
+    ).unwrap();
+    assert_eq!(res.total_allocation, Uint128::new(1000));
+    assert_eq!(res.current_claimable, Uint128::new(400)); // 40% initial only
+    assert_eq!(res.is_claimed, false);
+    assert_eq!(res.vesting_status, "not_started");
+
+    // --- Scenario 3: Mid-vesting (500s into 1000s vesting) ---
+    let mut env3 = mock_env();
+    env3.block.time = env3.block.time.plus_seconds(50 + 100 + 500); // start + gap + 500s vesting
+    let res: UserAirdropStatusResponse = from_json(
+        &query(deps.as_ref(), env3.clone(), QueryMsg::UserAirdropStatus { id: 1, address: "user1".to_string() }).unwrap()
+    ).unwrap();
+    assert_eq!(res.total_allocation, Uint128::new(1000));
+    // initial 400 + vesting 600*500/1000 = 400 + 300 = 700
+    assert_eq!(res.current_claimable, Uint128::new(700));
+    assert_eq!(res.is_claimed, false);
+    assert_eq!(res.vesting_status, "in_progress");
+
+    // --- Scenario 4: After vesting ends ---
+    let mut env4 = mock_env();
+    env4.block.time = env4.block.time.plus_seconds(50 + 100 + 1000 + 100); // well past end
+    let res: UserAirdropStatusResponse = from_json(
+        &query(deps.as_ref(), env4.clone(), QueryMsg::UserAirdropStatus { id: 1, address: "user1".to_string() }).unwrap()
+    ).unwrap();
+    assert_eq!(res.total_allocation, Uint128::new(1000));
+    // initial 400 + vesting 600 + bonus 600*10% = 1060
+    assert_eq!(res.current_claimable, Uint128::new(1060));
+    assert_eq!(res.is_claimed, false);
+    assert_eq!(res.vesting_status, "completed");
+
+    // --- Scenario 5: After user claims ---
+    // Claim at env3 time (mid-vesting)
+    execute(deps.as_mut(), env3.clone(), mock_info("user1", &[]), ExecuteMsg::Claim { airdrop_id: 1 }).unwrap();
+
+    let res: UserAirdropStatusResponse = from_json(
+        &query(deps.as_ref(), env4.clone(), QueryMsg::UserAirdropStatus { id: 1, address: "user1".to_string() }).unwrap()
+    ).unwrap();
+    assert_eq!(res.total_allocation, Uint128::new(1000));
+    assert_eq!(res.current_claimable, Uint128::zero());
+    assert_eq!(res.is_claimed, true);
+    assert_eq!(res.amount_claimed, Uint128::new(700)); // claimed at mid-vesting
+    assert!(res.claim_time.is_some());
+    assert_eq!(res.vesting_status, "claimed");
+
+    // --- Scenario 6: Non-eligible user ---
+    let res: UserAirdropStatusResponse = from_json(
+        &query(deps.as_ref(), env4.clone(), QueryMsg::UserAirdropStatus { id: 1, address: "nobody".to_string() }).unwrap()
+    ).unwrap();
+    assert_eq!(res.total_allocation, Uint128::zero());
+    assert_eq!(res.current_claimable, Uint128::zero());
+    assert_eq!(res.is_claimed, false);
 }

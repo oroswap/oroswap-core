@@ -7,8 +7,8 @@ use cw20::Cw20ExecuteMsg;
 
 use crate::error::ContractError;
 use crate::msg::{
-    AirdropResponse, UserClaimInfo, UserClaimResponse, ConfigResponse, EligibilityResponse, ExecuteMsg,
-    InstantiateMsg, LatestAirdropIdResponse, QueryMsg,
+    AirdropResponse, ConfigResponse, ExecuteMsg,
+    InstantiateMsg, LatestAirdropIdResponse, QueryMsg, UserAirdropStatusResponse,
 };
 use crate::state::{Config, AIRDROPS, USER_CLAIMS, CONFIG, ELIGIBILITY, LATEST_AIRDROP_ID, AirdropInfo, UserClaim};
 
@@ -395,13 +395,12 @@ pub fn execute_update_eligibility(
 }
 
 #[entry_point]
-pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
+pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
         QueryMsg::Config {} => to_json_binary(&query_config(deps)?),
         QueryMsg::Airdrop { id } => to_json_binary(&query_airdrop(deps, id)?),
-        QueryMsg::Eligibility { id, address } => to_json_binary(&query_eligibility(deps, id, address)?),
-        QueryMsg::ClaimStatus { id, address } => to_json_binary(&query_claim_status(deps, id, address)?),
         QueryMsg::LatestAirdropId {} => to_json_binary(&query_latest_airdrop_id(deps)?),
+        QueryMsg::UserAirdropStatus { id, address } => to_json_binary(&query_user_airdrop_status(deps, env, id, address)?),
     }
 }
 
@@ -426,25 +425,87 @@ fn query_airdrop(deps: Deps, id: u64) -> StdResult<AirdropResponse> {
     })
 }
 
-fn query_eligibility(deps: Deps, id: u64, address: String) -> StdResult<EligibilityResponse> {
-    let addr = deps.api.addr_validate(&address)?;
-    let amount = ELIGIBILITY
-        .may_load(deps.storage, (id, &addr))?
-        .unwrap_or_default();
-    Ok(EligibilityResponse { amount })
-}
-
-fn query_claim_status(deps: Deps, id: u64, address: String) -> StdResult<UserClaimResponse> {
-    let addr = deps.api.addr_validate(&address)?;
-    let claim = USER_CLAIMS.may_load(deps.storage, (id, &addr))?.map(|c| UserClaimInfo {
-        amount_eligible: c.amount_eligible,
-        amount_claimed: c.amount_claimed,
-        claim_time: c.claim_time,
-    });
-    Ok(UserClaimResponse { claim })
-}
 
 fn query_latest_airdrop_id(deps: Deps) -> StdResult<LatestAirdropIdResponse> {
     let id = LATEST_AIRDROP_ID.load(deps.storage)?;
     Ok(LatestAirdropIdResponse { id })
+}
+
+fn query_user_airdrop_status(deps: Deps, env: Env, id: u64, address: String) -> StdResult<UserAirdropStatusResponse> {
+    let addr = deps.api.addr_validate(&address)?;
+    let airdrop = AIRDROPS.load(deps.storage, id)?;
+
+    // Total allocation from eligibility map
+    let total_allocation = ELIGIBILITY
+        .may_load(deps.storage, (id, &addr))?
+        .unwrap_or_default();
+
+    // Check if user already claimed
+    let claim = USER_CLAIMS.may_load(deps.storage, (id, &addr))?;
+
+    if let Some(claim) = claim {
+        // User has already claimed — return claimed state
+        return Ok(UserAirdropStatusResponse {
+            total_allocation,
+            current_claimable: Uint128::zero(),
+            is_claimed: true,
+            amount_claimed: claim.amount_claimed,
+            claim_time: Some(claim.claim_time),
+            vesting_status: "claimed".to_string(),
+        });
+    }
+
+    // Not yet claimed — compute current claimable based on vesting
+    let current_time = env.block.time.seconds();
+
+    if current_time < airdrop.start_time {
+        // Airdrop hasn't started yet
+        return Ok(UserAirdropStatusResponse {
+            total_allocation,
+            current_claimable: Uint128::zero(),
+            is_claimed: false,
+            amount_claimed: Uint128::zero(),
+            claim_time: None,
+            vesting_status: "not_started".to_string(),
+        });
+    }
+
+    // Initial portion (e.g. 40%)
+    let initial_payout = total_allocation.multiply_ratio(airdrop.initial_claim_percent, 100u128);
+    let vesting_base = total_allocation.saturating_sub(initial_payout);
+
+    let mut unlocked_vesting = Uint128::zero();
+    let mut bonus = Uint128::zero();
+    let vesting_status;
+
+    if current_time <= airdrop.vesting_start_time {
+        // After start but before vesting begins — only initial portion available
+        vesting_status = "not_started".to_string();
+    } else if current_time < airdrop.vesting_end_time {
+        // Mid-vesting
+        let elapsed = current_time.saturating_sub(airdrop.vesting_start_time);
+        let duration = airdrop.vesting_end_time.saturating_sub(airdrop.vesting_start_time);
+        if duration > 0 {
+            unlocked_vesting = vesting_base.multiply_ratio(elapsed, duration);
+        }
+        vesting_status = "in_progress".to_string();
+    } else {
+        // Vesting completed
+        unlocked_vesting = vesting_base;
+        bonus = Uint128::from(vesting_base.u128() * airdrop.apy_bonus_bps as u128 / 10000);
+        vesting_status = "completed".to_string();
+    }
+
+    let current_claimable = initial_payout
+        .checked_add(unlocked_vesting).map_err(StdError::from)?
+        .checked_add(bonus).map_err(StdError::from)?;
+
+    Ok(UserAirdropStatusResponse {
+        total_allocation,
+        current_claimable,
+        is_claimed: false,
+        amount_claimed: Uint128::zero(),
+        claim_time: None,
+        vesting_status,
+    })
 }
