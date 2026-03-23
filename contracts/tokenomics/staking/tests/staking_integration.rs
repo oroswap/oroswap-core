@@ -204,7 +204,7 @@ fn test_enter_and_leave() {
     helper.next_block(7 * 24 * 60 * 60);
 
     // Claim Alice's ORO
-    helper.claim(&alice, None).unwrap();
+    helper.claim(&alice).unwrap();
 
     // Now Alice's ORO balance is 8910 (8900 + 10)
     let amount = helper.query_balance(&alice, ORO_DENOM).unwrap();
@@ -295,7 +295,7 @@ fn should_work_with_more_than_one_participant() {
     helper.next_block(7 * 24 * 60 * 60);
 
     // Claim Bob's ORO
-    helper.claim(&bob, None).unwrap();
+    helper.claim(&bob).unwrap();
 
     // Check Bob's ORO balance is 9995 (9990 + 5 by leaving)
     let amount = helper.query_balance(&bob, ORO_DENOM).unwrap();
@@ -558,7 +558,7 @@ fn test_pause_unpause() {
     let _ = helper.unstake(&alice, 100).unwrap();
     helper.pause(&owner).unwrap();
 
-    let err = helper.claim(&alice, None).unwrap_err();
+    let err = helper.claim(&alice).unwrap_err();
     assert_eq!(
         err.downcast::<ContractError>().unwrap(),
         ContractError::ContractPaused {}
@@ -571,8 +571,8 @@ fn test_pause_unpause() {
     
     // Fast forward to claim
     helper.next_block(7 * 24 * 60 * 60);
-    helper.claim(&alice, None).unwrap();
-    helper.claim(&bob, None).unwrap();
+    helper.claim(&alice).unwrap();
+    helper.claim(&bob).unwrap();
 }
 
 #[test]
@@ -624,7 +624,7 @@ fn test_migration() {
     // We'll trust init_modules for now but use 2.1.0 just in case 1.2.0 was somehow confusing
 
     // 2. Perform migration
-    use oroswap::pair::MigrateMsg;
+    use oroswap::staking::MigrateMsg;
     // We need to store the code again to get a code ID for migration
     fn staking_contract() -> Box<dyn Contract<Empty>> {
         Box::new(
@@ -729,7 +729,7 @@ fn test_incentives() {
     // 7. Fast forward unbonding period and claim.
     helper.next_block(7 * 24 * 60 * 60);
     let alice_oro_before = helper.query_balance(&alice, ORO_DENOM).unwrap().u128();
-    helper.claim(&alice, None).unwrap();
+    helper.claim(&alice).unwrap();
     let alice_oro_after = helper.query_balance(&alice, ORO_DENOM).unwrap().u128();
     let alice_usdc_after = helper.query_balance(&alice, usdc_denom).unwrap().u128();
 

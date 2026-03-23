@@ -9,7 +9,6 @@ use cosmwasm_std::{
 use cw_multi_test::{AppResponse, BankSudo, CosmosRouter, Stargate};
 use oroswap::token_factory::{
     MsgBurn, MsgCreateDenom, MsgCreateDenomResponse, MsgMint, MsgSetBeforeSendHook,
-    MsgSetDenomMetadata,
 };
 
 #[derive(Default)]
@@ -37,14 +36,10 @@ impl Stargate for StargateKeeper {
                     events: vec![],
                     data: Some(
                         MsgCreateDenomResponse {
-                            denom: format!("coin.{}.{}", tf_msg.creator, tf_msg.sub_denom),
-                            creator: tf_msg.creator,
-                            bank_admin: "".to_string(),
-                            metadata_admin: "".to_string(),
-                            minting_cap: tf_msg.minting_cap,
-                            can_change_minting_cap: tf_msg.can_change_minting_cap,
-                            URI: "".to_string(),
-                            URI_hash: "".to_string(),
+                            new_token_denom: format!(
+                                "coin.{}.{}",
+                                tf_msg.sender, tf_msg.subdenom
+                            ),
                         }
                         .into(),
                     ),
@@ -54,51 +49,51 @@ impl Stargate for StargateKeeper {
             MsgMint::TYPE_URL => {
                 let tf_msg: MsgMint = value.try_into()?;
                 let mint_coins = tf_msg
-                    .token
+                    .amount
                     .expect("Empty amount in tokenfactory MsgMint!");
                 let cw_coin = coin(mint_coins.amount.parse()?, mint_coins.denom);
                 let bank_sudo = BankSudo::Mint {
-                    to_address: tf_msg.recipient.clone(),
-                    amount: vec![cw_coin.clone()],
+                    to_address: tf_msg.mint_to_address.clone(),
+                    amount: vec![cw_coin],
                 };
-
                 router.sudo(api, storage, block, bank_sudo.into())
             }
             MsgBurn::TYPE_URL => {
                 let tf_msg: MsgBurn = value.try_into()?;
                 let burn_coins = tf_msg
-                    .token
+                    .amount
                     .expect("Empty amount in tokenfactory MsgBurn!");
                 let cw_coin = coin(burn_coins.amount.parse()?, burn_coins.denom);
                 let burn_msg = BankMsg::Burn {
-                    amount: vec![cw_coin.clone()],
+                    amount: vec![cw_coin],
                 };
-
+                // burn_from_address is empty in non-zigchain; fall back to sender
+                let burn_from = if tf_msg.burn_from_address.is_empty() {
+                    tf_msg.sender.clone()
+                } else {
+                    tf_msg.burn_from_address.clone()
+                };
                 router.execute(
                     api,
                     storage,
                     block,
-                    Addr::unchecked(&tf_msg.signer),
+                    Addr::unchecked(&burn_from),
                     burn_msg.into(),
                 )
             }
             MsgSetBeforeSendHook::TYPE_URL => {
                 let tf_msg: MsgSetBeforeSendHook = value.try_into()?;
-
                 let bank_sudo = BankSudo::SetHook {
                     denom: tf_msg.denom,
                     contract_addr: tf_msg.cosmwasm_address,
                 };
-
                 router.sudo(api, storage, block, bank_sudo.into())
             }
-            MsgSetDenomMetadata::TYPE_URL => {
-                // Just return success for metadata
+            _ => {
+                // Silently accept unknown stargate messages (e.g. MsgSetDenomMetadata)
+                let _ = sender;
                 Ok(AppResponse::default())
             }
-            _ => Err(anyhow::anyhow!(
-                "Unexpected exec msg {type_url} from {sender:?}",
-            )),
         }
     }
 

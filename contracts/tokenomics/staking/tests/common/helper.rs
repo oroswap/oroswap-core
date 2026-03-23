@@ -65,7 +65,6 @@ impl Helper {
 
         let msg = InstantiateMsg {
             deposit_token_denom: ORO_DENOM.to_string(),
-            token_factory_addr: TOKEN_FACTORY_MODULE.to_string(),
             bootstrap_amount: None, // Use default MINIMUM_STAKE_AMOUNT
             unbonding_period: 7 * 24 * 60 * 60, // 7 days
             xoro_decimals: Some(6),
@@ -141,11 +140,11 @@ impl Helper {
         )
     }
 
-    pub fn claim(&mut self, sender: &Addr, receiver: Option<String>) -> AnyResult<AppResponse> {
+    pub fn claim(&mut self, sender: &Addr) -> AnyResult<AppResponse> {
         self.app.execute_contract(
             sender.clone(),
             self.staking.clone(),
-            &ExecuteMsg::Claim { receiver },
+            &ExecuteMsg::Claim {},
             &[],
         )
     }

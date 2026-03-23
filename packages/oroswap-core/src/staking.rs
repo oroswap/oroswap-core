@@ -6,8 +6,6 @@ use cosmwasm_std::{Binary, Uint128};
 pub struct InstantiateMsg {
     /// The ORO token contract address
     pub deposit_token_denom: String,
-    /// Token factory module address. Contract creator must ensure that the address is exact token factory module address.
-    pub token_factory_addr: String,
     /// Bootstrap amount to initialize the pool (optional, defaults to MINIMUM_STAKE_AMOUNT)
     pub bootstrap_amount: Option<Uint128>,
     /// Unbonding period in seconds (e.g. 7 days = 604800)
@@ -28,6 +26,8 @@ pub struct UnbondingEntry {
     pub reward_coins: Vec<cosmwasm_std::Coin>,
     /// Unix timestamp (in seconds) after which ORO can be claimed.
     pub unlock_time: u64,
+    /// The address that will receive the funds when Claim is called.
+    pub receiver: String,
 }
 
 /// This structure describes the execute messages available in the contract.
@@ -43,11 +43,12 @@ pub enum ExecuteMsg {
         msg: Binary,
     },
     /// Burns xORO and begins unbonding of the proportional ORO amount.
-    /// The receiver is optional (applied when Claim is called). If not set, the sender receives ORO on Claim.
+    /// The receiver is locked in at this point and stored in the unbonding entry.
+    /// If not set, the sender will receive ORO on Claim.
     Leave { receiver: Option<String> },
     /// Claims all matured unbonding entries for the sender.
-    /// Optional `receiver` overrides the destination set during Leave.
-    Claim { receiver: Option<String> },
+    /// Funds go to the receiver set during Leave.
+    Claim {},
     /// Adds reward tokens to the contract to be distributed to stakers.
     /// Admin only.
     AddReward {
@@ -56,13 +57,27 @@ pub enum ExecuteMsg {
     },
     /// Updates the contract configuration. Only callable by the owner.
     UpdateConfig {
-        owner: Option<String>,
         unbonding_period: Option<u64>,
     },
+    /// Proposes a new owner. The proposed owner must call ClaimOwnership within expires_in seconds.
+    /// Only callable by the current owner.
+    ProposeNewOwner {
+        owner: String,
+        expires_in: u64,
+    },
+    /// Removes the pending ownership proposal. Only callable by the current owner.
+    DropOwnershipProposal {},
+    /// Claims a pending ownership proposal. Only callable by the proposed new owner.
+    ClaimOwnership {},
     /// Pauses the contract. Only callable by the owner.
     Pause {},
     /// Unpauses the contract. Only callable by the owner.
     Unpause {},
+    /// Emergency withdrawal of non-staked tokens accidentally sent to the contract.
+    /// For ORO: only withdraws the excess above (effective_deposit + total_locked + reward_oro_reserve).
+    /// For other denoms: withdraws the full balance.
+    /// Only callable by the owner.
+    WithdrawExcessTokens { denom: String, recipient: Option<String> },
 }
 
 /// This structure describes the query messages available in the contract.
@@ -139,6 +154,10 @@ pub struct StateResponse {
 pub struct TrackerData {
     pub token_factory_addr: String,
 }
+
+/// Message used to trigger a contract migration.
+#[cw_serde]
+pub struct MigrateMsg {}
 
 /// The structure returned as part of set_data when staking or unstaking
 #[cw_serde]

@@ -2,6 +2,7 @@ use cw_storage_plus::{Item, Map};
 use cosmwasm_std::{Addr, Decimal256, Uint128};
 use cosmwasm_schema::cw_serde;
 
+use oroswap::common::OwnershipProposal;
 use oroswap::staking::{Config, UnbondingEntry};
 
 #[cw_serde]
@@ -37,3 +38,6 @@ pub const REWARDS: Item<Vec<RewardInfo>> = Item::new("rewards");
 pub const USER_REWARDS: Map<&Addr, UserRewardInfo> = Map::new("user_rewards");
 
 pub const REWARD_ORO_RESERVE: Item<Uint128> = Item::new("reward_oro_reserve");
+
+/// Pending ownership proposal created via ProposeNewOwner.
+pub const OWNERSHIP_PROPOSAL: Item<OwnershipProposal> = Item::new("ownership_proposal");

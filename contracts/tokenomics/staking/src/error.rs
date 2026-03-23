@@ -36,4 +36,10 @@ pub enum ContractError {
 
     #[error("Invalid duration")]
     InvalidDuration {},
+
+    #[error("Too many unbonding entries, maximum is {max}")]
+    TooManyUnbondingEntries { max: usize },
+
+    #[error("Too many reward denoms, maximum is {max}")]
+    TooManyRewardDenoms { max: usize },
 }

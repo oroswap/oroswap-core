@@ -11,14 +11,17 @@ use cw_utils::{must_pay, one_coin};
 use oroswap::staking::{
     Config, ExecuteMsg, InstantiateMsg, QueryMsg, StateResponse, StakingResponse, UnbondingEntry,
 };
+use oroswap::common::{claim_ownership, drop_ownership_proposal, propose_new_owner};
 use oroswap::token_factory::{
-    tf_burn_msg, tf_create_denom_msg, tf_mint_msg, tf_set_denom_metadata_msg,
+    tf_burn_msg, tf_create_denom_msg, tf_mint_msg,
     MsgCreateDenomResponse,
 };
+#[cfg(feature = "zigchain")]
+use oroswap::token_factory::tf_set_denom_metadata_msg;
 
 use crate::error::ContractError;
 use crate::state::{
-    CONFIG, REWARD_ORO_RESERVE, REWARDS, TOTAL_LOCKED, UNBONDING, USER_REWARDS, RewardInfo,
+    CONFIG, OWNERSHIP_PROPOSAL, REWARD_ORO_RESERVE, REWARDS, TOTAL_LOCKED, UNBONDING, USER_REWARDS, RewardInfo,
     UserRewardInfo,
 };
 
@@ -49,6 +52,12 @@ impl TryFrom<u64> for ReplyIds {
 /// Minimum initial xoro share
 pub(crate) const MINIMUM_STAKE_AMOUNT: Uint128 = Uint128::new(1_000);
 
+/// Maximum number of unbonding entries per user
+pub const MAX_UNBONDING_ENTRIES: usize = 10;
+
+/// Maximum number of distinct reward denoms
+pub const MAX_REWARD_DENOMS: usize = 5;
+
 /// Creates a new contract with the specified parameters in the [`InstantiateMsg`].
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -69,8 +78,6 @@ pub fn instantiate(
     );
 
     // Validate addresses
-    deps.api.addr_validate(&msg.token_factory_addr)?;
-
     let owner = deps.api.addr_validate(
         &info.sender.to_string(), // owner defaults to instantiator; can be updated via UpdateConfig
     )?;
@@ -151,6 +158,7 @@ pub fn execute(
     match msg {
         ExecuteMsg::Enter { receiver } => {
             let recipient = receiver.unwrap_or_else(|| info.sender.to_string());
+            deps.api.addr_validate(&recipient)?;
             execute_enter(deps, env, info).map(|(resp, minted_coins)| {
                 resp.add_message(BankMsg::Send {
                     to_address: recipient.clone(),
@@ -175,19 +183,41 @@ pub fn execute(
         }),
         ExecuteMsg::Leave { receiver } => {
             let recipient = receiver.unwrap_or_else(|| info.sender.to_string());
+            deps.api.addr_validate(&recipient)?;
             execute_leave(deps, env, info, recipient)
         }
-        ExecuteMsg::Claim { receiver } => {
-            let recipient = receiver.unwrap_or_else(|| info.sender.to_string());
-            execute_claim(deps, env, info, recipient)
+        ExecuteMsg::Claim {} => {
+            execute_claim(deps, env, info)
         }
-        ExecuteMsg::UpdateConfig {
-            owner,
-            unbonding_period,
-        } => execute_update_config(deps, info, owner, unbonding_period),
+        ExecuteMsg::UpdateConfig { unbonding_period } => {
+            execute_update_config(deps, info, unbonding_period)
+        }
+        ExecuteMsg::ProposeNewOwner { owner, expires_in } => {
+            let config = CONFIG.load(deps.storage)?;
+            propose_new_owner(deps, info, env, owner, expires_in, Addr::unchecked(&config.owner), OWNERSHIP_PROPOSAL)
+                .map_err(Into::into)
+        }
+        ExecuteMsg::DropOwnershipProposal {} => {
+            let config = CONFIG.load(deps.storage)?;
+            drop_ownership_proposal(deps, info, Addr::unchecked(&config.owner), OWNERSHIP_PROPOSAL)
+                .map_err(Into::into)
+        }
+        ExecuteMsg::ClaimOwnership {} => {
+            claim_ownership(deps, info, env, OWNERSHIP_PROPOSAL, |deps, new_owner| {
+                CONFIG.update::<_, StdError>(deps.storage, |mut v| {
+                    v.owner = new_owner.to_string();
+                    Ok(v)
+                })?;
+                Ok(())
+            })
+            .map_err(Into::into)
+        }
         ExecuteMsg::Pause {} => execute_pause(deps, info),
         ExecuteMsg::Unpause {} => execute_unpause(deps, info),
         ExecuteMsg::AddReward { duration } => execute_add_reward(deps, env, info, duration),
+        ExecuteMsg::WithdrawExcessTokens { denom, recipient } => {
+            execute_withdraw_excess_tokens(deps, env, info, denom, recipient)
+        }
     }
 }
 
@@ -211,13 +241,17 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractEr
                 })?;
 
                 let config = CONFIG.load(deps.storage)?;
-                let set_metadata_msg = tf_set_denom_metadata_msg(
+
+                #[cfg(feature = "zigchain")]
+                let set_metadata_msg: Option<CosmosMsg> = Some(tf_set_denom_metadata_msg(
                     env.contract.address.clone(),
                     new_token_denom.clone(),
                     TOKEN_SYMBOL.to_string(),
                     config.xoro_decimals,
-                    config.xoro_uri,
-                );
+                    config.xoro_uri.clone(),
+                ));
+                #[cfg(not(feature = "zigchain"))]
+                let set_metadata_msg: Option<CosmosMsg> = None;
 
                 // Bootstrap the pool by minting xORO tokens equal to bootstrap amount
                 // Mint to contract itself first, then the ratio is initialized
@@ -228,14 +262,17 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractEr
                     env.contract.address.clone(),
                 );
 
-                Ok(Response::new()
-                    .add_message(set_metadata_msg)
+                let mut resp = Response::new()
                     .add_messages(bootstrap_mint_msgs)
                     .add_attributes([
                         attr("xoro_denom", new_token_denom),
                         attr("bootstrap_amount", config.bootstrap_amount.to_string()),
                         attr("pool_bootstrapped", "true".to_string()),
-                    ]))
+                    ]);
+                if let Some(m) = set_metadata_msg {
+                    resp = resp.add_message(m);
+                }
+                Ok(resp)
             } else {
                 Err(ContractError::FailedToParseReply {})
             }
@@ -290,9 +327,14 @@ fn execute_enter(
 
     let total_shares = deps.querier.query_supply(&config.xoro_denom)?.amount;
     let global_rewards = update_rewards(deps.storage, &env, total_shares)?;
-    // Sync the user's last_rewards_index so they don't earn for time before this Enter.
-    // user_shares=0 means no pending accrual — just advances their index checkpoint.
-    sync_user_rewards(deps.storage, &info.sender, &global_rewards, Uint128::zero(), false)?;
+    // Accrue any rewards earned since the user's last interaction, using their current
+    // xORO balance as weight. For a first-time Enter this is zero, so no accrual occurs
+    // naturally — no special casing needed.
+    let user_xoro_balance = deps
+        .querier
+        .query_balance(&info.sender, &config.xoro_denom)?
+        .amount;
+    sync_user_rewards(deps.storage, &info.sender, &global_rewards, user_xoro_balance, false)?;
 
     let mint_amount = if total_shares.is_zero() || effective.is_zero() {
         amount
@@ -352,13 +394,20 @@ fn execute_leave(
     let total_shares = deps.querier.query_supply(&config.xoro_denom)?.amount;
 
     let global_rewards = update_rewards(deps.storage, &env, total_shares)?;
-    // Pass the xORO amount being burned as this user's weight for reward calculation.
-    // Anyone holding xORO (even via transfer) can Leave — no stored shares needed.
+    // Use the user's full pre-leave xORO balance as the reward weight.
+    // The xORO being burned has already been transferred to the contract, so the
+    // sender's current balance is their remaining shares — add back xoro_amount to
+    // get the total shares they held for the accrual period.
+    let user_remaining = deps
+        .querier
+        .query_balance(&info.sender, &config.xoro_denom)?
+        .amount;
+    let user_total_shares = user_remaining + xoro_amount;
     let accrued_rewards = sync_user_rewards(
         deps.storage,
         &info.sender,
         &global_rewards,
-        xoro_amount,
+        user_total_shares,
         true,
     )?;
 
@@ -381,11 +430,17 @@ fn execute_leave(
         oro_amount: return_amount,
         reward_coins: accrued_rewards,
         unlock_time,
+        receiver: recipient.clone(),
     };
 
     let sender = info.sender.clone();
     UNBONDING.update(deps.storage, &sender, |maybe_entries| -> StdResult<_> {
         let mut entries = maybe_entries.unwrap_or_default();
+        if entries.len() >= MAX_UNBONDING_ENTRIES {
+            return Err(StdError::generic_err(format!(
+                "Too many unbonding entries, maximum is {MAX_UNBONDING_ENTRIES}"
+            )));
+        }
         entries.push(entry);
         Ok(entries)
     })?;
@@ -418,7 +473,6 @@ fn execute_claim(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    recipient: String,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
     check_paused(&config)?;
@@ -438,18 +492,6 @@ fn execute_claim(
         )));
     }
 
-    let total_claim: Uint128 = matured.iter().map(|e| e.oro_amount).sum();
-    let mut total_rewards: Vec<Coin> = vec![];
-    for entry in matured.iter() {
-        for c in entry.reward_coins.iter() {
-            if let Some(total_c) = total_rewards.iter_mut().find(|tc| tc.denom == c.denom) {
-                total_c.amount += c.amount;
-            } else {
-                total_rewards.push(c.clone());
-            }
-        }
-    }
-
     // Update state: keep only pending entries
     if pending.is_empty() {
         UNBONDING.remove(deps.storage, &sender);
@@ -458,13 +500,42 @@ fn execute_claim(
     }
 
     // Reduce TOTAL_LOCKED
+    let total_claim: Uint128 = matured.iter().map(|e| e.oro_amount).sum();
     TOTAL_LOCKED.update(deps.storage, |locked| -> StdResult<u128> {
         Ok(locked.saturating_sub(total_claim.u128()))
     })?;
 
+    // Group matured entries by receiver and build one BankMsg per unique receiver
+    let mut by_receiver: Vec<(String, Vec<cosmwasm_std::Coin>)> = vec![];
+    for entry in matured.iter() {
+        let pos = by_receiver.iter().position(|(r, _)| r == &entry.receiver);
+        let coins = match pos {
+            Some(i) => &mut by_receiver[i].1,
+            None => {
+                by_receiver.push((entry.receiver.clone(), vec![]));
+                &mut by_receiver.last_mut().unwrap().1
+            }
+        };
+        // Merge ORO principal
+        if let Some(c) = coins.iter_mut().find(|c| c.denom == config.oro_denom) {
+            c.amount += entry.oro_amount;
+        } else {
+            coins.push(coin(entry.oro_amount.u128(), &config.oro_denom));
+        }
+        // Merge reward coins
+        for rc in entry.reward_coins.iter() {
+            if let Some(c) = coins.iter_mut().find(|c| c.denom == rc.denom) {
+                c.amount += rc.amount;
+            } else {
+                coins.push(rc.clone());
+            }
+        }
+    }
+
     // Reduce REWARD_ORO_RESERVE for any ORO rewards being paid out
-    let oro_rewards: Uint128 = total_rewards
+    let oro_rewards: Uint128 = matured
         .iter()
+        .flat_map(|e| e.reward_coins.iter())
         .filter(|c| c.denom == config.oro_denom)
         .map(|c| c.amount)
         .sum();
@@ -474,22 +545,18 @@ fn execute_claim(
         })?;
     }
 
-    // Send ORO + Rewards to recipient
-    let mut send_coins = vec![coin(total_claim.u128(), &config.oro_denom)];
-    send_coins.extend(total_rewards);
-
-    let send_msg: CosmosMsg = BankMsg::Send {
-        to_address: recipient.clone(),
-        amount: send_coins,
-    }
-    .into();
+    let messages: Vec<CosmosMsg> = by_receiver
+        .into_iter()
+        .map(|(to_address, amount)| {
+            CosmosMsg::from(BankMsg::Send { to_address, amount })
+        })
+        .collect();
 
     Ok(Response::new()
-        .add_message(send_msg)
+        .add_messages(messages)
         .add_attributes([
             attr("action", "claim"),
             attr("sender", &sender),
-            attr("recipient", &recipient),
             attr("oro_claimed", total_claim),
             attr("entries_claimed", matured.len().to_string()),
         ]))
@@ -500,7 +567,6 @@ fn execute_claim(
 fn execute_update_config(
     deps: DepsMut,
     info: MessageInfo,
-    owner: Option<String>,
     unbonding_period: Option<u64>,
 ) -> Result<Response, ContractError> {
     let mut config = CONFIG.load(deps.storage)?;
@@ -509,17 +575,12 @@ fn execute_update_config(
         return Err(ContractError::Unauthorized {});
     }
 
-    if let Some(new_owner) = owner {
-        deps.api.addr_validate(&new_owner)?;
-        config.owner = new_owner;
-    }
     if let Some(period) = unbonding_period {
-        // Optional: enforce a maximum cap, e.g. 30 days
+        const MIN_UNBONDING_PERIOD: u64 = 60; // 1 minute minimum
         const MAX_UNBONDING_PERIOD: u64 = 30 * 24 * 60 * 60; // 30 days
-        if period > MAX_UNBONDING_PERIOD {
+        if period < MIN_UNBONDING_PERIOD || period > MAX_UNBONDING_PERIOD {
             return Err(ContractError::Std(StdError::generic_err(format!(
-                "unbonding_period cannot exceed {} seconds (30 days)",
-                MAX_UNBONDING_PERIOD
+                "unbonding_period must be between {MIN_UNBONDING_PERIOD} and {MAX_UNBONDING_PERIOD} seconds"
             ))));
         }
         config.unbonding_period = period;
@@ -576,7 +637,10 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
                 .query_balance(&env.contract.address, &config.oro_denom)?
                 .amount;
             let total_locked = TOTAL_LOCKED.load(deps.storage)?;
-            let effective = total_balance.saturating_sub(Uint128::new(total_locked));
+            let reward_oro_reserve = REWARD_ORO_RESERVE.load(deps.storage)?;
+            let effective = total_balance
+                .saturating_sub(Uint128::new(total_locked))
+                .saturating_sub(reward_oro_reserve);
 
             let exchange_rate = if total_shares.is_zero() || effective.is_zero() {
                 Decimal::one()
@@ -603,10 +667,11 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
                 .query_balance(env.contract.address, config.oro_denom)?
                 .amount;
             let total_locked = TOTAL_LOCKED.load(deps.storage)?;
-            // Effective deposit subtracts locked unbonding amounts
+            let reward_oro_reserve = REWARD_ORO_RESERVE.load(deps.storage)?;
+            // Effective deposit subtracts locked unbonding amounts and reward reserve
             let effective = total_balance
-                .checked_sub(Uint128::new(total_locked))
-                .unwrap_or(Uint128::zero());
+                .saturating_sub(Uint128::new(total_locked))
+                .saturating_sub(reward_oro_reserve);
             to_json_binary(&effective)
         }
         QueryMsg::BalanceAt { address, timestamp } => {
@@ -727,6 +792,11 @@ pub fn execute_add_reward(
         return Err(ContractError::InvalidDuration {});
     }
 
+    const MAX_REWARD_DURATION: u64 = 365 * 24 * 60 * 60; // 365 days
+    if duration > MAX_REWARD_DURATION {
+        return Err(ContractError::InvalidDuration {});
+    }
+
     let reward_coin = one_coin(&info)?;
     let total_shares = deps.querier.query_supply(&config.xoro_denom)?.amount;
     
@@ -751,6 +821,9 @@ pub fn execute_add_reward(
         reward.rps = new_total_amount / Decimal256::from_ratio(duration, 1u64);
         reward.end_ts = end_ts;
     } else {
+        if global_rewards.len() >= MAX_REWARD_DENOMS {
+            return Err(ContractError::TooManyRewardDenoms { max: MAX_REWARD_DENOMS });
+        }
         global_rewards.push(RewardInfo {
             denom: reward_coin.denom.clone(),
             rps: Decimal256::from_ratio(reward_coin.amount, duration),
@@ -793,6 +866,64 @@ fn update_rewards(storage: &mut dyn Storage, env: &Env, total_shares: Uint128) -
     REWARDS.save(storage, &rewards)?;
     Ok(rewards)
 }
+fn execute_withdraw_excess_tokens(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    denom: String,
+    recipient: Option<String>,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender.to_string() != config.owner {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    let to = recipient.unwrap_or_else(|| config.owner.clone());
+    deps.api.addr_validate(&to)?;
+
+    let balance = deps
+        .querier
+        .query_balance(&env.contract.address, &denom)?
+        .amount;
+
+    let withdrawable = if denom == config.oro_denom {
+        // For ORO, only withdraw the excess above what the contract owes:
+        // effective staked pool + locked unbonding + reward reserve.
+        // Tokens sent directly inflate the balance without going through Enter,
+        // so excess = balance - proper_effective - owed.
+        let total_locked = TOTAL_LOCKED.load(deps.storage)?;
+        let reward_oro_reserve = REWARD_ORO_RESERVE.load(deps.storage)?;
+        let owed = Uint128::new(total_locked) + reward_oro_reserve;
+        let proper_effective = effective_deposit(balance, total_locked, reward_oro_reserve)
+            .unwrap_or(Uint128::zero());
+        balance.saturating_sub(proper_effective + owed)
+    } else {
+        // Non-ORO tokens not added via AddReward are fully withdrawable
+        balance
+    };
+
+    if withdrawable.is_zero() {
+        return Err(ContractError::Std(StdError::generic_err(
+            "No excess tokens to withdraw",
+        )));
+    }
+
+    let send_msg: CosmosMsg = BankMsg::Send {
+        to_address: to.clone(),
+        amount: vec![coin(withdrawable.u128(), &denom)],
+    }
+    .into();
+
+    Ok(Response::new()
+        .add_message(send_msg)
+        .add_attributes([
+            attr("action", "withdraw_excess_tokens"),
+            attr("denom", denom),
+            attr("amount", withdrawable),
+            attr("recipient", to),
+        ]))
+}
+
 
 fn sync_user_rewards(
     storage: &mut dyn Storage,
