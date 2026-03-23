@@ -307,32 +307,44 @@ fn test_update_config() {
     let alice = Addr::unchecked("alice");
     let mut helper = Helper::new(&owner).unwrap();
 
-    // Non-owner cannot update config
+    // Non-owner cannot propose new owner
     let err = helper
         .app
         .execute_contract(
             alice.clone(),
             helper.wrapper.clone(),
-            &ExecuteMsg::UpdateConfig {
-                owner: Some(alice.to_string()),
+            &ExecuteMsg::ProposeNewOwner {
+                owner: alice.to_string(),
+                expires_in: 86400,
             },
             &[],
         )
         .unwrap_err();
-    assert_eq!(
-        err.downcast::<ContractError>().unwrap(),
-        ContractError::Unauthorized {}
-    );
+    // common helper returns StdError generic "Unauthorized"
+    let err_str = format!("{err:?}");
+    assert!(err_str.contains("Unauthorized"), "expected Unauthorized, got: {err_str}");
 
-    // Owner transfers to new_owner
+    // Owner proposes new_owner
     helper
         .app
         .execute_contract(
             owner.clone(),
             helper.wrapper.clone(),
-            &ExecuteMsg::UpdateConfig {
-                owner: Some(new_owner.to_string()),
+            &ExecuteMsg::ProposeNewOwner {
+                owner: new_owner.to_string(),
+                expires_in: 86400,
             },
+            &[],
+        )
+        .unwrap();
+
+    // new_owner claims ownership
+    helper
+        .app
+        .execute_contract(
+            new_owner.clone(),
+            helper.wrapper.clone(),
+            &ExecuteMsg::ClaimOwnership {},
             &[],
         )
         .unwrap();

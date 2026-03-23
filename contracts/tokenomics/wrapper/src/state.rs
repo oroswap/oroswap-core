@@ -1,6 +1,8 @@
 use cosmwasm_schema::cw_serde;
 use cw_storage_plus::Item;
 
+use oroswap::common::OwnershipProposal;
+
 /// Contract configuration stored on-chain
 #[cw_serde]
 pub struct Config {
@@ -18,4 +20,19 @@ pub struct Config {
     pub paused: bool,
 }
 
+/// Temporary mint metadata stored between instantiate and reply.
+#[cw_serde]
+pub struct MintMeta {
+    pub subdenom: String,
+    pub decimals: u32,
+    pub uri: Option<String>,
+}
+
 pub const CONFIG: Item<Config> = Item::new("config");
+
+/// Temporary storage for mint metadata used between instantiate and reply.
+/// Removed after the reply handler consumes it.
+pub const MINT_META: Item<MintMeta> = Item::new("mint_meta");
+
+/// Pending ownership proposal created via ProposeNewOwner.
+pub const OWNERSHIP_PROPOSAL: Item<OwnershipProposal> = Item::new("ownership_proposal");

@@ -25,4 +25,7 @@ pub enum ContractError {
 
     #[error("Amount must be greater than zero")]
     ZeroAmount {},
+
+    #[error("Contract can't be migrated!")]
+    MigrationError {},
 }

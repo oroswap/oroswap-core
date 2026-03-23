@@ -48,9 +48,24 @@ pub enum ExecuteMsg {
     /// Resume lock/unlock operations. Owner only.
     Unpause {},
 
-    /// Update the contract owner. Owner only.
-    UpdateConfig { owner: Option<String> },
+    /// Proposes a new owner. The proposed owner must call ClaimOwnership within expires_in seconds.
+    /// Only callable by the current owner.
+    ProposeNewOwner { owner: String, expires_in: u64 },
+
+    /// Removes the pending ownership proposal. Only callable by the current owner.
+    DropOwnershipProposal {},
+
+    /// Claims a pending ownership proposal. Only callable by the proposed new owner.
+    ClaimOwnership {},
+
+    /// Recovers any `lock_denom` tokens that were sent directly to the contract without minting,
+    /// restoring the 1:1 invariant between locked tokens and minted supply. Owner only.
+    RecoverExcess {},
 }
+
+/// Message used to trigger a contract migration.
+#[cw_serde]
+pub struct MigrateMsg {}
 
 /// Query messages for the wrapper contract.
 #[cw_serde]
@@ -61,8 +76,13 @@ pub enum QueryMsg {
     Config {},
 
     /// Returns the total amount of `lock_denom` currently held (locked) in
-    /// the contract, which should always equal the circulating supply of
-    /// `mint_denom` (the 1:1 invariant).
+    /// the contract. NOTE: If users send `lock_denom` directly to the contract
+    /// via a standard bank send, this value will encompass that excess.
+    /// To check the true 1:1 backed invariant, compare this with `MintSupply`.
     #[returns(Uint128)]
     TotalLocked {},
+
+    /// Returns the total circulating supply of the `mint_denom`.
+    #[returns(Uint128)]
+    MintSupply {},
 }

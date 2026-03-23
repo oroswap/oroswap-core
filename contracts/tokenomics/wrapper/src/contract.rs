@@ -1,11 +1,12 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    attr, coin, ensure, to_json_binary, BankMsg, Binary, Coin, CosmosMsg, Deps, DepsMut, Env,
+    attr, coin, ensure, to_json_binary, Addr, BankMsg, Binary, Coin, CosmosMsg, Deps, DepsMut, Env,
     MessageInfo, Reply, Response, StdError, StdResult, SubMsg, Uint128,
 };
 use cw2::set_contract_version;
 use cw_utils::must_pay;
+use oroswap::common::{claim_ownership, drop_ownership_proposal, propose_new_owner};
 
 use oroswap::token_factory::{
     tf_burn_msg, tf_create_denom_msg, tf_mint_msg, MsgCreateDenomResponse,
@@ -15,7 +16,7 @@ use oroswap::token_factory::tf_set_denom_metadata_msg;
 
 use crate::error::ContractError;
 use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
-use crate::state::{Config, CONFIG};
+use crate::state::{Config, MintMeta, CONFIG, MINT_META, OWNERSHIP_PROPOSAL};
 
 /// Contract name used for migration / cw2 version tracking.
 pub const CONTRACT_NAME: &str = env!("CARGO_PKG_NAME");
@@ -115,19 +116,6 @@ pub fn instantiate(
         ]))
 }
 
-/// Temporary mint metadata stored between instantiate and reply.
-use cosmwasm_schema::cw_serde;
-use cw_storage_plus::Item;
-
-#[cw_serde]
-struct MintMeta {
-    subdenom: String,
-    decimals: u32,
-    uri: Option<String>,
-}
-
-const MINT_META: Item<MintMeta> = Item::new("mint_meta");
-
 /// Handle the reply from the ZigChain factory `MsgCreateDenom`.
 ///
 /// Reads the newly-assigned full denom back from the chain response,
@@ -156,6 +144,8 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractEr
                 })?;
 
                 let meta = MINT_META.load(deps.storage)?;
+                // L-1: remove temporary metadata now that it's been consumed
+                MINT_META.remove(deps.storage);
 
                 // On ZigChain, also set human-readable token metadata
                 #[cfg(feature = "zigchain")]
@@ -201,15 +191,37 @@ pub fn execute(
     match msg {
         ExecuteMsg::Lock { receiver } => {
             let recipient = receiver.unwrap_or_else(|| info.sender.to_string());
+            deps.api.addr_validate(&recipient)?;
             execute_lock(deps, env, info, recipient)
         }
         ExecuteMsg::Unlock { receiver } => {
             let recipient = receiver.unwrap_or_else(|| info.sender.to_string());
+            deps.api.addr_validate(&recipient)?;
             execute_unlock(deps, env, info, recipient)
         }
         ExecuteMsg::Pause {} => execute_pause(deps, info),
         ExecuteMsg::Unpause {} => execute_unpause(deps, info),
-        ExecuteMsg::UpdateConfig { owner } => execute_update_config(deps, info, owner),
+        ExecuteMsg::ProposeNewOwner { owner, expires_in } => {
+            let config = CONFIG.load(deps.storage)?;
+            propose_new_owner(deps, info, env, owner, expires_in, Addr::unchecked(&config.owner), OWNERSHIP_PROPOSAL)
+                .map_err(Into::into)
+        }
+        ExecuteMsg::DropOwnershipProposal {} => {
+            let config = CONFIG.load(deps.storage)?;
+            drop_ownership_proposal(deps, info, Addr::unchecked(&config.owner), OWNERSHIP_PROPOSAL)
+                .map_err(Into::into)
+        }
+        ExecuteMsg::ClaimOwnership {} => {
+            claim_ownership(deps, info, env, OWNERSHIP_PROPOSAL, |deps, new_owner| {
+                CONFIG.update::<_, StdError>(deps.storage, |mut v| {
+                    v.owner = new_owner.to_string();
+                    Ok(v)
+                })?;
+                Ok(())
+            })
+            .map_err(Into::into)
+        }
+        ExecuteMsg::RecoverExcess {} => execute_recover_excess(deps, env, info),
     }
 }
 
@@ -321,30 +333,48 @@ fn execute_unpause(deps: DepsMut, info: MessageInfo) -> Result<Response, Contrac
     Ok(Response::new().add_attribute("action", "unpause"))
 }
 
-/// Update owner. Owner only.
-fn execute_update_config(
-    deps: DepsMut,
-    info: MessageInfo,
-    owner: Option<String>,
-) -> Result<Response, ContractError> {
-    let mut config = CONFIG.load(deps.storage)?;
-    if info.sender.to_string() != config.owner {
-        return Err(ContractError::Unauthorized {});
-    }
-    if let Some(new_owner) = owner {
-        deps.api.addr_validate(&new_owner)?;
-        config.owner = new_owner;
-    }
-    CONFIG.save(deps.storage, &config)?;
-    Ok(Response::new().add_attribute("action", "update_config"))
-}
-
 /// Returns an error if the contract is paused.
 fn check_paused(config: &Config) -> Result<(), ContractError> {
     if config.paused {
         return Err(ContractError::ContractPaused {});
     }
     Ok(())
+}
+
+/// Recovers tokens sent directly to the contract. Owner only.
+fn execute_recover_excess(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender.to_string() != config.owner {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    let balance: Uint128 = deps
+        .querier
+        .query_balance(&env.contract.address, &config.lock_denom)?
+        .amount;
+    let supply: Uint128 = deps.querier.query_supply(&config.mint_denom)?.amount;
+
+    if balance <= supply {
+        return Err(StdError::generic_err("No excess tokens to recover").into());
+    }
+
+    let excess = balance - supply;
+    let send_msg: CosmosMsg = BankMsg::Send {
+        to_address: config.owner,
+        amount: vec![coin(excess.u128(), &config.lock_denom)],
+    }
+    .into();
+
+    Ok(Response::new()
+        .add_message(send_msg)
+        .add_attributes([
+            attr("action", "recover_excess"),
+            attr("amount", excess),
+        ]))
 }
 
 // ---------------------------------------------------------------------------
@@ -364,6 +394,11 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
                 .query_balance(&env.contract.address, &config.lock_denom)?
                 .amount;
             to_json_binary(&balance)
+        }
+        QueryMsg::MintSupply {} => {
+            let config = CONFIG.load(deps.storage)?;
+            let supply: Uint128 = deps.querier.query_supply(&config.mint_denom)?.amount;
+            to_json_binary(&supply)
         }
     }
 }
