@@ -4,16 +4,18 @@ use cosmwasm_std::{
 };
 use cw2::set_contract_version;
 use cw20::Cw20ExecuteMsg;
+use cw_utils::must_pay;
+use oroswap::common::{propose_new_owner, drop_ownership_proposal, claim_ownership};
 
 use crate::error::ContractError;
 use crate::msg::{
     AirdropResponse, ConfigResponse, ExecuteMsg,
     InstantiateMsg, LatestAirdropIdResponse, QueryMsg, UserAirdropStatusResponse,
 };
-use crate::state::{Config, AIRDROPS, USER_CLAIMS, CONFIG, ELIGIBILITY, LATEST_AIRDROP_ID, AirdropInfo, UserClaim};
+use crate::state::{Config, AIRDROPS, USER_CLAIMS, CONFIG, ELIGIBILITY, LATEST_AIRDROP_ID, AirdropInfo, UserClaim, OWNERSHIP_PROPOSAL};
 
-const CONTRACT_NAME: &str = "oroswap-airdrop";
-const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const CONTRACT_NAME: &str = "oroswap-airdrop";
+pub const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[entry_point]
 pub fn instantiate(
@@ -45,6 +47,7 @@ pub fn execute(
     match msg {
         ExecuteMsg::AddAirdrop {
             token_address,
+            is_native,
             start_time,
             vesting_start_time,
             vesting_end_time,
@@ -53,8 +56,10 @@ pub fn execute(
             eligibility,
         } => execute_add_airdrop(
             deps,
+            env,
             info,
             token_address,
+            is_native,
             start_time,
             vesting_start_time,
             vesting_end_time,
@@ -66,19 +71,38 @@ pub fn execute(
             execute_toggle_airdrop(deps, info, id, active)
         }
         ExecuteMsg::Claim { airdrop_id } => execute_claim(deps, env, info, airdrop_id),
-        ExecuteMsg::DepositFunds { token_address, amount } => execute_deposit_funds(deps, env, info, token_address, amount),
-        ExecuteMsg::WithdrawFunds { token_address, amount } => execute_withdraw_funds(deps, info, token_address, amount),
-        ExecuteMsg::UpdateConfig { admin } => {
-            execute_update_config(deps, info, admin)
-        },
+        ExecuteMsg::DepositFunds { token_address, amount, is_native } => execute_deposit_funds(deps, env, info, token_address, amount, is_native),
+        ExecuteMsg::WithdrawFunds { token_address, amount, is_native } => execute_withdraw_funds(deps, info, token_address, amount, is_native),
+        ExecuteMsg::ProposeNewOwner { owner, expires_in } => {
+            let config = CONFIG.load(deps.storage)?;
+            propose_new_owner(deps, info, env, owner, expires_in, config.admin, OWNERSHIP_PROPOSAL)
+                .map_err(Into::into)
+        }
+        ExecuteMsg::DropOwnershipProposal {} => {
+            let config = CONFIG.load(deps.storage)?;
+            drop_ownership_proposal(deps, info, config.admin, OWNERSHIP_PROPOSAL)
+                .map_err(Into::into)
+        }
+        ExecuteMsg::ClaimOwnership {} => {
+            claim_ownership(deps, info, env, OWNERSHIP_PROPOSAL, |deps, new_owner| {
+                CONFIG.update::<_, StdError>(deps.storage, |mut v| {
+                    v.admin = new_owner;
+                    Ok(v)
+                })?;
+                Ok(())
+            })
+            .map_err(Into::into)
+        }
         ExecuteMsg::UpdateEligibility { airdrop_id, eligibility } => execute_update_eligibility(deps, env, info, airdrop_id, eligibility)
     }
 }
 
 pub fn execute_add_airdrop(
     deps: DepsMut,
+    env: Env,
     info: MessageInfo,
     token_address: String,
+    is_native: bool,
     start_time: u64,
     vesting_start_time: u64,
     vesting_end_time: u64,
@@ -108,6 +132,13 @@ pub fn execute_add_airdrop(
         )));
     }
 
+    // L-2: Validate start_time is not in the past
+    if start_time < env.block.time.seconds() {
+        return Err(ContractError::Std(cosmwasm_std::StdError::generic_err(
+            "start_time must be >= current block time",
+        )));
+    }
+
     let airdrop_id = LATEST_AIRDROP_ID.load(deps.storage)? + 1;
     LATEST_AIRDROP_ID.save(deps.storage, &airdrop_id)?;
 
@@ -123,6 +154,7 @@ pub fn execute_add_airdrop(
             initial_claim_percent,
             apy_bonus_bps,
             is_active: true,
+            is_native,
         },
     )?;
 
@@ -190,6 +222,11 @@ pub fn execute_claim(
         .may_load(deps.storage, (airdrop_id, &info.sender))?
         .ok_or(ContractError::NotEligible {})?;
 
+    // L-4: Reject zero-eligible users
+    if amount_eligible.is_zero() {
+        return Err(ContractError::NotEligible {});
+    }
+
     // 1. Initial Portion (e.g. 40%)
     let initial_payout = amount_eligible.multiply_ratio(airdrop.initial_claim_percent, 100u128);
 
@@ -208,7 +245,7 @@ pub fn execute_claim(
             
             // 3. APY Bonus - ONLY if claiming at or after vesting_end_time
             if current_time >= airdrop.vesting_end_time {
-                bonus = Uint128::from(vesting_base.u128() * airdrop.apy_bonus_bps as u128 / 10000);
+                bonus = vesting_base.multiply_ratio(airdrop.apy_bonus_bps, 10000u64);
             }
         }
     }
@@ -228,7 +265,7 @@ pub fn execute_claim(
 
     let mut messages: Vec<CosmosMsg> = vec![];
     if !total_payout.is_zero() {
-        let msg: CosmosMsg = if airdrop.token_address.contains('.') || airdrop.token_address.len() < 20 {
+        let msg: CosmosMsg = if airdrop.is_native {
             cosmwasm_std::BankMsg::Send {
                 to_address: info.sender.to_string(),
                 amount: vec![cosmwasm_std::Coin {
@@ -266,26 +303,26 @@ pub fn execute_deposit_funds(
     info: MessageInfo,
     token_address: String,
     amount: Uint128,
+    is_native: bool,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
     if info.sender != config.admin {
         return Err(ContractError::Unauthorized {});
     }
 
-    if token_address.contains('.') || token_address.len() < 20 {
-        // Native token: verify that the funds were sent with the message
-        let coin = info
-            .funds
-            .iter()
-            .find(|c| c.denom == token_address && c.amount == amount)
-            .ok_or(ContractError::Std(cosmwasm_std::StdError::generic_err(
-                "Correct native funds not sent",
-            )))?;
+    if is_native {
+        // M-5: Use must_pay to enforce exactly one coin of the correct denom
+        let paid = must_pay(&info, &token_address)?;
+        if paid != amount {
+            return Err(ContractError::Std(cosmwasm_std::StdError::generic_err(
+                format!("Expected {} but received {}", amount, paid),
+            )));
+        }
         
         Ok(Response::new()
             .add_attribute("action", "deposit_funds")
             .add_attribute("token_address", token_address)
-            .add_attribute("amount", coin.amount))
+            .add_attribute("amount", amount))
     } else {
         // CW20 token: use TransferFrom (requires allowance)
         let transfer_msg = WasmMsg::Execute {
@@ -311,13 +348,14 @@ pub fn execute_withdraw_funds(
     info: MessageInfo,
     token_address: String,
     amount: Uint128,
+    is_native: bool,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
     if info.sender != config.admin {
         return Err(ContractError::Unauthorized {});
     }
 
-    let msg: CosmosMsg = if token_address.contains('.') || token_address.len() < 20 {
+    let msg: CosmosMsg = if is_native {
         // Native token
         cosmwasm_std::BankMsg::Send {
             to_address: info.sender.to_string(),
@@ -345,23 +383,7 @@ pub fn execute_withdraw_funds(
         .add_attribute("amount", amount))
 }
 
-pub fn execute_update_config(
-    deps: DepsMut,
-    info: MessageInfo,
-    admin: Option<String>,
-) -> Result<Response, ContractError> {
-    let mut config = CONFIG.load(deps.storage)?;
-    if info.sender != config.admin {
-        return Err(ContractError::Unauthorized {});
-    }
 
-    if let Some(admin) = admin {
-        config.admin = deps.api.addr_validate(&admin)?;
-    }
-    CONFIG.save(deps.storage, &config)?;
-
-    Ok(Response::new().add_attribute("action", "update_config"))
-}
 
 pub fn execute_update_eligibility(
     deps: DepsMut,
@@ -422,6 +444,7 @@ fn query_airdrop(deps: Deps, id: u64) -> StdResult<AirdropResponse> {
         initial_claim_percent: airdrop.initial_claim_percent,
         apy_bonus_bps: airdrop.apy_bonus_bps,
         is_active: airdrop.is_active,
+        is_native: airdrop.is_native,
     })
 }
 
@@ -492,7 +515,7 @@ fn query_user_airdrop_status(deps: Deps, env: Env, id: u64, address: String) -> 
     } else {
         // Vesting completed
         unlocked_vesting = vesting_base;
-        bonus = Uint128::from(vesting_base.u128() * airdrop.apy_bonus_bps as u128 / 10000);
+        bonus = vesting_base.multiply_ratio(airdrop.apy_bonus_bps, 10000u64);
         vesting_status = "completed".to_string();
     }
 

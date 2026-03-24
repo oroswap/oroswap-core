@@ -2,6 +2,7 @@ use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
 use cosmwasm_std::{from_json, Uint128, BankMsg, CosmosMsg};
 
 use crate::contract::{execute, instantiate, query};
+use crate::ContractError;
 use crate::msg::{
     ConfigResponse, ExecuteMsg, InstantiateMsg, QueryMsg,
     AirdropResponse, UserAirdropStatusResponse,
@@ -37,6 +38,7 @@ fn test_single_claim_timeline() {
 
     let msg = ExecuteMsg::AddAirdrop {
         token_address: "native.oro".to_string(),
+        is_native: true,
         start_time,
         vesting_start_time,
         vesting_end_time,
@@ -109,6 +111,7 @@ fn test_multi_season() {
     // Season 1
     let msg = ExecuteMsg::AddAirdrop {
         token_address: "oro1".to_string(),
+        is_native: true,
         start_time: now,
         vesting_start_time: now,
         vesting_end_time: now + 1000,
@@ -121,6 +124,7 @@ fn test_multi_season() {
     // Season 2
     let msg = ExecuteMsg::AddAirdrop {
         token_address: "oro2".to_string(),
+        is_native: true,
         start_time: now,
         vesting_start_time: now,
         vesting_end_time: now + 1000,
@@ -155,6 +159,7 @@ fn test_admin_toggle() {
     let now = mock_env().block.time.seconds();
     let msg = ExecuteMsg::AddAirdrop {
         token_address: "native.oro".to_string(),
+        is_native: true,
         start_time: now,
         vesting_start_time: now,
         vesting_end_time: now + 1000,
@@ -199,6 +204,7 @@ fn test_user_airdrop_status_query() {
 
     let msg = ExecuteMsg::AddAirdrop {
         token_address: "native.oro".to_string(),
+        is_native: true,
         start_time,
         vesting_start_time,
         vesting_end_time,
@@ -275,4 +281,197 @@ fn test_user_airdrop_status_query() {
     assert_eq!(res.total_allocation, Uint128::zero());
     assert_eq!(res.current_claimable, Uint128::zero());
     assert_eq!(res.is_claimed, false);
+}
+
+#[test]
+fn test_ibc_and_cw20_handling() {
+    let mut deps = mock_dependencies();
+    let msg = InstantiateMsg { admin: "admin".to_string() };
+    instantiate(deps.as_mut(), mock_env(), mock_info("creator", &[]), msg).unwrap();
+
+    let now = mock_env().block.time.seconds();
+    
+    // 1. IBC Denom
+    let ibc_denom = "ibc/F1073E5895A25347EF10A7B50783D3048882726895AEE1176C498C45D0576F2B".to_string();
+    let msg = ExecuteMsg::AddAirdrop {
+        token_address: ibc_denom.clone(),
+        is_native: true, // Crucial: C-1 fix in action
+        start_time: now,
+        vesting_start_time: now,
+        vesting_end_time: now + 1000,
+        initial_claim_percent: 100,
+        apy_bonus_bps: 0,
+        eligibility: vec![("user1".to_string(), Uint128::new(1000))],
+    };
+    execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
+
+    // Claim IBC token
+    let res = execute(deps.as_mut(), mock_env(), mock_info("user1", &[]), ExecuteMsg::Claim { airdrop_id: 1 }).unwrap();
+    assert_eq!(res.messages.len(), 1);
+    if let CosmosMsg::Bank(BankMsg::Send { to_address, amount }) = &res.messages[0].msg {
+        assert_eq!(to_address, "user1");
+        assert_eq!(amount[0].denom, ibc_denom);
+    } else { panic!("Expected BankMsg::Send for IBC denom"); }
+
+    // 2. CW20 Token
+    let cw20_address = "wasm1cw20tokenaddress".to_string();
+    let msg = ExecuteMsg::AddAirdrop {
+        token_address: cw20_address.clone(),
+        is_native: false, // Treat as CW20
+        start_time: now,
+        vesting_start_time: now,
+        vesting_end_time: now + 1000,
+        initial_claim_percent: 100,
+        apy_bonus_bps: 0,
+        eligibility: vec![("user2".to_string(), Uint128::new(1000))],
+    };
+    execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
+
+    // Claim CW20 token
+    let res = execute(deps.as_mut(), mock_env(), mock_info("user2", &[]), ExecuteMsg::Claim { airdrop_id: 2 }).unwrap();
+    assert_eq!(res.messages.len(), 1);
+    if let CosmosMsg::Wasm(cosmwasm_std::WasmMsg::Execute { contract_addr, msg, .. }) = &res.messages[0].msg {
+        assert_eq!(contract_addr, &cw20_address);
+        // Verify it's a Transfer msg
+        let transfer_msg: cw20::Cw20ExecuteMsg = from_json(msg).unwrap();
+        match transfer_msg {
+            cw20::Cw20ExecuteMsg::Transfer { recipient, amount } => {
+                assert_eq!(recipient, "user2");
+                assert_eq!(amount, Uint128::new(1000));
+            },
+            _ => panic!("Expected Transfer message"),
+        }
+    } else { panic!("Expected WasmMsg::Execute for CW20"); }
+}
+
+#[test]
+fn test_deposit_and_withdraw() {
+    let mut deps = mock_dependencies();
+    let msg = InstantiateMsg { admin: "admin".to_string() };
+    instantiate(deps.as_mut(), mock_env(), mock_info("creator", &[]), msg).unwrap();
+
+    let denom = "native.oro".to_string();
+    let amount = Uint128::new(5000);
+
+    // Deposit Native (success)
+    let info = mock_info("admin", &[cosmwasm_std::Coin { denom: denom.clone(), amount }]);
+    let msg = ExecuteMsg::DepositFunds { token_address: denom.clone(), amount, is_native: true };
+    execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+    // Deposit Native with wrong funds (M-5 fix)
+    let info_wrong = mock_info("admin", &[
+        cosmwasm_std::Coin { denom: denom.clone(), amount },
+        cosmwasm_std::Coin { denom: "other".to_string(), amount: Uint128::new(100) } // Extra funds!
+    ]);
+    let msg = ExecuteMsg::DepositFunds { token_address: denom.clone(), amount, is_native: true };
+    let err = execute(deps.as_mut(), mock_env(), info_wrong, msg).unwrap_err();
+    match err {
+        ContractError::PaymentError(cw_utils::PaymentError::MultipleDenoms {}) => {}
+        _ => panic!("Expected MultipleDenoms error, got: {:?}", err),
+    }
+
+    // Withdraw Native
+    let msg = ExecuteMsg::WithdrawFunds { token_address: denom.clone(), amount: Uint128::new(2000), is_native: true };
+    let res = execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
+    assert_eq!(res.messages.len(), 1);
+    if let CosmosMsg::Bank(BankMsg::Send { amount, .. }) = &res.messages[0].msg {
+        assert_eq!(amount[0].amount, Uint128::new(2000));
+    } else { panic!("Expected BankMsg::Send"); }
+
+    // Deposit CW20
+    let cw20_address = "wasm1cw20".to_string();
+    let msg = ExecuteMsg::DepositFunds { token_address: cw20_address.clone(), amount: Uint128::new(3000), is_native: false };
+    let res = execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
+    assert_eq!(res.messages.len(), 1);
+    if let CosmosMsg::Wasm(cosmwasm_std::WasmMsg::Execute { contract_addr, msg, .. }) = &res.messages[0].msg {
+        assert_eq!(contract_addr, &cw20_address);
+        let transfer_from: cw20::Cw20ExecuteMsg = from_json(msg).unwrap();
+        match transfer_from {
+            cw20::Cw20ExecuteMsg::TransferFrom { owner, recipient, amount: amt } => {
+                assert_eq!(owner, "admin");
+                assert_eq!(recipient, mock_env().contract.address);
+                assert_eq!(amt, Uint128::new(3000));
+            },
+            _ => panic!("Expected TransferFrom message"),
+        }
+    } else { panic!("Expected WasmMsg::Execute"); }
+}
+
+#[test]
+fn test_update_eligibility_and_zero_claim() {
+    let mut deps = mock_dependencies();
+    instantiate(deps.as_mut(), mock_env(), mock_info("creator", &[]), InstantiateMsg { admin: "admin".to_string() }).unwrap();
+
+    let now = mock_env().block.time.seconds();
+    let msg = ExecuteMsg::AddAirdrop {
+        token_address: "native.oro".to_string(),
+        is_native: true,
+        start_time: now + 100, // Starts in future
+        vesting_start_time: now + 100,
+        vesting_end_time: now + 1000,
+        initial_claim_percent: 100,
+        apy_bonus_bps: 0,
+        eligibility: vec![], // Empty initially
+    };
+    execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
+
+    // Update eligibility in batches
+    let msg = ExecuteMsg::UpdateEligibility {
+        airdrop_id: 1,
+        eligibility: vec![("user1".to_string(), Uint128::new(1000))],
+    };
+    execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
+
+    let msg = ExecuteMsg::UpdateEligibility {
+        airdrop_id: 1,
+        // user2 gets 0 (L-4 test)
+        eligibility: vec![("user2".to_string(), Uint128::zero())],
+    };
+    execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
+
+    // Move to start time
+    let mut env_start = mock_env();
+    env_start.block.time = env_start.block.time.plus_seconds(100);
+
+    // Normal claim
+    execute(deps.as_mut(), env_start.clone(), mock_info("user1", &[]), ExecuteMsg::Claim { airdrop_id: 1 }).unwrap();
+
+    // Zero eligible claim (L-4 fix) should fail with NotEligible
+    let err = execute(deps.as_mut(), env_start.clone(), mock_info("user2", &[]), ExecuteMsg::Claim { airdrop_id: 1 }).unwrap_err();
+    assert!(format!("{}", err).contains("Not eligible"));
+}
+
+#[test]
+fn test_edge_cases_and_unauthorized() {
+    let mut deps = mock_dependencies();
+    instantiate(deps.as_mut(), mock_env(), mock_info("creator", &[]), InstantiateMsg { admin: "admin".to_string() }).unwrap();
+
+    let now = mock_env().block.time.seconds();
+    
+    // Unauthorized action
+    let msg = ExecuteMsg::ToggleAirdrop { id: 1, active: false };
+    let err = execute(deps.as_mut(), mock_env(), mock_info("user", &[]), msg).unwrap_err();
+    assert!(format!("{}", err).contains("Unauthorized"));
+
+    // Edge case: initial_claim_percent = 0, and large apy_bonus_bps (H-1 fix test)
+    let msg = ExecuteMsg::AddAirdrop {
+        token_address: "native.oro".to_string(),
+        is_native: true,
+        start_time: now,
+        vesting_start_time: now,
+        vesting_end_time: now + 1000,
+        initial_claim_percent: 0, // 0% initial
+        apy_bonus_bps: 1_000_000_000, // Huuuuge bonus, would overflow u128 if not using multiply_ratio!
+        eligibility: vec![("user1".to_string(), Uint128::MAX)], // Max allocation to force overflow bounds
+    };
+    // Should pass AddAirdrop without panicking
+    execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
+
+    // Claim at start time (should get 0 because 0% initial and vesting hasn't elapsed)
+    let msg = ExecuteMsg::Claim { airdrop_id: 1 };
+    let res = execute(deps.as_mut(), mock_env(), mock_info("user1", &[]), msg).unwrap();
+    // Claiming 0 doesn't send messages
+    assert_eq!(res.messages.len(), 0);
+    let total_attr = res.attributes.iter().find(|a| a.key == "total_payout").unwrap();
+    assert_eq!(total_attr.value, "0");
 }
