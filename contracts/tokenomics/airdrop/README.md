@@ -10,6 +10,7 @@ This contract manages token airdrops with a configurable vesting schedule and an
 - **Linear Vesting**: Vested tokens unlock linearly over a configurable duration.
 - **APY Bonus**: Tokens held in the vesting pool accrue an APY-based bonus, calculated on the remaining principal.
 - **Multi-Token Support**: Supports native and TokenFactory denoms.
+- **Optional Expiry**: Admins can set an `expiry_time`. After this deadline, claims are blocked, preventing tokens from being locked indefinitely.
 
 ## ExecuteMsg
 
@@ -28,7 +29,8 @@ Admin only. Creates a new airdrop record with specific eligibility and vesting r
     "eligibility": [
       ["addr1...", "1000000000"],
       ["addr2...", "2000000000"]
-    ]
+    ],
+    "expiry_time": 1720000000
   }
 }
 ```

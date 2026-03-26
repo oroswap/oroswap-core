@@ -34,6 +34,9 @@ pub enum ContractError {
     #[error("Airdrop already started")]
     AirdropAlreadyStarted {},
 
+    #[error("Airdrop has expired")]
+    AirdropExpired {},
+
     #[error("Contract name mismatch during migration")]
     MigrationError {},
 }

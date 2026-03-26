@@ -54,6 +54,7 @@ pub fn execute(
             initial_claim_percent,
             apy_bonus_bps,
             eligibility,
+            expiry_time,
         } => execute_add_airdrop(
             deps,
             env,
@@ -66,6 +67,7 @@ pub fn execute(
             initial_claim_percent,
             apy_bonus_bps,
             eligibility,
+            expiry_time,
         ),
         ExecuteMsg::ToggleAirdrop { id, active } => {
             execute_toggle_airdrop(deps, info, id, active)
@@ -109,6 +111,7 @@ pub fn execute_add_airdrop(
     initial_claim_percent: u64,
     apy_bonus_bps: u64,
     eligibility: Vec<(String, Uint128)>,
+    expiry_time: Option<u64>,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
     if info.sender != config.admin {
@@ -138,6 +141,14 @@ pub fn execute_add_airdrop(
             "start_time must be >= current block time",
         )));
     }
+    
+    if let Some(expiry) = expiry_time {
+        if expiry <= vesting_end_time {
+            return Err(ContractError::Std(cosmwasm_std::StdError::generic_err(
+                "expiry_time must be > vesting_end_time",
+            )));
+        }
+    }
 
     let airdrop_id = LATEST_AIRDROP_ID.load(deps.storage)? + 1;
     LATEST_AIRDROP_ID.save(deps.storage, &airdrop_id)?;
@@ -155,6 +166,7 @@ pub fn execute_add_airdrop(
             apy_bonus_bps,
             is_active: true,
             is_native,
+            expiry_time,
         },
     )?;
 
@@ -211,6 +223,12 @@ pub fn execute_claim(
 
     if !airdrop.is_active {
         return Err(ContractError::AirdropInactive {});
+    }
+
+    if let Some(expiry) = airdrop.expiry_time {
+        if current_time >= expiry {
+            return Err(ContractError::AirdropExpired {});
+        }
     }
 
     // Single claim check
@@ -445,6 +463,7 @@ fn query_airdrop(deps: Deps, id: u64) -> StdResult<AirdropResponse> {
         apy_bonus_bps: airdrop.apy_bonus_bps,
         is_active: airdrop.is_active,
         is_native: airdrop.is_native,
+        expiry_time: airdrop.expiry_time,
     })
 }
 
@@ -491,6 +510,19 @@ fn query_user_airdrop_status(deps: Deps, env: Env, id: u64, address: String) -> 
             claim_time: None,
             vesting_status: "not_started".to_string(),
         });
+    }
+
+    if let Some(expiry) = airdrop.expiry_time {
+        if current_time >= expiry {
+            return Ok(UserAirdropStatusResponse {
+                total_allocation,
+                current_claimable: Uint128::zero(),
+                is_claimed: false,
+                amount_claimed: Uint128::zero(),
+                claim_time: None,
+                vesting_status: "expired".to_string(),
+            });
+        }
     }
 
     // Initial portion (e.g. 40%)

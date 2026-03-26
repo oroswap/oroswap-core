@@ -20,6 +20,7 @@ pub struct AirdropInfo {
     pub is_active: bool,
     /// true = native/IBC denom, false = CW20 contract (C-1 fix)
     pub is_native: bool,
+    pub expiry_time: Option<u64>,
 }
 
 #[cw_serde]

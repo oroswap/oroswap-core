@@ -49,6 +49,7 @@ fn test_single_claim_timeline() {
             ("user2".to_string(), Uint128::new(1000)),
             ("user3".to_string(), Uint128::new(1000)),
         ],
+        expiry_time: None,
     };
     execute(deps.as_mut(), env.clone(), mock_info("admin", &[]), msg).unwrap();
 
@@ -118,6 +119,7 @@ fn test_multi_season() {
         initial_claim_percent: 100, // 100% immediate for simplicity
         apy_bonus_bps: 0,
         eligibility: vec![("user".to_string(), Uint128::new(500))],
+        expiry_time: None,
     };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
@@ -131,6 +133,7 @@ fn test_multi_season() {
         initial_claim_percent: 50,
         apy_bonus_bps: 0,
         eligibility: vec![("user".to_string(), Uint128::new(1000))],
+        expiry_time: None,
     };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
@@ -166,6 +169,7 @@ fn test_admin_toggle() {
         initial_claim_percent: 100,
         apy_bonus_bps: 0,
         eligibility: vec![("user".to_string(), Uint128::new(1000))],
+        expiry_time: None,
     };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
@@ -213,6 +217,7 @@ fn test_user_airdrop_status_query() {
         eligibility: vec![
             ("user1".to_string(), Uint128::new(1000)),
         ],
+        expiry_time: None,
     };
     execute(deps.as_mut(), env.clone(), mock_info("admin", &[]), msg).unwrap();
 
@@ -302,6 +307,7 @@ fn test_ibc_and_cw20_handling() {
         initial_claim_percent: 100,
         apy_bonus_bps: 0,
         eligibility: vec![("user1".to_string(), Uint128::new(1000))],
+        expiry_time: None,
     };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
@@ -324,6 +330,7 @@ fn test_ibc_and_cw20_handling() {
         initial_claim_percent: 100,
         apy_bonus_bps: 0,
         eligibility: vec![("user2".to_string(), Uint128::new(1000))],
+        expiry_time: None,
     };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
@@ -412,6 +419,7 @@ fn test_update_eligibility_and_zero_claim() {
         initial_claim_percent: 100,
         apy_bonus_bps: 0,
         eligibility: vec![], // Empty initially
+        expiry_time: None,
     };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
@@ -463,6 +471,7 @@ fn test_edge_cases_and_unauthorized() {
         initial_claim_percent: 0, // 0% initial
         apy_bonus_bps: 1_000_000_000, // Huuuuge bonus, would overflow u128 if not using multiply_ratio!
         eligibility: vec![("user1".to_string(), Uint128::MAX)], // Max allocation to force overflow bounds
+        expiry_time: None,
     };
     // Should pass AddAirdrop without panicking
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
@@ -474,4 +483,58 @@ fn test_edge_cases_and_unauthorized() {
     assert_eq!(res.messages.len(), 0);
     let total_attr = res.attributes.iter().find(|a| a.key == "total_payout").unwrap();
     assert_eq!(total_attr.value, "0");
+}
+
+#[test]
+fn test_airdrop_expiry() {
+    let mut deps = mock_dependencies();
+    instantiate(deps.as_mut(), mock_env(), mock_info("creator", &[]), InstantiateMsg { admin: "admin".to_string() }).unwrap();
+
+    let now = mock_env().block.time.seconds();
+    let expiry_time = now + 1500;
+    
+    let msg = ExecuteMsg::AddAirdrop {
+        token_address: "native.oro".to_string(),
+        is_native: true,
+        start_time: now,
+        vesting_start_time: now,
+        vesting_end_time: now + 1000,
+        initial_claim_percent: 100,
+        apy_bonus_bps: 0,
+        eligibility: vec![("user1".to_string(), Uint128::new(1000))],
+        expiry_time: Some(expiry_time),
+    };
+    execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
+
+    // 1. Claim before expiry should succeed
+    let mut env_before = mock_env();
+    env_before.block.time = env_before.block.time.plus_seconds(400);
+    execute(deps.as_mut(), env_before.clone(), mock_info("user1", &[]), ExecuteMsg::Claim { airdrop_id: 1 }).unwrap();
+
+    // 2. Add another airdrop for user2 that will expire
+    let msg = ExecuteMsg::AddAirdrop {
+        token_address: "native.oro".to_string(),
+        is_native: true,
+        start_time: now,
+        vesting_start_time: now,
+        vesting_end_time: now + 1000,
+        initial_claim_percent: 100,
+        apy_bonus_bps: 0,
+        eligibility: vec![("user2".to_string(), Uint128::new(1000))],
+        expiry_time: Some(expiry_time),
+    };
+    execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
+
+    // 3. Claim after expiry should fail
+    let mut env_after = mock_env();
+    env_after.block.time = env_after.block.time.plus_seconds(1501);
+    let err = execute(deps.as_mut(), env_after.clone(), mock_info("user2", &[]), ExecuteMsg::Claim { airdrop_id: 2 }).unwrap_err();
+    assert!(format!("{}", err).to_lowercase().contains("expired"));
+
+    // 4. Query status after expiry should show "expired"
+    let res: UserAirdropStatusResponse = from_json(
+        &query(deps.as_ref(), env_after.clone(), QueryMsg::UserAirdropStatus { id: 2, address: "user2".to_string() }).unwrap()
+    ).unwrap();
+    assert_eq!(res.vesting_status, "expired");
+    assert_eq!(res.current_claimable, Uint128::zero());
 }

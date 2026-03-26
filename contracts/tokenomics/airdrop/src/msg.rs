@@ -18,6 +18,7 @@ pub enum ExecuteMsg {
         initial_claim_percent: u64,
         apy_bonus_bps: u64,
         eligibility: Vec<(String, Uint128)>,
+        expiry_time: Option<u64>,
     },
     ToggleAirdrop {
         id: u64,
@@ -81,6 +82,7 @@ pub struct AirdropResponse {
     pub apy_bonus_bps: u64,
     pub is_active: bool,
     pub is_native: bool,
+    pub expiry_time: Option<u64>,
 }
 
 
