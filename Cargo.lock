@@ -2265,6 +2265,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "oroswap-revenue-router"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "cosmwasm-schema 1.5.11",
+ "cosmwasm-std 1.5.11",
+ "cw-storage-plus",
+ "cw2",
+ "schemars",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "oroswap-router"
 version = "1.1.0"
 dependencies = [
