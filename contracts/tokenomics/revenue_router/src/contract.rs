@@ -1,15 +1,18 @@
 use cosmwasm_std::{
     attr, coin, entry_point, to_json_binary, BankMsg, Binary, CosmosMsg, Deps, DepsMut, Env,
-    MessageInfo, Response, StdResult, Uint128,
+    MessageInfo, Response, StdResult, Uint128, SubMsg, Reply,
 };
+pub const BRIDGE_REPLY_ID: u64 = 1;
 use cw2::set_contract_version;
+use cosmwasm_std::StdError;
+use oroswap::common::{propose_new_owner, drop_ownership_proposal, claim_ownership};
 
 use crate::error::ContractError;
 use crate::msg::{
     BalanceResponse, ConfigResponse, ExecuteMsg, InstantiateMsg, KeepersResponse, MigrateMsg,
     QueryMsg,
 };
-use crate::state::{Config, CONFIG, DEFAULT_IBC_TIMEOUT_SECS};
+use crate::state::{Config, CONFIG, DEFAULT_IBC_TIMEOUT_SECS, OWNERSHIP_PROPOSAL, KEEPERS, MAX_IBC_TIMEOUT_SECS};
 
 const CONTRACT_NAME: &str = "oroswap-revenue-router";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -25,15 +28,17 @@ pub fn instantiate(
 ) -> Result<Response, ContractError> {
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
+    let ibc_timeout_secs = msg.ibc_timeout_secs.unwrap_or(DEFAULT_IBC_TIMEOUT_SECS);
+    if ibc_timeout_secs > MAX_IBC_TIMEOUT_SECS {
+        return Err(ContractError::InvalidTimeout {});
+    }
+
     let cfg = Config {
         owner: deps.api.addr_validate(&msg.owner)?,
         usdc_denom: msg.usdc_denom.clone(),
-        dest_chain_id: msg.dest_chain_id.clone(),
-        dest_usdc_denom: msg.dest_usdc_denom.clone(),
-        dest_receiver: msg.dest_receiver.clone(),
         ibc_channel: msg.ibc_channel.clone(),
-        ibc_timeout_secs: msg.ibc_timeout_secs.unwrap_or(DEFAULT_IBC_TIMEOUT_SECS),
-        keepers: vec![],
+        ibc_timeout_secs,
+        paused: false,
     };
 
     CONFIG.save(deps.storage, &cfg)?;
@@ -42,7 +47,6 @@ pub fn instantiate(
         attr("action", "instantiate"),
         attr("owner", &msg.owner),
         attr("usdc_denom", &msg.usdc_denom),
-        attr("dest_chain_id", &msg.dest_chain_id),
         attr("ibc_channel", &msg.ibc_channel),
     ]))
 }
@@ -61,18 +65,34 @@ pub fn execute(
             bridge_usdc(deps, env, info, amount, memo, receiver)
         }
         ExecuteMsg::UpdateConfig {
-            owner,
             usdc_denom,
-            dest_chain_id,
-            dest_usdc_denom,
-            dest_receiver,
             ibc_channel,
             ibc_timeout_secs,
         } => update_config(
-            deps, info, owner, usdc_denom, dest_chain_id, dest_usdc_denom,
-            dest_receiver, ibc_channel, ibc_timeout_secs,
+            deps, env, info, usdc_denom, ibc_channel, ibc_timeout_secs,
         ),
+        ExecuteMsg::SetPaused { paused } => set_paused(deps, info, paused),
         ExecuteMsg::AddKeeper { keeper } => add_keeper(deps, info, keeper),
+        ExecuteMsg::ProposeNewOwner { owner, expires_in } => {
+            let config = CONFIG.load(deps.storage)?;
+            propose_new_owner(deps, info, env, owner, expires_in, config.owner, OWNERSHIP_PROPOSAL)
+                .map_err(Into::into)
+        }
+        ExecuteMsg::DropOwnershipProposal {} => {
+            let config = CONFIG.load(deps.storage)?;
+            drop_ownership_proposal(deps, info, config.owner, OWNERSHIP_PROPOSAL)
+                .map_err(Into::into)
+        }
+        ExecuteMsg::ClaimOwnership {} => {
+            claim_ownership(deps, info, env, OWNERSHIP_PROPOSAL, |deps, new_owner| {
+                CONFIG.update::<_, StdError>(deps.storage, |mut v| {
+                    v.owner = new_owner;
+                    Ok(v)
+                })?;
+                Ok(())
+            })
+            .map_err(Into::into)
+        }
         ExecuteMsg::RemoveKeeper { keeper } => remove_keeper(deps, info, keeper),
         ExecuteMsg::EmergencyWithdraw { denom, amount, recipient } => {
             emergency_withdraw(deps, env, info, denom, amount, recipient)
@@ -95,7 +115,10 @@ fn bridge_usdc(
     receiver: String,
 ) -> Result<Response, ContractError> {
     let cfg = CONFIG.load(deps.storage)?;
-    only_keeper_or_owner(&cfg, &info)?;
+    if cfg.paused {
+        return Err(ContractError::Paused {});
+    }
+    only_keeper_or_owner(&cfg, deps.as_ref(), &info)?;
 
     let balance = usdc_balance(&deps.as_ref(), &env, &cfg.usdc_denom)?;
     if balance.is_zero() {
@@ -118,7 +141,10 @@ fn bridge_usdc(
     // cosmwasm-std 1.5 IbcMsg::Transfer has no memo field, so we use
     // CosmosMsg::Stargate to encode ibc.applications.transfer.v1.MsgTransfer
     // directly — this is the only way to pass the Skip PFM memo.
-    let timeout_nanos = env.block.time.nanos() + cfg.ibc_timeout_secs * 1_000_000_000;
+    let timeout_nanos = cfg.ibc_timeout_secs
+        .checked_mul(1_000_000_000)
+        .and_then(|ns| env.block.time.nanos().checked_add(ns))
+        .ok_or_else(|| ContractError::Std(StdError::generic_err("timeout overflow")))?;
     let msg = stargate_ibc_transfer(
         &env.contract.address.to_string(),
         &cfg.ibc_channel,
@@ -129,26 +155,24 @@ fn bridge_usdc(
         &memo,
     );
 
+    let sub_msg = SubMsg::reply_on_error(msg, BRIDGE_REPLY_ID);
+
     Ok(Response::new()
-        .add_message(msg)
+        .add_submessage(sub_msg)
         .add_attributes([
             attr("action", "bridge_usdc"),
+            attr("keeper", info.sender.to_string()),
             attr("amount", bridge_amount),
             attr("channel", &cfg.ibc_channel),
-            attr("receiver", &receiver),
-            attr("dest_chain_id", &cfg.dest_chain_id),
+            attr("first_hop_receiver", &receiver),
         ]))
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update_config(
     deps: DepsMut,
+    env: Env,
     info: MessageInfo,
-    owner: Option<String>,
     usdc_denom: Option<String>,
-    dest_chain_id: Option<String>,
-    dest_usdc_denom: Option<String>,
-    dest_receiver: Option<String>,
     ibc_channel: Option<String>,
     ibc_timeout_secs: Option<u64>,
 ) -> Result<Response, ContractError> {
@@ -156,34 +180,47 @@ fn update_config(
     if info.sender != cfg.owner {
         return Err(ContractError::Unauthorized {});
     }
-    if let Some(v) = owner        { cfg.owner = deps.api.addr_validate(&v)?; }
-    if let Some(v) = usdc_denom   { cfg.usdc_denom = v; }
-    if let Some(v) = dest_chain_id { cfg.dest_chain_id = v; }
-    if let Some(v) = dest_usdc_denom { cfg.dest_usdc_denom = v; }
-    if let Some(v) = dest_receiver { cfg.dest_receiver = v; }
+    if let Some(v) = usdc_denom { 
+        let old_balance = usdc_balance(&deps.as_ref(), &env, &cfg.usdc_denom)?;
+        if !old_balance.is_zero() {
+            return Err(ContractError::StrandedBalance {});
+        }
+        cfg.usdc_denom = v; 
+    }
     if let Some(v) = ibc_channel  { cfg.ibc_channel = v; }
-    if let Some(v) = ibc_timeout_secs { cfg.ibc_timeout_secs = v; }
+    if let Some(v) = ibc_timeout_secs {
+        if v > MAX_IBC_TIMEOUT_SECS { return Err(ContractError::InvalidTimeout {}); }
+        cfg.ibc_timeout_secs = v;
+    }
     CONFIG.save(deps.storage, &cfg)?;
     Ok(Response::new().add_attribute("action", "update_config"))
 }
 
-fn add_keeper(deps: DepsMut, info: MessageInfo, keeper: String) -> Result<Response, ContractError> {
+fn set_paused(deps: DepsMut, info: MessageInfo, paused: bool) -> Result<Response, ContractError> {
     let mut cfg = CONFIG.load(deps.storage)?;
     if info.sender != cfg.owner { return Err(ContractError::Unauthorized {}); }
-    let addr = deps.api.addr_validate(&keeper)?;
-    if !cfg.keepers.contains(&addr) { cfg.keepers.push(addr); }
+    cfg.paused = paused;
     CONFIG.save(deps.storage, &cfg)?;
+    Ok(Response::new()
+        .add_attribute("action", "set_paused")
+        .add_attribute("paused", paused.to_string()))
+}
+
+fn add_keeper(deps: DepsMut, info: MessageInfo, keeper: String) -> Result<Response, ContractError> {
+    let cfg = CONFIG.load(deps.storage)?;
+    if info.sender != cfg.owner { return Err(ContractError::Unauthorized {}); }
+    let addr = deps.api.addr_validate(&keeper)?;
+    KEEPERS.save(deps.storage, &addr, &true)?;
     Ok(Response::new()
         .add_attribute("action", "add_keeper")
         .add_attribute("keeper", keeper))
 }
 
 fn remove_keeper(deps: DepsMut, info: MessageInfo, keeper: String) -> Result<Response, ContractError> {
-    let mut cfg = CONFIG.load(deps.storage)?;
+    let cfg = CONFIG.load(deps.storage)?;
     if info.sender != cfg.owner { return Err(ContractError::Unauthorized {}); }
     let addr = deps.api.addr_validate(&keeper)?;
-    cfg.keepers.retain(|k| k != &addr);
-    CONFIG.save(deps.storage, &cfg)?;
+    KEEPERS.remove(deps.storage, &addr);
     Ok(Response::new()
         .add_attribute("action", "remove_keeper")
         .add_attribute("keeper", keeper))
@@ -206,7 +243,10 @@ fn emergency_withdraw(
     };
     if withdraw_amount.is_zero() { return Err(ContractError::ZeroBalance {}); }
 
-    let to = recipient.unwrap_or_else(|| cfg.owner.to_string());
+    let to = match recipient {
+        Some(r) => deps.api.addr_validate(&r)?.to_string(),
+        None => cfg.owner.to_string(),
+    };
     Ok(Response::new()
         .add_message(CosmosMsg::Bank(BankMsg::Send {
             to_address: to.clone(),
@@ -236,11 +276,9 @@ fn query_config(deps: Deps) -> StdResult<ConfigResponse> {
     Ok(ConfigResponse {
         owner: cfg.owner.to_string(),
         usdc_denom: cfg.usdc_denom,
-        dest_chain_id: cfg.dest_chain_id,
-        dest_usdc_denom: cfg.dest_usdc_denom,
-        dest_receiver: cfg.dest_receiver,
         ibc_channel: cfg.ibc_channel,
         ibc_timeout_secs: cfg.ibc_timeout_secs,
+        paused: cfg.paused,
     })
 }
 
@@ -251,22 +289,37 @@ fn query_usdc_balance(deps: Deps, env: Env) -> StdResult<BalanceResponse> {
 }
 
 fn query_keepers(deps: Deps) -> StdResult<KeepersResponse> {
-    let cfg = CONFIG.load(deps.storage)?;
-    Ok(KeepersResponse { keepers: cfg.keepers.iter().map(|a| a.to_string()).collect() })
+    let keepers: StdResult<Vec<String>> = KEEPERS
+        .keys(deps.storage, None, None, cosmwasm_std::Order::Ascending)
+        .map(|k| k.map(|a| a.to_string()))
+        .collect();
+    Ok(KeepersResponse { keepers: keepers? })
 }
 
 // ── Migrate ───────────────────────────────────────────────────────────────────
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
+    let contract_version = cw2::get_contract_version(deps.storage)?;
+    if contract_version.contract != CONTRACT_NAME {
+        return Err(ContractError::MigrationError {});
+    }
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+    Ok(Response::default())
+}
+
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn reply(_deps: DepsMut, _env: Env, msg: Reply) -> Result<Response, ContractError> {
+    if msg.id == BRIDGE_REPLY_ID {
+        return Ok(Response::new().add_attribute("ibc_transfer_failed", "true"));
+    }
     Ok(Response::default())
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn only_keeper_or_owner(cfg: &Config, info: &MessageInfo) -> Result<(), ContractError> {
-    if info.sender == cfg.owner || cfg.keepers.contains(&info.sender) {
+fn only_keeper_or_owner(cfg: &Config, deps: Deps, info: &MessageInfo) -> Result<(), ContractError> {
+    if info.sender == cfg.owner || KEEPERS.has(deps.storage, &info.sender) {
         Ok(())
     } else {
         Err(ContractError::Unauthorized {})

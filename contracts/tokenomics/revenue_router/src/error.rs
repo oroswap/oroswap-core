@@ -14,4 +14,16 @@ pub enum ContractError {
 
     #[error("Insufficient balance: requested {requested}, available {balance}")]
     InsufficientBalance { requested: String, balance: String },
+
+    #[error("Migration error")]
+    MigrationError {},
+
+    #[error("Invalid IBC timeout configuration")]
+    InvalidTimeout {},
+
+    #[error("Cannot change usdc_denom while contract holds balance of old denom")]
+    StrandedBalance {},
+
+    #[error("Contract is paused")]
+    Paused {},
 }

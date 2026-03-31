@@ -7,12 +7,6 @@ pub struct InstantiateMsg {
     pub owner: String,
     /// USDC IBC denom on Zigchain (e.g. "ibc/6490A7...").
     pub usdc_denom: String,
-    /// Destination chain ID (e.g. "1" for Ethereum mainnet).
-    pub dest_chain_id: String,
-    /// USDC contract address on Ethereum.
-    pub dest_usdc_denom: String,
-    /// Final receiver address on Ethereum.
-    pub dest_receiver: String,
     /// Outbound IBC channel on Zigchain (e.g. "channel-0").
     pub ibc_channel: String,
     /// IBC packet timeout in seconds (default: 600).
@@ -37,11 +31,7 @@ pub enum ExecuteMsg {
 
     /// Update contract configuration. Owner only.
     UpdateConfig {
-        owner: Option<String>,
         usdc_denom: Option<String>,
-        dest_chain_id: Option<String>,
-        dest_usdc_denom: Option<String>,
-        dest_receiver: Option<String>,
         ibc_channel: Option<String>,
         ibc_timeout_secs: Option<u64>,
     },
@@ -58,6 +48,18 @@ pub enum ExecuteMsg {
         amount: Option<Uint128>,
         recipient: Option<String>,
     },
+
+    /// Proposes a new owner. The proposed owner must call ClaimOwnership.
+    ProposeNewOwner { owner: String, expires_in: u64 },
+
+    /// Removes the pending ownership proposal.
+    DropOwnershipProposal {},
+
+    /// Claims a pending ownership proposal. Only callable by the proposed new owner.
+    ClaimOwnership {},
+
+    /// Pause or unpause bridge operations. Owner only.
+    SetPaused { paused: bool },
 }
 
 #[cw_serde]
@@ -77,11 +79,9 @@ pub enum QueryMsg {
 pub struct ConfigResponse {
     pub owner: String,
     pub usdc_denom: String,
-    pub dest_chain_id: String,
-    pub dest_usdc_denom: String,
-    pub dest_receiver: String,
     pub ibc_channel: String,
     pub ibc_timeout_secs: u64,
+    pub paused: bool,
 }
 
 #[cw_serde]

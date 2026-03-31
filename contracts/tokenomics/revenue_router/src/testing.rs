@@ -1,12 +1,12 @@
 use cosmwasm_std::testing::{mock_dependencies, mock_dependencies_with_balance, mock_env, mock_info};
-use cosmwasm_std::{coins, from_json, Attribute, BankMsg, CosmosMsg, Uint128};
+use cosmwasm_std::{coins, from_json, Addr, Attribute, BankMsg, CosmosMsg, Uint128};
 
-use crate::contract::{execute, instantiate, query, stargate_ibc_transfer};
+use crate::contract::{execute, instantiate, query, stargate_ibc_transfer, migrate};
 use crate::error::ContractError;
 use crate::msg::{
-    BalanceResponse, ConfigResponse, ExecuteMsg, InstantiateMsg, KeepersResponse, QueryMsg,
+    BalanceResponse, ConfigResponse, ExecuteMsg, InstantiateMsg, KeepersResponse, QueryMsg, MigrateMsg
 };
-use crate::state::{CONFIG, DEFAULT_IBC_TIMEOUT_SECS};
+use crate::state::{CONFIG, DEFAULT_IBC_TIMEOUT_SECS, KEEPERS};
 
 const USDC_DENOM: &str = "ibc/5260516290F7883EC893AADA09A6B8CEC790F2EEF3196F440037908749785BE8";
 const OWNER: &str = "zig1owner000000000000000000000000000000000";
@@ -19,10 +19,6 @@ fn default_instantiate_msg() -> InstantiateMsg {
     InstantiateMsg {
         owner: OWNER.to_string(),
         usdc_denom: USDC_DENOM.to_string(),
-        dest_chain_id: "osmo-test-5".to_string(),
-        dest_usdc_denom: "ibc/DE6792CF9E521F6AD6E9A4BDF6225C9571A3B74ACC0A529F92BC5122A39D2E58"
-            .to_string(),
-        dest_receiver: "osmo1receiver000000000000000000000000000000".to_string(),
         ibc_channel: "channel-44".to_string(),
         ibc_timeout_secs: None,
     }
@@ -44,7 +40,7 @@ fn test_instantiate_stores_config() {
     assert_eq!(cfg.usdc_denom, USDC_DENOM);
     assert_eq!(cfg.ibc_channel, "channel-44");
     assert_eq!(cfg.ibc_timeout_secs, DEFAULT_IBC_TIMEOUT_SECS);
-    assert!(cfg.keepers.is_empty());
+    assert!(KEEPERS.is_empty(&deps.storage));
 }
 
 #[test]
@@ -78,8 +74,8 @@ fn test_add_keeper_by_owner() {
         ExecuteMsg::AddKeeper { keeper: KEEPER.to_string() },
     ).unwrap();
 
-    let cfg = CONFIG.load(&deps.storage).unwrap();
-    assert!(cfg.keepers.iter().any(|k| k.as_str() == KEEPER));
+    let addr = Addr::unchecked(KEEPER);
+    assert!(KEEPERS.has(&deps.storage, &addr));
 }
 
 #[test]
@@ -105,7 +101,8 @@ fn test_add_keeper_no_duplicates() {
             ExecuteMsg::AddKeeper { keeper: KEEPER.to_string() },
         ).unwrap();
     }
-    assert_eq!(CONFIG.load(&deps.storage).unwrap().keepers.len(), 1);
+    let res: KeepersResponse = from_json(query(deps.as_ref(), mock_env(), QueryMsg::Keepers {}).unwrap()).unwrap();
+    assert_eq!(res.keepers.len(), 1);
 }
 
 #[test]
@@ -118,7 +115,7 @@ fn test_remove_keeper() {
     execute(deps.as_mut(), mock_env(), mock_info(OWNER, &[]),
         ExecuteMsg::RemoveKeeper { keeper: KEEPER.to_string() }).unwrap();
 
-    assert!(CONFIG.load(&deps.storage).unwrap().keepers.is_empty());
+    assert!(KEEPERS.is_empty(&deps.storage));
 }
 
 #[test]
@@ -150,13 +147,12 @@ fn test_bridge_usdc_by_owner_full_balance() {
     ).unwrap();
 
     assert_eq!(res.messages.len(), 1);
-    assert!(matches!(res.messages[0].msg, CosmosMsg::Stargate { .. }));
 
     let attrs: Vec<&Attribute> = res.attributes.iter().collect();
     assert!(attrs.iter().any(|a| a.key == "action" && a.value == "bridge_usdc"));
     assert!(attrs.iter().any(|a| a.key == "amount" && a.value == "5000000"));
     assert!(attrs.iter().any(|a| a.key == "channel" && a.value == "channel-44"));
-    assert!(attrs.iter().any(|a| a.key == "receiver" && a.value == NOBLE_RECEIVER));
+    assert!(attrs.iter().any(|a| a.key == "keeper" && a.value == OWNER));
 }
 
 #[test]
@@ -252,18 +248,13 @@ fn test_update_config_by_owner() {
     execute(
         deps.as_mut(), mock_env(), mock_info(OWNER, &[]),
         ExecuteMsg::UpdateConfig {
-            owner: None,
             usdc_denom: None,
-            dest_chain_id: Some("1".to_string()),
-            dest_usdc_denom: None,
-            dest_receiver: None,
             ibc_channel: Some("channel-3".to_string()),
             ibc_timeout_secs: Some(300),
         },
     ).unwrap();
 
     let cfg = CONFIG.load(&deps.storage).unwrap();
-    assert_eq!(cfg.dest_chain_id, "1");
     assert_eq!(cfg.ibc_channel, "channel-3");
     assert_eq!(cfg.ibc_timeout_secs, 300);
 }
@@ -276,8 +267,7 @@ fn test_update_config_unauthorized() {
     let err = execute(
         deps.as_mut(), mock_env(), mock_info(STRANGER, &[]),
         ExecuteMsg::UpdateConfig {
-            owner: None, usdc_denom: None, dest_chain_id: None,
-            dest_usdc_denom: None, dest_receiver: None,
+            usdc_denom: None,
             ibc_channel: None, ibc_timeout_secs: None,
         },
     ).unwrap_err();
@@ -285,17 +275,20 @@ fn test_update_config_unauthorized() {
 }
 
 #[test]
-fn test_update_config_transfer_ownership() {
+fn test_two_step_ownership_transfer() {
     let mut deps = mock_dependencies();
     do_instantiate(deps.as_mut());
 
+    // 1. Propose
     execute(
         deps.as_mut(), mock_env(), mock_info(OWNER, &[]),
-        ExecuteMsg::UpdateConfig {
-            owner: Some(KEEPER.to_string()),
-            usdc_denom: None, dest_chain_id: None, dest_usdc_denom: None,
-            dest_receiver: None, ibc_channel: None, ibc_timeout_secs: None,
-        },
+        ExecuteMsg::ProposeNewOwner { owner: KEEPER.to_string(), expires_in: 1000 },
+    ).unwrap();
+
+    // 2. Claim
+    execute(
+        deps.as_mut(), mock_env(), mock_info(KEEPER, &[]),
+        ExecuteMsg::ClaimOwnership {},
     ).unwrap();
 
     assert_eq!(CONFIG.load(&deps.storage).unwrap().owner.as_str(), KEEPER);
@@ -394,6 +387,7 @@ fn test_query_config() {
     assert_eq!(res.owner, OWNER);
     assert_eq!(res.ibc_channel, "channel-44");
     assert_eq!(res.ibc_timeout_secs, DEFAULT_IBC_TIMEOUT_SECS);
+    assert_eq!(res.paused, false);
 }
 
 #[test]
@@ -448,4 +442,102 @@ fn test_stargate_msg_no_memo() {
         1_000_000, USDC_DENOM, 9_999_999_999_000_000_000, "",
     );
     assert!(matches!(msg, CosmosMsg::Stargate { .. }));
+}
+
+// ── Additional coverage ────────────────────────────────────────────────────────
+
+#[test]
+fn test_update_config_stranded_balance() {
+    let mut deps = mock_dependencies_with_balance(&coins(5_000_000, USDC_DENOM));
+    do_instantiate(deps.as_mut());
+    
+    let err = execute(
+        deps.as_mut(), mock_env(), mock_info(OWNER, &[]),
+        ExecuteMsg::UpdateConfig {
+            usdc_denom: Some("new_denom".to_string()),
+            ibc_channel: None, ibc_timeout_secs: None,
+        },
+    ).unwrap_err();
+    assert_eq!(err, ContractError::StrandedBalance {});
+}
+
+#[test]
+fn test_multiple_keepers() {
+    let mut deps = mock_dependencies();
+    do_instantiate(deps.as_mut());
+    
+    execute(deps.as_mut(), mock_env(), mock_info(OWNER, &[]),
+        ExecuteMsg::AddKeeper { keeper: KEEPER.to_string() }).unwrap();
+    execute(deps.as_mut(), mock_env(), mock_info(OWNER, &[]),
+        ExecuteMsg::AddKeeper { keeper: "zig1keeper2".to_string() }).unwrap();
+        
+    let res: KeepersResponse = from_json(query(deps.as_ref(), mock_env(), QueryMsg::Keepers {}).unwrap()).unwrap();
+    assert_eq!(res.keepers.len(), 2);
+    assert!(res.keepers.contains(&KEEPER.to_string()));
+    assert!(res.keepers.contains(&"zig1keeper2".to_string()));
+}
+
+#[test]
+fn test_bridge_usdc_zero_amount() {
+    let mut deps = mock_dependencies_with_balance(&coins(5_000_000, USDC_DENOM));
+    do_instantiate(deps.as_mut());
+    
+    let res = execute(
+        deps.as_mut(), mock_env(), mock_info(OWNER, &[]),
+        ExecuteMsg::BridgeUsdc {
+            amount: Some(Uint128::zero()),
+            memo: MEMO.to_string(),
+            receiver: NOBLE_RECEIVER.to_string(),
+        },
+    ).unwrap();
+    assert!(res.attributes.iter().any(|a| a.key == "amount" && a.value == "0"));
+}
+
+#[test]
+fn test_ibc_timeout_overflow() {
+    let mut deps = mock_dependencies();
+    do_instantiate(deps.as_mut());
+    
+    let err = execute(
+        deps.as_mut(), mock_env(), mock_info(OWNER, &[]),
+        ExecuteMsg::UpdateConfig {
+            usdc_denom: None, ibc_channel: None,
+            ibc_timeout_secs: Some(u64::MAX),
+        },
+    ).unwrap_err();
+    assert_eq!(err, ContractError::InvalidTimeout {});
+}
+
+#[test]
+fn test_migrate() {
+    let mut deps = mock_dependencies();
+    do_instantiate(deps.as_mut());
+
+    // Should succeed
+    let res = migrate(deps.as_mut(), mock_env(), MigrateMsg {}).unwrap();
+    assert_eq!(res.messages.len(), 0);
+    
+    // Corrupt name and try again
+    cw2::set_contract_version(deps.as_mut().storage, "wrong_name", "1.0.0").unwrap();
+    let err = migrate(deps.as_mut(), mock_env(), MigrateMsg {}).unwrap_err();
+    assert_eq!(err, ContractError::MigrationError {});
+}
+
+#[test]
+fn test_stargate_protobuf_detailed() {
+    let msg = stargate_ibc_transfer(
+        "zig1sender", "channel-44", "noble1receiver",
+        1_000_000, USDC_DENOM, 9_999_999_999_000_000_000, MEMO,
+    );
+    if let CosmosMsg::Stargate { value, .. } = msg {
+        let s = String::from_utf8_lossy(value.as_slice());
+        assert!(s.contains("channel-44"));
+        assert!(s.contains("transfer")); // source port
+        assert!(s.contains("zig1sender"));
+        assert!(s.contains(USDC_DENOM));
+        assert!(s.contains("noble1receiver"));
+        assert!(s.contains(MEMO));
+    } else {
+        panic!("expected Stargate msg");
+    }
 }
