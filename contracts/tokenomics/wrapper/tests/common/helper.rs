@@ -53,7 +53,8 @@ fn wrapper_contract() -> Box<dyn Contract<Empty>> {
             oroswap_wrapper::contract::instantiate,
             oroswap_wrapper::contract::query,
         )
-        .with_reply_empty(oroswap_wrapper::contract::reply),
+        .with_reply_empty(oroswap_wrapper::contract::reply)
+        .with_migrate_empty(oroswap_wrapper::migrate::migrate),
     )
 }
 
@@ -79,6 +80,9 @@ impl Helper {
             mint_subdenom: MINT_SUBDENOM.to_string(),
             mint_uri: Some("https://example.com/metadata.json".to_string()),
             mint_decimals: Some(6),
+            mint_name: None,
+            mint_symbol: None,
+            mint_description: None,
             owner: owner.to_string(),
         };
 
@@ -202,6 +206,108 @@ impl Helper {
             &ExecuteMsg::Unpause {},
             &[],
         )
+    }
+
+    pub fn add_pause_authorities(
+        &mut self,
+        sender: &Addr,
+        authorities: Vec<String>,
+    ) -> AnyResult<AppResponse> {
+        self.app.execute_contract(
+            sender.clone(),
+            self.wrapper.clone(),
+            &ExecuteMsg::AddPauseAuthorities { authorities },
+            &[],
+        )
+    }
+
+    pub fn remove_pause_authorities(
+        &mut self,
+        sender: &Addr,
+        authorities: Vec<String>,
+    ) -> AnyResult<AppResponse> {
+        self.app.execute_contract(
+            sender.clone(),
+            self.wrapper.clone(),
+            &ExecuteMsg::RemovePauseAuthorities { authorities },
+            &[],
+        )
+    }
+
+    pub fn query_pause_authorities(&self) -> StdResult<Vec<String>> {
+        self.app
+            .wrap()
+            .query_wasm_smart(&self.wrapper, &QueryMsg::PauseAuthorities {})
+    }
+
+    pub fn recover_excess(&mut self, sender: &Addr) -> AnyResult<AppResponse> {
+        self.app.execute_contract(
+            sender.clone(),
+            self.wrapper.clone(),
+            &ExecuteMsg::RecoverExcess {},
+            &[],
+        )
+    }
+
+    pub fn propose_new_owner(
+        &mut self,
+        sender: &Addr,
+        new_owner: &Addr,
+        expires_in: u64,
+    ) -> AnyResult<AppResponse> {
+        self.app.execute_contract(
+            sender.clone(),
+            self.wrapper.clone(),
+            &ExecuteMsg::ProposeNewOwner {
+                owner: new_owner.to_string(),
+                expires_in,
+            },
+            &[],
+        )
+    }
+
+    pub fn drop_ownership_proposal(&mut self, sender: &Addr) -> AnyResult<AppResponse> {
+        self.app.execute_contract(
+            sender.clone(),
+            self.wrapper.clone(),
+            &ExecuteMsg::DropOwnershipProposal {},
+            &[],
+        )
+    }
+
+    pub fn claim_ownership(&mut self, sender: &Addr) -> AnyResult<AppResponse> {
+        self.app.execute_contract(
+            sender.clone(),
+            self.wrapper.clone(),
+            &ExecuteMsg::ClaimOwnership {},
+            &[],
+        )
+    }
+
+    /// Migrate the wrapper to itself (no-op same-version migrate path).
+    /// Returns the migrate result so tests can also exercise the wrong-name
+    /// failure path via a different code id.
+    pub fn migrate_self(&mut self) -> AnyResult<AppResponse> {
+        let new_code_id = self.app.store_code(wrapper_contract());
+        self.app.migrate_contract(
+            self.owner.clone(),
+            self.wrapper.clone(),
+            &oroswap_wrapper::msg::MigrateMsg {},
+            new_code_id,
+        )
+    }
+
+    /// Bypass the `Lock` flow and credit `amount` of `LOCK_DENOM` directly to
+    /// the contract, creating excess that doesn't have a corresponding mint
+    /// supply. Used to test RecoverExcess.
+    pub fn force_lock_balance(&mut self, amount: u128) {
+        self.app
+            .send_tokens(
+                self.owner.clone(),
+                self.wrapper.clone(),
+                &coins(amount, LOCK_DENOM),
+            )
+            .unwrap();
     }
 
     // -----------------------------------------------------------------------

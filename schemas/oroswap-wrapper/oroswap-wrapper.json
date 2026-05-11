@@ -1,0 +1,467 @@
+{
+  "contract_name": "oroswap-wrapper",
+  "contract_version": "1.0.0",
+  "idl_version": "1.0.0",
+  "instantiate": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "InstantiateMsg",
+    "description": "Instantiation parameters for the wrapper contract.",
+    "type": "object",
+    "required": [
+      "lock_denom",
+      "mint_subdenom",
+      "owner"
+    ],
+    "properties": {
+      "lock_denom": {
+        "description": "The native/IBC/tokenfactory denom to be locked. Examples: - \"ibc/F1073E5895A25347EF10A7B50783D3048882726895AEE1176C498C45D0576F2B\" - \"coin.zig13g54j2l7039e0py7fr8ekfesqzfd82hdwef3837zzaj9mptq3e7skt4xdr.oro\" - \"uzig\"",
+        "type": "string"
+      },
+      "mint_decimals": {
+        "description": "Number of decimals for the minted token (default: 6).",
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint32",
+        "minimum": 0.0
+      },
+      "mint_description": {
+        "description": "Free-form description for the minted token's on-chain metadata. Falls back to \"Oroswap <subdenom> Token\" if not provided.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "mint_name": {
+        "description": "Human-readable name for the minted token (e.g. \"Wrapped ORO\"). Falls back to \"Oroswap <subdenom>\" if not provided.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "mint_subdenom": {
+        "description": "Sub-denom suffix used when creating the ZigChain factory token. The resulting full denom will be: \"coin.<contract_address>.<mint_subdenom>\" Example: \"xoro\"",
+        "type": "string"
+      },
+      "mint_symbol": {
+        "description": "Ticker symbol for the minted token (e.g. \"xORO\"). Falls back to `mint_subdenom` if not provided.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "mint_uri": {
+        "description": "Optional URI for the minted token's on-chain metadata.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "owner": {
+        "description": "Owner / admin of the contract (can pause/unpause and update config).",
+        "type": "string"
+      }
+    },
+    "additionalProperties": false
+  },
+  "execute": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "ExecuteMsg",
+    "description": "Execute messages for the wrapper contract.",
+    "oneOf": [
+      {
+        "description": "Lock `lock_denom` tokens and receive an equal amount of `mint_denom` tokens. Send native funds with this call. If `receiver` is None the minted tokens go to the sender.",
+        "type": "object",
+        "required": [
+          "lock"
+        ],
+        "properties": {
+          "lock": {
+            "type": "object",
+            "properties": {
+              "receiver": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Burn `mint_denom` tokens and receive an equal amount of `lock_denom` tokens back. Send mint tokens as native funds with this call. If `receiver` is None the unlocked tokens go to the sender.",
+        "type": "object",
+        "required": [
+          "unlock"
+        ],
+        "properties": {
+          "unlock": {
+            "type": "object",
+            "properties": {
+              "receiver": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Pause all lock/unlock operations. Callable by the owner or any address in the pause-authority set.",
+        "type": "object",
+        "required": [
+          "pause"
+        ],
+        "properties": {
+          "pause": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Resume lock/unlock operations. Owner only — a compromised pause authority cannot grief by toggling pause state.",
+        "type": "object",
+        "required": [
+          "unpause"
+        ],
+        "properties": {
+          "unpause": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Proposes a new owner. The proposed owner must call ClaimOwnership within expires_in seconds. Only callable by the current owner.",
+        "type": "object",
+        "required": [
+          "propose_new_owner"
+        ],
+        "properties": {
+          "propose_new_owner": {
+            "type": "object",
+            "required": [
+              "expires_in",
+              "owner"
+            ],
+            "properties": {
+              "expires_in": {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 0.0
+              },
+              "owner": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Removes the pending ownership proposal. Only callable by the current owner.",
+        "type": "object",
+        "required": [
+          "drop_ownership_proposal"
+        ],
+        "properties": {
+          "drop_ownership_proposal": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Claims a pending ownership proposal. Only callable by the proposed new owner.",
+        "type": "object",
+        "required": [
+          "claim_ownership"
+        ],
+        "properties": {
+          "claim_ownership": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Recovers any `lock_denom` tokens that were sent directly to the contract without minting, restoring the 1:1 invariant between locked tokens and minted supply. Owner only.",
+        "type": "object",
+        "required": [
+          "recover_excess"
+        ],
+        "properties": {
+          "recover_excess": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Update the on-chain Metadata of the minted denom. Owner only. All fields are optional; any field left as `None` keeps its current value (the tokenfactory module overwrites Metadata as a whole, so the contract reuses the originally-stored values for fields that aren't being changed).",
+        "type": "object",
+        "required": [
+          "update_denom_metadata"
+        ],
+        "properties": {
+          "update_denom_metadata": {
+            "type": "object",
+            "properties": {
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "symbol": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "uri": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Begin the two-step transfer of the minted denom's bank- and metadata-admin roles to new addresses. The new admins must follow up with a `MsgClaimDenomAdmin` on the chain themselves. Owner only.\n\nUsed when retiring this wrapper: the bank_admin gates mint/burn, so the successor contract / multisig must claim before users can keep locking/unlocking.",
+        "type": "object",
+        "required": [
+          "propose_denom_admin"
+        ],
+        "properties": {
+          "propose_denom_admin": {
+            "type": "object",
+            "required": [
+              "bank_admin",
+              "metadata_admin"
+            ],
+            "properties": {
+              "bank_admin": {
+                "type": "string"
+              },
+              "metadata_admin": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Add addresses with pause authority. Owner only.",
+        "type": "object",
+        "required": [
+          "add_pause_authorities"
+        ],
+        "properties": {
+          "add_pause_authorities": {
+            "type": "object",
+            "required": [
+              "authorities"
+            ],
+            "properties": {
+              "authorities": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Remove addresses from the pause-authority set. Owner only.",
+        "type": "object",
+        "required": [
+          "remove_pause_authorities"
+        ],
+        "properties": {
+          "remove_pause_authorities": {
+            "type": "object",
+            "required": [
+              "authorities"
+            ],
+            "properties": {
+              "authorities": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "query": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "QueryMsg",
+    "description": "Query messages for the wrapper contract.",
+    "oneOf": [
+      {
+        "description": "Returns the full contract [`Config`].",
+        "type": "object",
+        "required": [
+          "config"
+        ],
+        "properties": {
+          "config": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Returns the total amount of `lock_denom` currently held (locked) in the contract. NOTE: If users send `lock_denom` directly to the contract via a standard bank send, this value will encompass that excess. To check the true 1:1 backed invariant, compare this with `MintSupply`.",
+        "type": "object",
+        "required": [
+          "total_locked"
+        ],
+        "properties": {
+          "total_locked": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Returns the total circulating supply of the `mint_denom`.",
+        "type": "object",
+        "required": [
+          "mint_supply"
+        ],
+        "properties": {
+          "mint_supply": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Returns the list of addresses currently in the pause-authority set. The owner always has implicit pause authority and is NOT included.",
+        "type": "object",
+        "required": [
+          "pause_authorities"
+        ],
+        "properties": {
+          "pause_authorities": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "migrate": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "MigrateMsg",
+    "description": "Message used to trigger a contract migration.",
+    "type": "object",
+    "additionalProperties": false
+  },
+  "sudo": null,
+  "responses": {
+    "config": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Config",
+      "description": "Contract configuration stored on-chain",
+      "type": "object",
+      "required": [
+        "lock_denom",
+        "mint_denom",
+        "owner",
+        "paused"
+      ],
+      "properties": {
+        "lock_denom": {
+          "description": "The token to be locked — can be any native denom: plain native (e.g. \"uzig\"), IBC (e.g. \"ibc/F1073E...\"), or a tokenfactory coin (e.g. \"coin.xxx.yyy\")",
+          "type": "string"
+        },
+        "mint_denom": {
+          "description": "The tokenfactory token minted 1:1 for each locked token (e.g. \"coin.<contract_address>.<mint_subdenom>\"). Set to \"\" initially and populated in the reply handler.",
+          "type": "string"
+        },
+        "owner": {
+          "description": "Owner / admin address",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Addr"
+            }
+          ]
+        },
+        "paused": {
+          "description": "Whether the contract is currently paused",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "definitions": {
+        "Addr": {
+          "description": "A human readable address.\n\nIn Cosmos, this is typically bech32 encoded. But for multi-chain smart contracts no assumptions should be made other than being UTF-8 encoded and of reasonable length.\n\nThis type represents a validated address. It can be created in the following ways 1. Use `Addr::unchecked(input)` 2. Use `let checked: Addr = deps.api.addr_validate(input)?` 3. Use `let checked: Addr = deps.api.addr_humanize(canonical_addr)?` 4. Deserialize from JSON. This must only be done from JSON that was validated before such as a contract's state. `Addr` must not be used in messages sent by the user because this would result in unvalidated instances.\n\nThis type is immutable. If you really need to mutate it (Really? Are you sure?), create a mutable copy using `let mut mutable = Addr::to_string()` and operate on that `String` instance.",
+          "type": "string"
+        }
+      }
+    },
+    "mint_supply": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Uint128",
+      "description": "A thin wrapper around u128 that is using strings for JSON encoding/decoding, such that the full u128 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.\n\n# Examples\n\nUse `from` to create instances of this and `u128` to get the value out:\n\n``` # use cosmwasm_std::Uint128; let a = Uint128::from(123u128); assert_eq!(a.u128(), 123);\n\nlet b = Uint128::from(42u64); assert_eq!(b.u128(), 42);\n\nlet c = Uint128::from(70u32); assert_eq!(c.u128(), 70); ```",
+      "type": "string"
+    },
+    "pause_authorities": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Array_of_String",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "total_locked": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Uint128",
+      "description": "A thin wrapper around u128 that is using strings for JSON encoding/decoding, such that the full u128 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.\n\n# Examples\n\nUse `from` to create instances of this and `u128` to get the value out:\n\n``` # use cosmwasm_std::Uint128; let a = Uint128::from(123u128); assert_eq!(a.u128(), 123);\n\nlet b = Uint128::from(42u64); assert_eq!(b.u128(), 42);\n\nlet c = Uint128::from(70u32); assert_eq!(c.u128(), 70); ```",
+      "type": "string"
+    }
+  }
+}

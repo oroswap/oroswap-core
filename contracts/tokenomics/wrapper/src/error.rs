@@ -28,4 +28,13 @@ pub enum ContractError {
 
     #[error("Contract can't be migrated!")]
     MigrationError {},
+
+    #[error("No pause authority")]
+    NoPauseAuthority {},
+
+    #[error("Invalid pause authority address: {address}")]
+    InvalidPauseAuthority { address: String },
+
+    #[error("No unpause authority - only contract owner can unpause")]
+    NoUnpauseAuthority {},
 }

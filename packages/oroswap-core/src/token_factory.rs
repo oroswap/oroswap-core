@@ -520,3 +520,106 @@ where
         value: Binary::from(msg.encode_to_vec()),
     }
 }
+
+/// Build a ZigChain factory `MsgSetDenomMetadata` with explicit `name`, `symbol`,
+/// `description` and `display`. Falls back to the legacy "Oroswap {symbol}" naming
+/// when a caller doesn't supply overrides.
+#[cfg(feature = "zigchain")]
+#[allow(clippy::too_many_arguments)]
+pub fn tf_set_denom_metadata_full_msg<T>(
+    sender: impl Into<String>,
+    denom: String,
+    name: String,
+    symbol: String,
+    description: String,
+    display: String,
+    decimals: u32,
+    uri: Option<String>,
+) -> CosmosMsg<T>
+where
+    T: CustomMsg,
+{
+    let metadata_uri = uri.unwrap_or_default();
+    let msg = MsgSetDenomMetadata {
+        signer: sender.into(),
+        metadata: Some(Metadata {
+            description,
+            denom_units: vec![
+                DenomUnit {
+                    denom: denom.clone(),
+                    exponent: 0,
+                    aliases: vec![],
+                },
+                DenomUnit {
+                    denom: display.clone(),
+                    exponent: decimals,
+                    aliases: vec![],
+                },
+            ],
+            base: denom,
+            display,
+            name,
+            symbol,
+            uri: metadata_uri,
+            uri_hash: "".to_string(),
+        }),
+    };
+
+    CosmosMsg::Stargate {
+        type_url: MsgSetDenomMetadata::TYPE_URL.to_string(),
+        value: Binary::from(msg.encode_to_vec()),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ZigChain factory: denom-admin handover
+//
+// Admin transfer is a two-step propose / claim flow. We only need the propose
+// side here — the new admin signs `MsgClaimDenomAdmin` directly from their
+// own address, never through this contract.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "zigchain")]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MsgProposeDenomAdmin {
+    #[prost(string, tag = "1")]
+    pub signer: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub denom: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub bank_admin: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub metadata_admin: ::prost::alloc::string::String,
+}
+
+#[cfg(feature = "zigchain")]
+impl MsgProposeDenomAdmin {
+    pub const TYPE_URL: &'static str = "/zigchain.factory.MsgProposeDenomAdmin";
+}
+
+/// Propose new bank- and metadata-admin addresses for a denom we currently
+/// administer. The new admins must subsequently call `MsgClaimDenomAdmin`
+/// themselves from their own addresses — that step is intentionally outside
+/// this contract.
+#[cfg(feature = "zigchain")]
+pub fn tf_propose_denom_admin_msg<T>(
+    sender: impl Into<String>,
+    denom: impl Into<String>,
+    bank_admin: impl Into<String>,
+    metadata_admin: impl Into<String>,
+) -> CosmosMsg<T>
+where
+    T: CustomMsg,
+{
+    let msg = MsgProposeDenomAdmin {
+        signer: sender.into(),
+        denom: denom.into(),
+        bank_admin: bank_admin.into(),
+        metadata_admin: metadata_admin.into(),
+    };
+
+    CosmosMsg::Stargate {
+        type_url: MsgProposeDenomAdmin::TYPE_URL.to_string(),
+        value: Binary::from(msg.encode_to_vec()),
+    }
+}

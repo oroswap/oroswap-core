@@ -29,7 +29,7 @@ fn test_instantiate() {
         config.mint_denom,
         format!("coin.{}.{}", helper.wrapper, MINT_SUBDENOM)
     );
-    assert_eq!(config.owner, owner.to_string());
+    assert_eq!(config.owner, owner);
     assert!(!config.paused);
 }
 
@@ -190,11 +190,11 @@ fn test_pause_unpause() {
     let mut helper = Helper::new(&owner).unwrap();
     helper.give_lock_tokens(5_000, &alice);
 
-    // Non-owner cannot pause
+    // Non-owner without pause-authority cannot pause
     let err = helper.pause(&alice).unwrap_err();
     assert_eq!(
         err.downcast::<ContractError>().unwrap(),
-        ContractError::Unauthorized {}
+        ContractError::NoPauseAuthority {}
     );
 
     // Owner pauses
@@ -214,7 +214,7 @@ fn test_pause_unpause() {
     let err = helper.unpause(&alice).unwrap_err();
     assert_eq!(
         err.downcast::<ContractError>().unwrap(),
-        ContractError::Unauthorized {}
+        ContractError::NoUnpauseAuthority {}
     );
 
     // Owner unpauses
@@ -350,17 +350,227 @@ fn test_update_config() {
         .unwrap();
 
     let config = helper.query_config().unwrap();
-    assert_eq!(config.owner, new_owner.to_string());
+    assert_eq!(config.owner, new_owner);
 
     // Old owner can no longer pause
     let err = helper.pause(&owner).unwrap_err();
     assert_eq!(
         err.downcast::<ContractError>().unwrap(),
-        ContractError::Unauthorized {}
+        ContractError::NoPauseAuthority {}
     );
 
     // New owner can pause
     helper.pause(&new_owner).unwrap();
     let config = helper.query_config().unwrap();
     assert!(config.paused);
+}
+
+// ---------------------------------------------------------------------------
+// test_pause_authorities
+// ---------------------------------------------------------------------------
+
+/// Pause authorities (delegated wallets) can pause but only the owner can
+/// unpause — the factory pattern.
+#[test]
+fn test_pause_authorities() {
+    let owner = Addr::unchecked("owner");
+    let watcher = Addr::unchecked("watcher");
+    let stranger = Addr::unchecked("stranger");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    // Only owner can manage the authority set
+    let err = helper
+        .add_pause_authorities(&stranger, vec![watcher.to_string()])
+        .unwrap_err();
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::Unauthorized {}
+    );
+
+    // Owner adds the watcher
+    helper
+        .add_pause_authorities(&owner, vec![watcher.to_string()])
+        .unwrap();
+    let authorities = helper.query_pause_authorities().unwrap();
+    assert_eq!(authorities, vec![watcher.to_string()]);
+
+    // Invalid address rejected
+    let err = helper
+        .add_pause_authorities(&owner, vec!["".to_string()])
+        .unwrap_err();
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::InvalidPauseAuthority { address: "".to_string() }
+    );
+
+    // Watcher can pause
+    helper.pause(&watcher).unwrap();
+    assert!(helper.query_config().unwrap().paused);
+
+    // Watcher cannot unpause — only owner can
+    let err = helper.unpause(&watcher).unwrap_err();
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::NoUnpauseAuthority {}
+    );
+
+    helper.unpause(&owner).unwrap();
+    assert!(!helper.query_config().unwrap().paused);
+
+    // Removing the authority revokes pause power
+    helper
+        .remove_pause_authorities(&owner, vec![watcher.to_string()])
+        .unwrap();
+    assert!(helper.query_pause_authorities().unwrap().is_empty());
+
+    let err = helper.pause(&watcher).unwrap_err();
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::NoPauseAuthority {}
+    );
+}
+
+// ---------------------------------------------------------------------------
+// test_recover_excess
+// ---------------------------------------------------------------------------
+
+/// Owner can sweep `lock_denom` accidentally bank-sent to the contract;
+/// the call fails cleanly when the contract is exactly 1:1 backed.
+#[test]
+fn test_recover_excess() {
+    let owner = Addr::unchecked("owner");
+    let alice = Addr::unchecked("alice");
+    let stranger = Addr::unchecked("stranger");
+    let mut helper = Helper::new(&owner).unwrap();
+    helper.give_lock_tokens(10_000, &alice);
+
+    // 1) No excess yet — call should fail
+    let err = helper.recover_excess(&owner).unwrap_err();
+    assert!(
+        err.root_cause()
+            .to_string()
+            .contains("No excess tokens to recover"),
+        "expected no-excess error, got: {err:?}"
+    );
+
+    // 2) Lock 3000 (balance == mint supply == 3000)
+    helper.lock(&alice, 3_000).unwrap();
+
+    // 3) Bypass Lock: bank-send 500 directly to the contract — now
+    // balance = 3500, supply = 3000, excess = 500
+    helper.force_lock_balance(500);
+
+    // 4) Non-owner cannot recover
+    let err = helper.recover_excess(&stranger).unwrap_err();
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::Unauthorized {}
+    );
+
+    let owner_before = helper.query_balance(&owner, LOCK_DENOM).unwrap();
+    helper.recover_excess(&owner).unwrap();
+    let owner_after = helper.query_balance(&owner, LOCK_DENOM).unwrap();
+    assert_eq!(
+        owner_after.u128() - owner_before.u128(),
+        500,
+        "owner received the 500 excess"
+    );
+
+    // Invariant restored: balance == supply
+    let bal = helper.query_balance(&helper.wrapper.clone(), LOCK_DENOM).unwrap();
+    let total_locked = helper.query_total_locked().unwrap();
+    assert_eq!(bal, total_locked);
+    assert_eq!(bal.u128(), 3_000);
+
+    // 5) With invariant restored, recover_excess fails again
+    let err = helper.recover_excess(&owner).unwrap_err();
+    assert!(
+        err.root_cause()
+            .to_string()
+            .contains("No excess tokens to recover"),
+        "expected no-excess error, got: {err:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// test_drop_ownership_proposal
+// ---------------------------------------------------------------------------
+
+/// Owner can drop a pending proposal so the proposed owner can no longer claim.
+#[test]
+fn test_drop_ownership_proposal() {
+    let owner = Addr::unchecked("owner");
+    let new_owner = Addr::unchecked("new_owner");
+    let stranger = Addr::unchecked("stranger");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    helper.propose_new_owner(&owner, &new_owner, 86_400).unwrap();
+
+    // Non-owner cannot drop
+    let err = helper.drop_ownership_proposal(&stranger).unwrap_err();
+    let err_str = format!("{err:?}");
+    assert!(
+        err_str.contains("Unauthorized"),
+        "expected Unauthorized, got: {err_str}"
+    );
+
+    // Owner drops the proposal
+    helper.drop_ownership_proposal(&owner).unwrap();
+
+    // Now the proposed owner cannot claim — there's no proposal
+    let err = helper.claim_ownership(&new_owner).unwrap_err();
+    let err_str = format!("{err:?}");
+    assert!(
+        err_str.to_lowercase().contains("ownership proposal not found")
+            || err_str.to_lowercase().contains("proposal"),
+        "expected proposal-missing error, got: {err_str}"
+    );
+
+    // Owner is still the owner
+    assert_eq!(helper.query_config().unwrap().owner, owner);
+}
+
+// ---------------------------------------------------------------------------
+// test_ownership_proposal_expiry
+// ---------------------------------------------------------------------------
+
+/// Once `expires_in` seconds elapse, a pending proposal can no longer be
+/// claimed.
+#[test]
+fn test_ownership_proposal_expiry() {
+    let owner = Addr::unchecked("owner");
+    let new_owner = Addr::unchecked("new_owner");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    let ttl = 3_600u64;
+    helper.propose_new_owner(&owner, &new_owner, ttl).unwrap();
+
+    // Advance past the proposal's lifetime
+    helper.next_block(ttl + 1);
+
+    // Claim must fail because the proposal has expired
+    let err = helper.claim_ownership(&new_owner).unwrap_err();
+    let err_str = format!("{err:?}");
+    assert!(
+        err_str.to_lowercase().contains("expired"),
+        "expected expiry error, got: {err_str}"
+    );
+
+    // Owner is unchanged
+    assert_eq!(helper.query_config().unwrap().owner, owner);
+}
+
+// ---------------------------------------------------------------------------
+// test_migrate
+// ---------------------------------------------------------------------------
+
+/// Same-version migrate is a no-op that succeeds and stamps the new cw2
+/// contract-version attributes. (The wrong-contract-name rejection branch is
+/// covered by a unit test in `src/testing.rs`, since cw-multi-test doesn't
+/// expose contract storage for tampering.)
+#[test]
+fn test_migrate() {
+    let owner = Addr::unchecked("owner");
+    let mut helper = Helper::new(&owner).unwrap();
+    helper.migrate_self().unwrap();
 }

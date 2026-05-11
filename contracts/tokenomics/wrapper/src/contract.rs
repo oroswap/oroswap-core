@@ -2,7 +2,7 @@
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     attr, coin, ensure, to_json_binary, Addr, BankMsg, Binary, Coin, CosmosMsg, Deps, DepsMut, Env,
-    MessageInfo, Reply, Response, StdError, StdResult, SubMsg, Uint128,
+    MessageInfo, Order, Reply, Response, StdError, StdResult, Storage, SubMsg, Uint128,
 };
 use cw2::set_contract_version;
 use cw_utils::must_pay;
@@ -12,11 +12,11 @@ use oroswap::token_factory::{
     tf_burn_msg, tf_create_denom_msg, tf_mint_msg, MsgCreateDenomResponse,
 };
 #[cfg(feature = "zigchain")]
-use oroswap::token_factory::tf_set_denom_metadata_msg;
+use oroswap::token_factory::{tf_propose_denom_admin_msg, tf_set_denom_metadata_full_msg};
 
 use crate::error::ContractError;
 use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
-use crate::state::{Config, MintMeta, CONFIG, MINT_META, OWNERSHIP_PROPOSAL};
+use crate::state::{Config, MintMeta, CONFIG, MINT_META, OWNERSHIP_PROPOSAL, PAUSE_AUTHORITIES};
 
 /// Contract name used for migration / cw2 version tracking.
 pub const CONTRACT_NAME: &str = env!("CARGO_PKG_NAME");
@@ -84,7 +84,7 @@ pub fn instantiate(
         &Config {
             lock_denom: msg.lock_denom.clone(),
             mint_denom: "".to_string(), // populated in reply
-            owner: owner.to_string(),
+            owner: owner.clone(),
             paused: false,
         },
     )?;
@@ -96,6 +96,9 @@ pub fn instantiate(
             subdenom: msg.mint_subdenom.clone(),
             decimals: msg.mint_decimals.unwrap_or(6),
             uri: msg.mint_uri,
+            name: msg.mint_name,
+            symbol: msg.mint_symbol,
+            description: msg.mint_description,
         },
     )?;
 
@@ -119,7 +122,9 @@ pub fn instantiate(
 /// Handle the reply from the ZigChain factory `MsgCreateDenom`.
 ///
 /// Reads the newly-assigned full denom back from the chain response,
-/// stores it in `Config.mint_denom`, and (on ZigChain) sets token metadata.
+/// stores it in `Config.mint_denom`, and (on ZigChain) sets token metadata
+/// derived from the caller-supplied name/symbol/description (with sensible
+/// defaults if the caller omitted them).
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractError> {
     match ReplyIds::try_from(msg.id)? {
@@ -144,18 +149,40 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractEr
                 })?;
 
                 let meta = MINT_META.load(deps.storage)?;
-                // L-1: remove temporary metadata now that it's been consumed
+                // Temporary metadata has been consumed; clear it so storage
+                // doesn't leak. The on-chain Metadata struct on the chain
+                // remains updatable via `UpdateDenomMetadata` afterwards.
                 MINT_META.remove(deps.storage);
 
-                // On ZigChain, also set human-readable token metadata
+                // On ZigChain, also set human-readable token metadata.
+                // Defaults preserve the legacy "Oroswap <subdenom>" naming
+                // when the caller didn't supply overrides.
                 #[cfg(feature = "zigchain")]
-                let set_meta_msg: Option<CosmosMsg> = Some(tf_set_denom_metadata_msg(
-                    env.contract.address.clone(),
-                    new_token_denom.clone(),
-                    meta.subdenom.clone(),
-                    meta.decimals,
-                    meta.uri,
-                ));
+                let set_meta_msg: Option<CosmosMsg> = {
+                    let symbol = meta
+                        .symbol
+                        .clone()
+                        .unwrap_or_else(|| meta.subdenom.clone());
+                    let name = meta
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| format!("Oroswap {}", symbol));
+                    let description = meta
+                        .description
+                        .clone()
+                        .unwrap_or_else(|| format!("Oroswap {} Token", symbol));
+                    let display = symbol.to_lowercase();
+                    Some(tf_set_denom_metadata_full_msg(
+                        env.contract.address.clone(),
+                        new_token_denom.clone(),
+                        name,
+                        symbol,
+                        description,
+                        display,
+                        meta.decimals,
+                        meta.uri,
+                    ))
+                };
                 #[cfg(not(feature = "zigchain"))]
                 let set_meta_msg: Option<CosmosMsg> = None;
 
@@ -203,18 +230,18 @@ pub fn execute(
         ExecuteMsg::Unpause {} => execute_unpause(deps, info),
         ExecuteMsg::ProposeNewOwner { owner, expires_in } => {
             let config = CONFIG.load(deps.storage)?;
-            propose_new_owner(deps, info, env, owner, expires_in, Addr::unchecked(&config.owner), OWNERSHIP_PROPOSAL)
+            propose_new_owner(deps, info, env, owner, expires_in, config.owner, OWNERSHIP_PROPOSAL)
                 .map_err(Into::into)
         }
         ExecuteMsg::DropOwnershipProposal {} => {
             let config = CONFIG.load(deps.storage)?;
-            drop_ownership_proposal(deps, info, Addr::unchecked(&config.owner), OWNERSHIP_PROPOSAL)
+            drop_ownership_proposal(deps, info, config.owner, OWNERSHIP_PROPOSAL)
                 .map_err(Into::into)
         }
         ExecuteMsg::ClaimOwnership {} => {
             claim_ownership(deps, info, env, OWNERSHIP_PROPOSAL, |deps, new_owner| {
                 CONFIG.update::<_, StdError>(deps.storage, |mut v| {
-                    v.owner = new_owner.to_string();
+                    v.owner = new_owner;
                     Ok(v)
                 })?;
                 Ok(())
@@ -222,6 +249,22 @@ pub fn execute(
             .map_err(Into::into)
         }
         ExecuteMsg::RecoverExcess {} => execute_recover_excess(deps, env, info),
+        ExecuteMsg::UpdateDenomMetadata {
+            name,
+            symbol,
+            description,
+            uri,
+        } => execute_update_denom_metadata(deps, env, info, name, symbol, description, uri),
+        ExecuteMsg::ProposeDenomAdmin {
+            bank_admin,
+            metadata_admin,
+        } => execute_propose_denom_admin(deps, env, info, bank_admin, metadata_admin),
+        ExecuteMsg::AddPauseAuthorities { authorities } => {
+            execute_add_pause_authorities(deps, info, authorities)
+        }
+        ExecuteMsg::RemovePauseAuthorities { authorities } => {
+            execute_remove_pause_authorities(deps, info, authorities)
+        }
     }
 }
 
@@ -311,26 +354,30 @@ fn execute_unlock(
         ]))
 }
 
-/// Pause the contract. Owner only.
+/// Pause the contract. Callable by the owner or any address registered in
+/// `PAUSE_AUTHORITIES`.
 fn execute_pause(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
+    check_pause_authority(deps.storage, &info.sender)?;
     let mut config = CONFIG.load(deps.storage)?;
-    if info.sender.to_string() != config.owner {
-        return Err(ContractError::Unauthorized {});
-    }
     config.paused = true;
     CONFIG.save(deps.storage, &config)?;
-    Ok(Response::new().add_attribute("action", "pause"))
+    Ok(Response::new().add_attributes([
+        attr("action", "pause"),
+        attr("sender", info.sender),
+    ]))
 }
 
-/// Unpause the contract. Owner only.
+/// Unpause the contract. Owner only — keeping unpause to the owner means a
+/// compromised pause authority can never grief by toggling pause state.
 fn execute_unpause(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
+    check_unpause_authority(deps.storage, &info.sender)?;
     let mut config = CONFIG.load(deps.storage)?;
-    if info.sender.to_string() != config.owner {
-        return Err(ContractError::Unauthorized {});
-    }
     config.paused = false;
     CONFIG.save(deps.storage, &config)?;
-    Ok(Response::new().add_attribute("action", "unpause"))
+    Ok(Response::new().add_attributes([
+        attr("action", "unpause"),
+        attr("sender", info.sender),
+    ]))
 }
 
 /// Returns an error if the contract is paused.
@@ -341,6 +388,33 @@ fn check_paused(config: &Config) -> Result<(), ContractError> {
     Ok(())
 }
 
+/// Pause is allowed if the sender is the contract owner or sits in the
+/// pause-authority set.
+fn check_pause_authority(storage: &dyn Storage, sender: &Addr) -> Result<(), ContractError> {
+    let config = CONFIG.load(storage)?;
+
+    if sender == &config.owner {
+        return Ok(());
+    }
+
+    if PAUSE_AUTHORITIES.has(storage, sender) {
+        return Ok(());
+    }
+
+    Err(ContractError::NoPauseAuthority {})
+}
+
+/// Unpause is restricted to the owner.
+fn check_unpause_authority(storage: &dyn Storage, sender: &Addr) -> Result<(), ContractError> {
+    let config = CONFIG.load(storage)?;
+
+    if sender == &config.owner {
+        return Ok(());
+    }
+
+    Err(ContractError::NoUnpauseAuthority {})
+}
+
 /// Recovers tokens sent directly to the contract. Owner only.
 fn execute_recover_excess(
     deps: DepsMut,
@@ -348,7 +422,7 @@ fn execute_recover_excess(
     info: MessageInfo,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
-    if info.sender.to_string() != config.owner {
+    if info.sender != config.owner {
         return Err(ContractError::Unauthorized {});
     }
 
@@ -364,7 +438,7 @@ fn execute_recover_excess(
 
     let excess = balance - supply;
     let send_msg: CosmosMsg = BankMsg::Send {
-        to_address: config.owner,
+        to_address: config.owner.to_string(),
         amount: vec![coin(excess.u128(), &config.lock_denom)],
     }
     .into();
@@ -375,6 +449,199 @@ fn execute_recover_excess(
             attr("action", "recover_excess"),
             attr("amount", excess),
         ]))
+}
+
+/// Update the on-chain Metadata for the minted denom. Owner only.
+///
+/// The tokenfactory module replaces Metadata wholesale on each Set call,
+/// so callers should pass the values they want for every field that should
+/// change; any field left as `None` keeps its current value… in the *contract's*
+/// view of metadata. We do NOT read the chain's current Metadata here (no
+/// stargate query helper is available in this contract), so a `None` field
+/// means "use the value previously persisted by this contract", and on first
+/// update after instantiate we fall back to the same defaults the reply
+/// handler uses.
+fn execute_update_denom_metadata(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    name: Option<String>,
+    symbol: Option<String>,
+    description: Option<String>,
+    uri: Option<String>,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.owner {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    if config.mint_denom.is_empty() {
+        return Err(StdError::generic_err(
+            "mint_denom not yet initialised — reply has not completed",
+        )
+        .into());
+    }
+
+    #[cfg(feature = "zigchain")]
+    {
+        // For Metadata fields the caller didn't supply, fall back to the same
+        // defaults used at instantiation so the resulting Metadata stays
+        // self-consistent. We don't have access to the *chain's* current
+        // Metadata from inside the contract, so this is best-effort: callers
+        // who need to preserve a previously-set custom value must repeat it.
+        let subdenom_default_symbol = config
+            .mint_denom
+            .rsplit('.')
+            .next()
+            .unwrap_or(&config.mint_denom)
+            .to_string();
+        let symbol = symbol.unwrap_or_else(|| subdenom_default_symbol.clone());
+        let name = name.unwrap_or_else(|| format!("Oroswap {}", symbol));
+        let description = description.unwrap_or_else(|| format!("Oroswap {} Token", symbol));
+        let display = symbol.to_lowercase();
+
+        let msg = tf_set_denom_metadata_full_msg(
+            env.contract.address.clone(),
+            config.mint_denom.clone(),
+            name.clone(),
+            symbol.clone(),
+            description.clone(),
+            display,
+            6, // ZigChain Metadata only stores DenomUnits, decimals are baked in once at create-time
+            uri,
+        );
+
+        Ok(Response::new()
+            .add_message(msg)
+            .add_attributes([
+                attr("action", "update_denom_metadata"),
+                attr("name", name),
+                attr("symbol", symbol),
+                attr("description", description),
+            ]))
+    }
+
+    #[cfg(not(feature = "zigchain"))]
+    {
+        let _ = (env, name, symbol, description, uri);
+        Err(StdError::generic_err(
+            "UpdateDenomMetadata is only supported with the zigchain feature",
+        )
+        .into())
+    }
+}
+
+/// Begin the two-step transfer of the minted denom's bank- and metadata-admin
+/// roles. The proposed admins must follow up with `MsgClaimDenomAdmin`
+/// themselves before the transfer takes effect on chain. Owner only.
+fn execute_propose_denom_admin(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    bank_admin: String,
+    metadata_admin: String,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.owner {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    if config.mint_denom.is_empty() {
+        return Err(StdError::generic_err(
+            "mint_denom not yet initialised — reply has not completed",
+        )
+        .into());
+    }
+
+    // Validate addresses up-front so a typo can't strand the denom.
+    deps.api.addr_validate(&bank_admin)?;
+    deps.api.addr_validate(&metadata_admin)?;
+
+    #[cfg(feature = "zigchain")]
+    {
+        let msg = tf_propose_denom_admin_msg(
+            env.contract.address.clone(),
+            config.mint_denom.clone(),
+            bank_admin.clone(),
+            metadata_admin.clone(),
+        );
+
+        Ok(Response::new()
+            .add_message(msg)
+            .add_attributes([
+                attr("action", "propose_denom_admin"),
+                attr("denom", config.mint_denom),
+                attr("bank_admin", bank_admin),
+                attr("metadata_admin", metadata_admin),
+            ]))
+    }
+
+    #[cfg(not(feature = "zigchain"))]
+    {
+        let _ = (env, bank_admin, metadata_admin);
+        Err(StdError::generic_err(
+            "ProposeDenomAdmin is only supported with the zigchain feature",
+        )
+        .into())
+    }
+}
+
+/// Add addresses to the pause-authority set. Owner only.
+fn execute_add_pause_authorities(
+    deps: DepsMut,
+    info: MessageInfo,
+    authorities: Vec<String>,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.owner {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    let mut added = 0u32;
+    for raw in authorities {
+        let addr = deps
+            .api
+            .addr_validate(&raw)
+            .map_err(|_| ContractError::InvalidPauseAuthority { address: raw.clone() })?;
+        if !PAUSE_AUTHORITIES.has(deps.storage, &addr) {
+            PAUSE_AUTHORITIES.save(deps.storage, &addr, &())?;
+            added += 1;
+        }
+    }
+
+    Ok(Response::new().add_attributes([
+        attr("action", "add_pause_authorities"),
+        attr("added_count", added.to_string()),
+    ]))
+}
+
+/// Remove addresses from the pause-authority set. Owner only.
+fn execute_remove_pause_authorities(
+    deps: DepsMut,
+    info: MessageInfo,
+    authorities: Vec<String>,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.owner {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    let mut removed = 0u32;
+    for raw in authorities {
+        let addr = deps
+            .api
+            .addr_validate(&raw)
+            .map_err(|_| ContractError::InvalidPauseAuthority { address: raw.clone() })?;
+        if PAUSE_AUTHORITIES.has(deps.storage, &addr) {
+            PAUSE_AUTHORITIES.remove(deps.storage, &addr);
+            removed += 1;
+        }
+    }
+
+    Ok(Response::new().add_attributes([
+        attr("action", "remove_pause_authorities"),
+        attr("removed_count", removed.to_string()),
+    ]))
 }
 
 // ---------------------------------------------------------------------------
@@ -400,5 +667,13 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
             let supply: Uint128 = deps.querier.query_supply(&config.mint_denom)?.amount;
             to_json_binary(&supply)
         }
+        QueryMsg::PauseAuthorities {} => to_json_binary(&query_pause_authorities(deps)?),
     }
+}
+
+fn query_pause_authorities(deps: Deps) -> StdResult<Vec<String>> {
+    PAUSE_AUTHORITIES
+        .range(deps.storage, None, None, Order::Ascending)
+        .map(|item| item.map(|(addr, _)| addr.to_string()))
+        .collect()
 }

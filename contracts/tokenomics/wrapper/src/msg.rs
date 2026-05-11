@@ -25,6 +25,18 @@ pub struct InstantiateMsg {
     /// Number of decimals for the minted token (default: 6).
     pub mint_decimals: Option<u32>,
 
+    /// Human-readable name for the minted token (e.g. "Wrapped ORO").
+    /// Falls back to "Oroswap <subdenom>" if not provided.
+    pub mint_name: Option<String>,
+
+    /// Ticker symbol for the minted token (e.g. "xORO").
+    /// Falls back to `mint_subdenom` if not provided.
+    pub mint_symbol: Option<String>,
+
+    /// Free-form description for the minted token's on-chain metadata.
+    /// Falls back to "Oroswap <subdenom> Token" if not provided.
+    pub mint_description: Option<String>,
+
     /// Owner / admin of the contract (can pause/unpause and update config).
     pub owner: String,
 }
@@ -42,10 +54,12 @@ pub enum ExecuteMsg {
     /// If `receiver` is None the unlocked tokens go to the sender.
     Unlock { receiver: Option<String> },
 
-    /// Pause all lock/unlock operations. Owner only.
+    /// Pause all lock/unlock operations. Callable by the owner or any address
+    /// in the pause-authority set.
     Pause {},
 
-    /// Resume lock/unlock operations. Owner only.
+    /// Resume lock/unlock operations. Owner only — a compromised pause
+    /// authority cannot grief by toggling pause state.
     Unpause {},
 
     /// Proposes a new owner. The proposed owner must call ClaimOwnership within expires_in seconds.
@@ -61,6 +75,36 @@ pub enum ExecuteMsg {
     /// Recovers any `lock_denom` tokens that were sent directly to the contract without minting,
     /// restoring the 1:1 invariant between locked tokens and minted supply. Owner only.
     RecoverExcess {},
+
+    /// Update the on-chain Metadata of the minted denom. Owner only.
+    /// All fields are optional; any field left as `None` keeps its current
+    /// value (the tokenfactory module overwrites Metadata as a whole, so the
+    /// contract reuses the originally-stored values for fields that aren't
+    /// being changed).
+    UpdateDenomMetadata {
+        name: Option<String>,
+        symbol: Option<String>,
+        description: Option<String>,
+        uri: Option<String>,
+    },
+
+    /// Begin the two-step transfer of the minted denom's bank- and
+    /// metadata-admin roles to new addresses. The new admins must follow up
+    /// with a `MsgClaimDenomAdmin` on the chain themselves. Owner only.
+    ///
+    /// Used when retiring this wrapper: the bank_admin gates mint/burn, so
+    /// the successor contract / multisig must claim before users can keep
+    /// locking/unlocking.
+    ProposeDenomAdmin {
+        bank_admin: String,
+        metadata_admin: String,
+    },
+
+    /// Add addresses with pause authority. Owner only.
+    AddPauseAuthorities { authorities: Vec<String> },
+
+    /// Remove addresses from the pause-authority set. Owner only.
+    RemovePauseAuthorities { authorities: Vec<String> },
 }
 
 /// Message used to trigger a contract migration.
@@ -85,4 +129,9 @@ pub enum QueryMsg {
     /// Returns the total circulating supply of the `mint_denom`.
     #[returns(Uint128)]
     MintSupply {},
+
+    /// Returns the list of addresses currently in the pause-authority set.
+    /// The owner always has implicit pause authority and is NOT included.
+    #[returns(Vec<String>)]
+    PauseAuthorities {},
 }
