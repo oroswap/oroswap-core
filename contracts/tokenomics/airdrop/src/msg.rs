@@ -64,6 +64,14 @@ pub enum QueryMsg {
     LatestAirdropId {},
     #[returns(UserAirdropStatusResponse)]
     UserAirdropStatus { id: u64, address: String },
+    /// Solvency snapshot for the given airdrop:
+    ///   - Σ eligibility committed to users
+    ///   - Σ already claimed
+    ///   - the current contract balance of the airdrop's token
+    ///   - whether the contract holds enough to cover the worst-case payout
+    ///     (all unclaimed users claim after vesting end and receive the APY bonus)
+    #[returns(SolvencyResponse)]
+    Solvency { id: u64 },
 }
 
 #[cw_serde]
@@ -90,6 +98,30 @@ pub struct AirdropResponse {
 #[cw_serde]
 pub struct LatestAirdropIdResponse {
     pub id: u64,
+}
+
+#[cw_serde]
+pub struct SolvencyResponse {
+    pub airdrop_id: u64,
+    pub token_address: String,
+    pub is_native: bool,
+    /// Σ amounts assigned via `AddAirdrop` / `UpdateEligibility`.
+    pub total_eligibility: Uint128,
+    /// Σ amounts actually paid out across all `Claim` calls so far.
+    pub total_claimed: Uint128,
+    /// `total_eligibility - total_claimed`. Note: forfeited mid-vesting
+    /// portions reduce *paid* but not *eligibility*, so this is the
+    /// pessimistic "still-to-pay if everyone claims at vesting end" bound,
+    /// before APY bonus.
+    pub outstanding: Uint128,
+    /// Worst-case outstanding: assumes every unclaimed user claims at or
+    /// after `vesting_end_time` and receives the full APY bonus.
+    pub max_outstanding: Uint128,
+    /// Current contract balance for `token_address` (native via bank,
+    /// CW20 via the contract's `Balance` query).
+    pub contract_balance: Uint128,
+    /// True iff `contract_balance >= max_outstanding`.
+    pub is_fully_funded: bool,
 }
 
 #[cw_serde]

@@ -1,6 +1,6 @@
 use cosmwasm_std::{
-    entry_point, to_json_binary, Binary, CosmosMsg, Deps, DepsMut, Env, MessageInfo, Response, StdResult,
-    Uint128, WasmMsg, StdError,
+    entry_point, to_json_binary, Binary, CosmosMsg, Deps, DepsMut, Env, MessageInfo, Order, Response,
+    StdResult, Uint128, WasmMsg, StdError,
 };
 use cw2::set_contract_version;
 use cw20::Cw20ExecuteMsg;
@@ -10,12 +10,26 @@ use oroswap::common::{propose_new_owner, drop_ownership_proposal, claim_ownershi
 use crate::error::ContractError;
 use crate::msg::{
     AirdropResponse, ConfigResponse, ExecuteMsg,
-    InstantiateMsg, LatestAirdropIdResponse, QueryMsg, UserAirdropStatusResponse,
+    InstantiateMsg, LatestAirdropIdResponse, QueryMsg, SolvencyResponse, UserAirdropStatusResponse,
 };
-use crate::state::{Config, AIRDROPS, USER_CLAIMS, CONFIG, ELIGIBILITY, LATEST_AIRDROP_ID, AirdropInfo, UserClaim, OWNERSHIP_PROPOSAL};
+use crate::state::{
+    AirdropInfo, Config, UserClaim, AIRDROPS, CLAIMED_TOTAL, CONFIG, ELIGIBILITY,
+    ELIGIBILITY_TOTAL, LATEST_AIRDROP_ID, OWNERSHIP_PROPOSAL, USER_CLAIMS,
+};
 
-pub const CONTRACT_NAME: &str = "oroswap-airdrop";
+pub const CONTRACT_NAME: &str = env!("CARGO_PKG_NAME");
 pub const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Hard cap on the number of `(address, amount)` entries that `AddAirdrop`
+/// or `UpdateEligibility` can accept in a single tx. Large airdrops must be
+/// split across multiple `UpdateEligibility` calls so a single message never
+/// exceeds the chain's block-gas / message-size limits.
+pub const MAX_ELIGIBILITY_BATCH: usize = 200;
+
+/// Hard cap on the APY-style cliff bonus, in basis points. 10_000 bps =
+/// 100% — sanity bound, mostly to prevent a misconfigured admin call
+/// from committing more tokens than the contract can hold.
+pub const MAX_APY_BONUS_BPS: u64 = 10_000;
 
 #[entry_point]
 pub fn instantiate(
@@ -74,7 +88,7 @@ pub fn execute(
         }
         ExecuteMsg::Claim { airdrop_id } => execute_claim(deps, env, info, airdrop_id),
         ExecuteMsg::DepositFunds { token_address, amount, is_native } => execute_deposit_funds(deps, env, info, token_address, amount, is_native),
-        ExecuteMsg::WithdrawFunds { token_address, amount, is_native } => execute_withdraw_funds(deps, info, token_address, amount, is_native),
+        ExecuteMsg::WithdrawFunds { token_address, amount, is_native } => execute_withdraw_funds(deps, env, info, token_address, amount, is_native),
         ExecuteMsg::ProposeNewOwner { owner, expires_in } => {
             let config = CONFIG.load(deps.storage)?;
             propose_new_owner(deps, info, env, owner, expires_in, config.admin, OWNERSHIP_PROPOSAL)
@@ -118,36 +132,38 @@ pub fn execute_add_airdrop(
         return Err(ContractError::Unauthorized {});
     }
 
-    if vesting_start_time < start_time {
-        return Err(ContractError::Std(cosmwasm_std::StdError::generic_err(
-            "vesting_start_time must be >= start_time",
-        )));
-    }
-    if vesting_start_time >= vesting_end_time {
-        return Err(ContractError::Std(cosmwasm_std::StdError::generic_err(
-            "vesting_start_time must be before vesting_end_time",
-        )));
+    if vesting_start_time < start_time || vesting_start_time >= vesting_end_time {
+        return Err(ContractError::InvalidVestingWindow {});
     }
 
     if initial_claim_percent > 100 {
-        return Err(ContractError::Std(cosmwasm_std::StdError::generic_err(
-            "initial_claim_percent cannot exceed 100",
-        )));
+        return Err(ContractError::InvalidInitialPercent {
+            got: initial_claim_percent,
+        });
     }
 
-    // L-2: Validate start_time is not in the past
-    if start_time < env.block.time.seconds() {
-        return Err(ContractError::Std(cosmwasm_std::StdError::generic_err(
-            "start_time must be >= current block time",
-        )));
+    if apy_bonus_bps > MAX_APY_BONUS_BPS {
+        return Err(ContractError::ApyBonusTooHigh {
+            got: apy_bonus_bps,
+            max: MAX_APY_BONUS_BPS,
+        });
     }
-    
+
+    if start_time < env.block.time.seconds() {
+        return Err(ContractError::StartTimeInPast {});
+    }
+
     if let Some(expiry) = expiry_time {
         if expiry <= vesting_end_time {
-            return Err(ContractError::Std(cosmwasm_std::StdError::generic_err(
-                "expiry_time must be > vesting_end_time",
-            )));
+            return Err(ContractError::InvalidExpiry {});
         }
+    }
+
+    if eligibility.len() > MAX_ELIGIBILITY_BATCH {
+        return Err(ContractError::EligibilityBatchTooLarge {
+            got: eligibility.len(),
+            max: MAX_ELIGIBILITY_BATCH,
+        });
     }
 
     let airdrop_id = LATEST_AIRDROP_ID.load(deps.storage)? + 1;
@@ -170,15 +186,20 @@ pub fn execute_add_airdrop(
         },
     )?;
 
+    let mut total = Uint128::zero();
     for (addr, amount) in eligibility {
         let validated_addr = deps.api.addr_validate(&addr)?;
         ELIGIBILITY.save(deps.storage, (airdrop_id, &validated_addr), &amount)?;
+        total = total.checked_add(amount).map_err(StdError::from)?;
     }
+    ELIGIBILITY_TOTAL.save(deps.storage, airdrop_id, &total)?;
+    CLAIMED_TOTAL.save(deps.storage, airdrop_id, &Uint128::zero())?;
 
     Ok(Response::new()
         .add_attribute("action", "add_airdrop")
         .add_attribute("airdrop_id", airdrop_id.to_string())
-        .add_attribute("token_address", token_address))
+        .add_attribute("token_address", token_address)
+        .add_attribute("total_eligibility", total))
 }
 
 pub fn execute_toggle_airdrop(
@@ -240,7 +261,6 @@ pub fn execute_claim(
         .may_load(deps.storage, (airdrop_id, &info.sender))?
         .ok_or(ContractError::NotEligible {})?;
 
-    // L-4: Reject zero-eligible users
     if amount_eligible.is_zero() {
         return Err(ContractError::NotEligible {});
     }
@@ -279,6 +299,18 @@ pub fn execute_claim(
             amount_claimed: total_payout,
             claim_time: current_time,
         },
+    )?;
+
+    // Update running claimed total so the Solvency query stays O(1).
+    let prior_total = CLAIMED_TOTAL
+        .may_load(deps.storage, airdrop_id)?
+        .unwrap_or_default();
+    CLAIMED_TOTAL.save(
+        deps.storage,
+        airdrop_id,
+        &prior_total
+            .checked_add(total_payout)
+            .map_err(StdError::from)?,
     )?;
 
     let mut messages: Vec<CosmosMsg> = vec![];
@@ -329,7 +361,7 @@ pub fn execute_deposit_funds(
     }
 
     if is_native {
-        // M-5: Use must_pay to enforce exactly one coin of the correct denom
+        // must_pay enforces exactly one coin of the correct denom
         let paid = must_pay(&info, &token_address)?;
         if paid != amount {
             return Err(ContractError::Std(cosmwasm_std::StdError::generic_err(
@@ -363,6 +395,7 @@ pub fn execute_deposit_funds(
 
 pub fn execute_withdraw_funds(
     deps: DepsMut,
+    env: Env,
     info: MessageInfo,
     token_address: String,
     amount: Uint128,
@@ -371,6 +404,29 @@ pub fn execute_withdraw_funds(
     let config = CONFIG.load(deps.storage)?;
     if info.sender != config.admin {
         return Err(ContractError::Unauthorized {});
+    }
+
+    // Withdraw guard: refuse if any airdrop using this token is still
+    // active OR has no expiry / its expiry has not yet passed. Forces the
+    // admin to first `ToggleAirdrop(active=false)` and wait until
+    // `expiry_time` before draining the pool — protects claimants while
+    // an airdrop is live.
+    let now = env.block.time.seconds();
+    for kv in AIRDROPS.range(deps.storage, None, None, Order::Ascending) {
+        let (id, airdrop) = kv?;
+        if airdrop.token_address != token_address || airdrop.is_native != is_native {
+            continue;
+        }
+        if airdrop.is_active {
+            return Err(ContractError::WithdrawalBlocked { airdrop_id: id });
+        }
+        match airdrop.expiry_time {
+            None => return Err(ContractError::WithdrawalBlockedNoExpiry { airdrop_id: id }),
+            Some(exp) if now < exp => {
+                return Err(ContractError::WithdrawalBlocked { airdrop_id: id });
+            }
+            Some(_) => { /* expired & inactive — does not block */ }
+        }
     }
 
     let msg: CosmosMsg = if is_native {
@@ -423,15 +479,37 @@ pub fn execute_update_eligibility(
         return Err(ContractError::AirdropAlreadyStarted {});
     }
 
-    // Update eligibility entries
+    if eligibility.len() > MAX_ELIGIBILITY_BATCH {
+        return Err(ContractError::EligibilityBatchTooLarge {
+            got: eligibility.len(),
+            max: MAX_ELIGIBILITY_BATCH,
+        });
+    }
+
+    // Maintain ELIGIBILITY_TOTAL correctly across overwrites:
+    //   total += (new_amount - old_amount) for each entry.
+    let mut total = ELIGIBILITY_TOTAL
+        .may_load(deps.storage, airdrop_id)?
+        .unwrap_or_default();
+
     for (addr, amount) in eligibility {
         let validated_addr = deps.api.addr_validate(&addr)?;
+        let old_amount = ELIGIBILITY
+            .may_load(deps.storage, (airdrop_id, &validated_addr))?
+            .unwrap_or_default();
         ELIGIBILITY.save(deps.storage, (airdrop_id, &validated_addr), &amount)?;
+        total = total
+            .checked_sub(old_amount)
+            .map_err(StdError::from)?
+            .checked_add(amount)
+            .map_err(StdError::from)?;
     }
+    ELIGIBILITY_TOTAL.save(deps.storage, airdrop_id, &total)?;
 
     Ok(Response::new()
         .add_attribute("action", "update_eligibility")
-        .add_attribute("airdrop_id", airdrop_id.to_string()))
+        .add_attribute("airdrop_id", airdrop_id.to_string())
+        .add_attribute("total_eligibility", total))
 }
 
 #[entry_point]
@@ -441,6 +519,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::Airdrop { id } => to_json_binary(&query_airdrop(deps, id)?),
         QueryMsg::LatestAirdropId {} => to_json_binary(&query_latest_airdrop_id(deps)?),
         QueryMsg::UserAirdropStatus { id, address } => to_json_binary(&query_user_airdrop_status(deps, env, id, address)?),
+        QueryMsg::Solvency { id } => to_json_binary(&query_solvency(deps, env, id)?),
     }
 }
 
@@ -562,5 +641,52 @@ fn query_user_airdrop_status(deps: Deps, env: Env, id: u64, address: String) -> 
         amount_claimed: Uint128::zero(),
         claim_time: None,
         vesting_status,
+    })
+}
+
+fn query_solvency(deps: Deps, env: Env, id: u64) -> StdResult<SolvencyResponse> {
+    let airdrop = AIRDROPS.load(deps.storage, id)?;
+
+    let total_eligibility = ELIGIBILITY_TOTAL
+        .may_load(deps.storage, id)?
+        .unwrap_or_default();
+    let total_claimed = CLAIMED_TOTAL.may_load(deps.storage, id)?.unwrap_or_default();
+    let outstanding = total_eligibility.saturating_sub(total_claimed);
+
+    // Worst case: every remaining recipient claims at/after vesting end
+    // and collects the APY bonus. Bonus accrues on vesting_base = the
+    // (100 - initial_claim_percent)% portion that's still locked up.
+    let vesting_base = total_eligibility
+        .multiply_ratio(100u128.saturating_sub(airdrop.initial_claim_percent as u128), 100u128);
+    let max_bonus = vesting_base.multiply_ratio(airdrop.apy_bonus_bps, 10_000u64);
+    let max_outstanding = outstanding
+        .checked_add(max_bonus)
+        .map_err(StdError::from)?;
+
+    // Pull current contract balance for the airdrop's token.
+    let contract_balance: Uint128 = if airdrop.is_native {
+        deps.querier
+            .query_balance(&env.contract.address, &airdrop.token_address)?
+            .amount
+    } else {
+        let resp: cw20::BalanceResponse = deps.querier.query_wasm_smart(
+            &airdrop.token_address,
+            &cw20::Cw20QueryMsg::Balance {
+                address: env.contract.address.to_string(),
+            },
+        )?;
+        resp.balance
+    };
+
+    Ok(SolvencyResponse {
+        airdrop_id: id,
+        token_address: airdrop.token_address,
+        is_native: airdrop.is_native,
+        total_eligibility,
+        total_claimed,
+        outstanding,
+        max_outstanding,
+        contract_balance,
+        is_fully_funded: contract_balance >= max_outstanding,
     })
 }

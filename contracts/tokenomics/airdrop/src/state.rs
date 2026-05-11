@@ -18,7 +18,7 @@ pub struct AirdropInfo {
     pub initial_claim_percent: u64,
     pub apy_bonus_bps: u64,
     pub is_active: bool,
-    /// true = native/IBC denom, false = CW20 contract (C-1 fix)
+    /// true = native/IBC denom, false = CW20 contract.
     pub is_native: bool,
     pub expiry_time: Option<u64>,
 }
@@ -36,3 +36,11 @@ pub const AIRDROPS: Map<u64, AirdropInfo> = Map::new("airdrops");
 pub const ELIGIBILITY: Map<(u64, &Addr), Uint128> = Map::new("eligibility");
 pub const USER_CLAIMS: Map<(u64, &Addr), UserClaim> = Map::new("user_claims");
 pub const OWNERSHIP_PROPOSAL: Item<OwnershipProposal> = Item::new("ownership_proposal");
+
+/// Running total of eligibility amounts per airdrop. Updated on
+/// `AddAirdrop` and `UpdateEligibility`. Enables O(1) solvency queries
+/// instead of scanning the entire `ELIGIBILITY` map.
+pub const ELIGIBILITY_TOTAL: Map<u64, Uint128> = Map::new("eligibility_total");
+
+/// Running total of `amount_claimed` per airdrop. Updated on each `Claim`.
+pub const CLAIMED_TOTAL: Map<u64, Uint128> = Map::new("claimed_total");

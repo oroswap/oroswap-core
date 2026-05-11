@@ -300,7 +300,7 @@ fn test_ibc_and_cw20_handling() {
     let ibc_denom = "ibc/F1073E5895A25347EF10A7B50783D3048882726895AEE1176C498C45D0576F2B".to_string();
     let msg = ExecuteMsg::AddAirdrop {
         token_address: ibc_denom.clone(),
-        is_native: true, // Crucial: C-1 fix in action
+        is_native: true,
         start_time: now,
         vesting_start_time: now,
         vesting_end_time: now + 1000,
@@ -365,7 +365,7 @@ fn test_deposit_and_withdraw() {
     let msg = ExecuteMsg::DepositFunds { token_address: denom.clone(), amount, is_native: true };
     execute(deps.as_mut(), mock_env(), info, msg).unwrap();
 
-    // Deposit Native with wrong funds (M-5 fix)
+    // Deposit Native with extra coins must reject
     let info_wrong = mock_info("admin", &[
         cosmwasm_std::Coin { denom: denom.clone(), amount },
         cosmwasm_std::Coin { denom: "other".to_string(), amount: Uint128::new(100) } // Extra funds!
@@ -432,7 +432,7 @@ fn test_update_eligibility_and_zero_claim() {
 
     let msg = ExecuteMsg::UpdateEligibility {
         airdrop_id: 1,
-        // user2 gets 0 (L-4 test)
+        // user2 gets 0 — must be rejected on claim
         eligibility: vec![("user2".to_string(), Uint128::zero())],
     };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
@@ -444,7 +444,7 @@ fn test_update_eligibility_and_zero_claim() {
     // Normal claim
     execute(deps.as_mut(), env_start.clone(), mock_info("user1", &[]), ExecuteMsg::Claim { airdrop_id: 1 }).unwrap();
 
-    // Zero eligible claim (L-4 fix) should fail with NotEligible
+    // Zero-eligible claim must fail with NotEligible
     let err = execute(deps.as_mut(), env_start.clone(), mock_info("user2", &[]), ExecuteMsg::Claim { airdrop_id: 1 }).unwrap_err();
     assert!(format!("{}", err).contains("Not eligible"));
 }
@@ -461,25 +461,45 @@ fn test_edge_cases_and_unauthorized() {
     let err = execute(deps.as_mut(), mock_env(), mock_info("user", &[]), msg).unwrap_err();
     assert!(format!("{}", err).contains("Unauthorized"));
 
-    // Edge case: initial_claim_percent = 0, and large apy_bonus_bps (H-1 fix test)
+    // Cap: outrageous apy_bonus_bps is rejected
     let msg = ExecuteMsg::AddAirdrop {
         token_address: "native.oro".to_string(),
         is_native: true,
         start_time: now,
         vesting_start_time: now,
         vesting_end_time: now + 1000,
-        initial_claim_percent: 0, // 0% initial
-        apy_bonus_bps: 1_000_000_000, // Huuuuge bonus, would overflow u128 if not using multiply_ratio!
-        eligibility: vec![("user1".to_string(), Uint128::MAX)], // Max allocation to force overflow bounds
+        initial_claim_percent: 0,
+        apy_bonus_bps: 1_000_000_000,
+        eligibility: vec![("user1".to_string(), Uint128::MAX)],
         expiry_time: None,
     };
-    // Should pass AddAirdrop without panicking
+    let err = execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap_err();
+    match err {
+        ContractError::ApyBonusTooHigh { got, max } => {
+            assert_eq!(got, 1_000_000_000);
+            assert_eq!(max, crate::contract::MAX_APY_BONUS_BPS);
+        }
+        other => panic!("expected ApyBonusTooHigh, got: {other:?}"),
+    }
+
+    // Edge case at the cap: max-allowed bonus + Uint128::MAX eligibility
+    // must NOT overflow multiply_ratio. 0% initial → all in the vesting base.
+    let msg = ExecuteMsg::AddAirdrop {
+        token_address: "native.oro".to_string(),
+        is_native: true,
+        start_time: now,
+        vesting_start_time: now,
+        vesting_end_time: now + 1000,
+        initial_claim_percent: 0,
+        apy_bonus_bps: crate::contract::MAX_APY_BONUS_BPS,
+        eligibility: vec![("user1".to_string(), Uint128::MAX)],
+        expiry_time: None,
+    };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
-    // Claim at start time (should get 0 because 0% initial and vesting hasn't elapsed)
+    // Claim at start time (0% initial + vesting not elapsed → 0 payout)
     let msg = ExecuteMsg::Claim { airdrop_id: 1 };
     let res = execute(deps.as_mut(), mock_env(), mock_info("user1", &[]), msg).unwrap();
-    // Claiming 0 doesn't send messages
     assert_eq!(res.messages.len(), 0);
     let total_attr = res.attributes.iter().find(|a| a.key == "total_payout").unwrap();
     assert_eq!(total_attr.value, "0");
@@ -537,4 +557,502 @@ fn test_airdrop_expiry() {
     ).unwrap();
     assert_eq!(res.vesting_status, "expired");
     assert_eq!(res.current_claimable, Uint128::zero());
+}
+
+// ── Eligibility batch cap ─────────────────────────────────────────────────────
+
+#[test]
+fn test_add_airdrop_eligibility_batch_cap() {
+    use crate::contract::MAX_ELIGIBILITY_BATCH;
+    let mut deps = mock_dependencies();
+    instantiate(deps.as_mut(), mock_env(), mock_info("creator", &[]), InstantiateMsg { admin: "admin".to_string() }).unwrap();
+
+    // exactly MAX_ELIGIBILITY_BATCH entries — allowed
+    let ok_eligibility: Vec<(String, Uint128)> = (0..MAX_ELIGIBILITY_BATCH)
+        .map(|i| (format!("user{i}"), Uint128::new(100)))
+        .collect();
+    let now = mock_env().block.time.seconds();
+    let msg = ExecuteMsg::AddAirdrop {
+        token_address: "native.oro".to_string(),
+        is_native: true,
+        start_time: now,
+        vesting_start_time: now,
+        vesting_end_time: now + 100,
+        initial_claim_percent: 100,
+        apy_bonus_bps: 0,
+        eligibility: ok_eligibility,
+        expiry_time: None,
+    };
+    execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
+
+    // MAX + 1 entries — rejected
+    let too_many: Vec<(String, Uint128)> = (0..=MAX_ELIGIBILITY_BATCH)
+        .map(|i| (format!("user{i}"), Uint128::new(100)))
+        .collect();
+    let msg = ExecuteMsg::AddAirdrop {
+        token_address: "native.oro".to_string(),
+        is_native: true,
+        start_time: now,
+        vesting_start_time: now,
+        vesting_end_time: now + 100,
+        initial_claim_percent: 100,
+        apy_bonus_bps: 0,
+        eligibility: too_many,
+        expiry_time: None,
+    };
+    let err = execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap_err();
+    match err {
+        ContractError::EligibilityBatchTooLarge { got, max } => {
+            assert_eq!(got, MAX_ELIGIBILITY_BATCH + 1);
+            assert_eq!(max, MAX_ELIGIBILITY_BATCH);
+        }
+        other => panic!("expected EligibilityBatchTooLarge, got: {other:?}"),
+    }
+}
+
+#[test]
+fn test_update_eligibility_batch_cap() {
+    use crate::contract::MAX_ELIGIBILITY_BATCH;
+    let mut deps = mock_dependencies();
+    instantiate(deps.as_mut(), mock_env(), mock_info("creator", &[]), InstantiateMsg { admin: "admin".to_string() }).unwrap();
+
+    let now = mock_env().block.time.seconds();
+    // Create an airdrop in the future so UpdateEligibility is allowed
+    let msg = ExecuteMsg::AddAirdrop {
+        token_address: "native.oro".to_string(),
+        is_native: true,
+        start_time: now + 1000,
+        vesting_start_time: now + 1000,
+        vesting_end_time: now + 2000,
+        initial_claim_percent: 100,
+        apy_bonus_bps: 0,
+        eligibility: vec![],
+        expiry_time: None,
+    };
+    execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
+
+    let too_many: Vec<(String, Uint128)> = (0..=MAX_ELIGIBILITY_BATCH)
+        .map(|i| (format!("user{i}"), Uint128::new(100)))
+        .collect();
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateEligibility { airdrop_id: 1, eligibility: too_many },
+    )
+    .unwrap_err();
+    match err {
+        ContractError::EligibilityBatchTooLarge { got, max } => {
+            assert_eq!(got, MAX_ELIGIBILITY_BATCH + 1);
+            assert_eq!(max, MAX_ELIGIBILITY_BATCH);
+        }
+        other => panic!("expected EligibilityBatchTooLarge, got: {other:?}"),
+    }
+}
+
+// ── Solvency query ────────────────────────────────────────────────────────────
+
+#[test]
+fn test_solvency_query_totals_and_funding() {
+    use crate::msg::SolvencyResponse;
+
+    let denom = "native.oro";
+    // Pre-fund the contract with 1000 native.oro (mock dep helper)
+    let mut deps = cosmwasm_std::testing::mock_dependencies_with_balance(
+        &cosmwasm_std::coins(1000, denom),
+    );
+    instantiate(deps.as_mut(), mock_env(), mock_info("creator", &[]), InstantiateMsg { admin: "admin".to_string() }).unwrap();
+
+    let now = mock_env().block.time.seconds();
+    // Airdrop committing 1500 total (1000 + 500), 50% initial, 10% apy bonus
+    let msg = ExecuteMsg::AddAirdrop {
+        token_address: denom.to_string(),
+        is_native: true,
+        start_time: now,
+        vesting_start_time: now,
+        vesting_end_time: now + 1000,
+        initial_claim_percent: 50,
+        apy_bonus_bps: 1000, // 10%
+        eligibility: vec![
+            ("user1".to_string(), Uint128::new(1000)),
+            ("user2".to_string(), Uint128::new(500)),
+        ],
+        expiry_time: None,
+    };
+    execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
+
+    // Solvency snapshot before any claim
+    let res: SolvencyResponse = from_json(
+        &query(deps.as_ref(), mock_env(), QueryMsg::Solvency { id: 1 }).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(res.total_eligibility.u128(), 1500);
+    assert_eq!(res.total_claimed.u128(), 0);
+    assert_eq!(res.outstanding.u128(), 1500);
+    // Worst case: vesting_base = 50% of 1500 = 750; bonus = 750 * 10% = 75
+    // max_outstanding = 1500 + 75 = 1575
+    assert_eq!(res.max_outstanding.u128(), 1575);
+    assert_eq!(res.contract_balance.u128(), 1000);
+    assert!(!res.is_fully_funded, "1000 balance can't cover 1575 worst case");
+
+    // user1 claims at time = now (only initial 50% = 500 paid out)
+    execute(deps.as_mut(), mock_env(), mock_info("user1", &[]), ExecuteMsg::Claim { airdrop_id: 1 }).unwrap();
+
+    let res: SolvencyResponse = from_json(
+        &query(deps.as_ref(), mock_env(), QueryMsg::Solvency { id: 1 }).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(res.total_claimed.u128(), 500);
+    assert_eq!(res.outstanding.u128(), 1000);
+}
+
+#[test]
+fn test_solvency_tracks_update_eligibility_delta() {
+    use crate::msg::SolvencyResponse;
+    let mut deps = mock_dependencies();
+    instantiate(deps.as_mut(), mock_env(), mock_info("creator", &[]), InstantiateMsg { admin: "admin".to_string() }).unwrap();
+
+    let now = mock_env().block.time.seconds();
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::AddAirdrop {
+            token_address: "native.oro".to_string(),
+            is_native: true,
+            start_time: now + 1000,
+            vesting_start_time: now + 1000,
+            vesting_end_time: now + 2000,
+            initial_claim_percent: 100,
+            apy_bonus_bps: 0,
+            eligibility: vec![("user1".to_string(), Uint128::new(500))],
+            expiry_time: None,
+        },
+    )
+    .unwrap();
+
+    let res: SolvencyResponse = from_json(
+        &query(deps.as_ref(), mock_env(), QueryMsg::Solvency { id: 1 }).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(res.total_eligibility.u128(), 500);
+
+    // Overwrite user1 to 800, add user2 at 200 — total should be 1000
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateEligibility {
+            airdrop_id: 1,
+            eligibility: vec![
+                ("user1".to_string(), Uint128::new(800)),
+                ("user2".to_string(), Uint128::new(200)),
+            ],
+        },
+    )
+    .unwrap();
+
+    let res: SolvencyResponse = from_json(
+        &query(deps.as_ref(), mock_env(), QueryMsg::Solvency { id: 1 }).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(res.total_eligibility.u128(), 1000);
+}
+
+// ── WithdrawFunds restrictions ────────────────────────────────────────────────
+
+#[test]
+fn test_withdraw_blocked_while_active() {
+    let mut deps = mock_dependencies();
+    instantiate(deps.as_mut(), mock_env(), mock_info("creator", &[]), InstantiateMsg { admin: "admin".to_string() }).unwrap();
+
+    let now = mock_env().block.time.seconds();
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::AddAirdrop {
+            token_address: "native.oro".to_string(),
+            is_native: true,
+            start_time: now,
+            vesting_start_time: now,
+            vesting_end_time: now + 1000,
+            initial_claim_percent: 100,
+            apy_bonus_bps: 0,
+            eligibility: vec![],
+            expiry_time: Some(now + 2000),
+        },
+    )
+    .unwrap();
+
+    // Try to withdraw while the airdrop is still active
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::WithdrawFunds {
+            token_address: "native.oro".to_string(),
+            amount: Uint128::new(10),
+            is_native: true,
+        },
+    )
+    .unwrap_err();
+    match err {
+        ContractError::WithdrawalBlocked { airdrop_id } => assert_eq!(airdrop_id, 1),
+        other => panic!("expected WithdrawalBlocked, got: {other:?}"),
+    }
+}
+
+#[test]
+fn test_withdraw_blocked_when_no_expiry() {
+    let mut deps = mock_dependencies();
+    instantiate(deps.as_mut(), mock_env(), mock_info("creator", &[]), InstantiateMsg { admin: "admin".to_string() }).unwrap();
+
+    let now = mock_env().block.time.seconds();
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::AddAirdrop {
+            token_address: "native.oro".to_string(),
+            is_native: true,
+            start_time: now,
+            vesting_start_time: now,
+            vesting_end_time: now + 1000,
+            initial_claim_percent: 100,
+            apy_bonus_bps: 0,
+            eligibility: vec![],
+            expiry_time: None,
+        },
+    )
+    .unwrap();
+
+    // Toggle inactive — still blocked because no expiry
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::ToggleAirdrop { id: 1, active: false },
+    )
+    .unwrap();
+
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::WithdrawFunds {
+            token_address: "native.oro".to_string(),
+            amount: Uint128::new(10),
+            is_native: true,
+        },
+    )
+    .unwrap_err();
+    match err {
+        ContractError::WithdrawalBlockedNoExpiry { airdrop_id } => assert_eq!(airdrop_id, 1),
+        other => panic!("expected WithdrawalBlockedNoExpiry, got: {other:?}"),
+    }
+}
+
+#[test]
+fn test_withdraw_blocked_before_expiry() {
+    let mut deps = mock_dependencies();
+    instantiate(deps.as_mut(), mock_env(), mock_info("creator", &[]), InstantiateMsg { admin: "admin".to_string() }).unwrap();
+
+    let now = mock_env().block.time.seconds();
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::AddAirdrop {
+            token_address: "native.oro".to_string(),
+            is_native: true,
+            start_time: now,
+            vesting_start_time: now,
+            vesting_end_time: now + 1000,
+            initial_claim_percent: 100,
+            apy_bonus_bps: 0,
+            eligibility: vec![],
+            expiry_time: Some(now + 2000),
+        },
+    )
+    .unwrap();
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::ToggleAirdrop { id: 1, active: false },
+    )
+    .unwrap();
+
+    // Inactive but expiry not yet reached → blocked
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::WithdrawFunds {
+            token_address: "native.oro".to_string(),
+            amount: Uint128::new(10),
+            is_native: true,
+        },
+    )
+    .unwrap_err();
+    match err {
+        ContractError::WithdrawalBlocked { airdrop_id } => assert_eq!(airdrop_id, 1),
+        other => panic!("expected WithdrawalBlocked, got: {other:?}"),
+    }
+}
+
+#[test]
+fn test_withdraw_allowed_after_inactive_and_expired() {
+    let mut deps = mock_dependencies();
+    instantiate(deps.as_mut(), mock_env(), mock_info("creator", &[]), InstantiateMsg { admin: "admin".to_string() }).unwrap();
+
+    let now = mock_env().block.time.seconds();
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::AddAirdrop {
+            token_address: "native.oro".to_string(),
+            is_native: true,
+            start_time: now,
+            vesting_start_time: now,
+            vesting_end_time: now + 1000,
+            initial_claim_percent: 100,
+            apy_bonus_bps: 0,
+            eligibility: vec![],
+            expiry_time: Some(now + 2000),
+        },
+    )
+    .unwrap();
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::ToggleAirdrop { id: 1, active: false },
+    )
+    .unwrap();
+
+    // Fast-forward past expiry
+    let mut env_past = mock_env();
+    env_past.block.time = env_past.block.time.plus_seconds(3000);
+
+    let res = execute(
+        deps.as_mut(),
+        env_past,
+        mock_info("admin", &[]),
+        ExecuteMsg::WithdrawFunds {
+            token_address: "native.oro".to_string(),
+            amount: Uint128::new(10),
+            is_native: true,
+        },
+    )
+    .unwrap();
+    assert_eq!(res.messages.len(), 1);
+}
+
+#[test]
+fn test_claim_and_status_at_vesting_start_boundary() {
+    // Claim uses strict `>` against vesting_start_time; UserAirdropStatus
+    // uses `<=` to declare "not_started". They agree at the boundary:
+    //   at current_time == vesting_start_time
+    //     -> Claim pays only initial (no vesting unlock yet)
+    //     -> UserAirdropStatus reports "not_started" with current_claimable = initial
+    let mut deps = mock_dependencies();
+    instantiate(deps.as_mut(), mock_env(), mock_info("creator", &[]), InstantiateMsg { admin: "admin".to_string() }).unwrap();
+
+    let now = mock_env().block.time.seconds();
+    let vesting_start = now + 100;
+    let vesting_end = vesting_start + 1000;
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::AddAirdrop {
+            token_address: "native.oro".to_string(),
+            is_native: true,
+            start_time: now,
+            vesting_start_time: vesting_start,
+            vesting_end_time: vesting_end,
+            initial_claim_percent: 40,
+            apy_bonus_bps: 1000,
+            eligibility: vec![
+                ("user_query".to_string(), Uint128::new(1000)),
+                ("user_claim".to_string(), Uint128::new(1000)),
+            ],
+            expiry_time: None,
+        },
+    )
+    .unwrap();
+
+    // Tick exactly to vesting_start_time
+    let mut env_boundary = mock_env();
+    env_boundary.block.time = cosmwasm_std::Timestamp::from_seconds(vesting_start);
+
+    // (a) Status query at the boundary reports "not_started" with claimable = initial
+    let res: UserAirdropStatusResponse = from_json(
+        &query(
+            deps.as_ref(),
+            env_boundary.clone(),
+            QueryMsg::UserAirdropStatus { id: 1, address: "user_query".to_string() },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(res.vesting_status, "not_started");
+    assert_eq!(res.current_claimable.u128(), 400, "initial 40% of 1000");
+
+    // (b) Claim at the boundary pays exactly the initial portion (no vesting unlock)
+    let res = execute(
+        deps.as_mut(),
+        env_boundary,
+        mock_info("user_claim", &[]),
+        ExecuteMsg::Claim { airdrop_id: 1 },
+    )
+    .unwrap();
+    let total_attr = res.attributes.iter().find(|a| a.key == "total_payout").unwrap();
+    assert_eq!(total_attr.value, "400");
+    let unlocked_attr = res.attributes.iter().find(|a| a.key == "unlocked_vesting").unwrap();
+    assert_eq!(unlocked_attr.value, "0");
+    let bonus_attr = res.attributes.iter().find(|a| a.key == "bonus").unwrap();
+    assert_eq!(bonus_attr.value, "0");
+}
+
+#[test]
+fn test_withdraw_allowed_for_unrelated_token() {
+    // No airdrops use "other.token" → withdrawal goes through.
+    let mut deps = mock_dependencies();
+    instantiate(deps.as_mut(), mock_env(), mock_info("creator", &[]), InstantiateMsg { admin: "admin".to_string() }).unwrap();
+
+    let now = mock_env().block.time.seconds();
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::AddAirdrop {
+            token_address: "native.oro".to_string(),
+            is_native: true,
+            start_time: now,
+            vesting_start_time: now,
+            vesting_end_time: now + 1000,
+            initial_claim_percent: 100,
+            apy_bonus_bps: 0,
+            eligibility: vec![],
+            expiry_time: Some(now + 2000),
+        },
+    )
+    .unwrap();
+
+    let res = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::WithdrawFunds {
+            token_address: "other.token".to_string(),
+            amount: Uint128::new(10),
+            is_native: true,
+        },
+    )
+    .unwrap();
+    assert_eq!(res.messages.len(), 1);
 }

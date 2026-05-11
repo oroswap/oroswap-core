@@ -27,9 +27,15 @@ execute() {
 
 # ─── Airdrop Operations ─────────────────────────────────────────────────────
 
-# Usage: add_airdrop <token_address> <start_time> <v_start> <v_end> <initial_percent> <apy_bps> <eligibility_json>
+# Usage: add_airdrop <token_address> <start_time> <v_start> <v_end> <initial_percent> <apy_bps> <eligibility_json> [expiry]
+# Contract limits:
+#   initial_claim_percent <= 100
+#   apy_bonus_bps <= 10_000 (100%)
+#   eligibility JSON: <= 200 entries per call (use update_eligibility for more)
+#   start_time >= now; vesting_start_time in [start_time, vesting_end_time)
+#   expiry_time (if set) > vesting_end_time
 add_airdrop() {
-    if [[ $# -lt 7 ]]; then echo "❌ Usage: add_airdrop <token> <start> <v_start> <v_end> <initial_claim_percent> <apy_bps> <eligibility_json>"; exit 1; fi
+    if [[ $# -lt 7 ]]; then echo "❌ Usage: add_airdrop <token> <start> <v_start> <v_end> <initial_claim_percent> <apy_bps> <eligibility_json> [expiry]"; exit 1; fi
     local token="$1"
     local start="$2"
     local v_start="$3"
@@ -82,12 +88,18 @@ deposit_funds() {
 }
 
 # Usage: withdraw_funds <token_address> <amount>
+# NOTE: blocked while ANY airdrop using this token is still active OR has
+# no expiry_time configured OR has not yet reached its expiry. To unblock
+# you must:
+#   1. test.sh toggle_airdrop <id> false
+#   2. wait until block time >= the airdrop's expiry_time
 withdraw_funds() {
     if [[ $# -lt 2 ]]; then echo "❌ Usage: withdraw_funds <token_address> <amount>"; exit 1; fi
     local token="$1"
     local amount="$2"
     echo "📤 Withdrawing $amount tokens ($token) from airdrop contract..."
-    
+    echo "ℹ️  If this fails with WithdrawalBlocked: deactivate the airdrop and wait for expiry_time."
+
     local is_native="false"
     if [[ "$token" == *"."* || ${#token} -lt 20 || "$token" == "ibc/"* ]]; then
         is_native="true"
@@ -122,6 +134,16 @@ query_latest_id() {
     query '{"latest_airdrop_id":{}}'
 }
 
+# Solvency snapshot for an airdrop:
+#   committed eligibility, total claimed so far, contract balance, and
+#   whether the pool is fully funded for the worst-case payout.
+query_solvency() {
+    if [[ $# -lt 1 ]]; then echo "❌ Usage: query_solvency <id>"; exit 1; fi
+    local id="$1"
+    echo "🧮 Querying Solvency for airdrop $id..." >&2
+    query "{\"solvency\":{\"id\":$id}}"
+}
+
 # Combined status check
 status() {
     if [[ $# -lt 2 ]]; then echo "❌ Usage: status <id> <address>"; exit 1; fi
@@ -154,6 +176,12 @@ update_eligibility() {
     if [[ $# -lt 2 ]]; then echo "❌ Usage: update_eligibility <airdrop_id> <eligibility_json>"; exit 1; fi
     local id="$1"
     local eligibility="$2"
+    # Soft-warn if the JSON probably has > 200 entries (the contract cap).
+    local approx_entries
+    approx_entries=$(printf '%s' "$eligibility" | grep -o '"' | wc -l | awk '{print $1 / 4}')
+    if (( $(echo "$approx_entries > 200" | bc -l 2>/dev/null || echo 0) )); then
+        echo "⚠️  ~${approx_entries} entries detected. Contract limit is 200 per call — split into multiple calls if rejected."
+    fi
     echo "⚙️ Updating eligibility for airdrop $id..."
     execute "{\"update_eligibility\":{\"airdrop_id\":$id,\"eligibility\":$eligibility}}" ""
 }
@@ -175,6 +203,7 @@ if [[ $# -lt 1 ]]; then
   echo "  query_airdrop <id>                                    # Get airdrop info"
   echo "  query_user_airdrop_status <id> <address>              # Check airdrop status and eligibility"
   echo "  query_latest_id                                       # Get latest ID"
+  echo "  query_solvency <id>                                   # Eligibility vs claimed vs balance funding check"
   exit 0
 fi
 
@@ -193,5 +222,6 @@ case "$1" in
   query_airdrop)      shift; query_airdrop "$@" ;;
   query_user_airdrop_status) shift; query_user_airdrop_status "$@" ;;
   query_latest_id)    query_latest_id ;;
+  query_solvency)     shift; query_solvency "$@" ;;
   *) echo "Unknown command: $1"; exit 1 ;;
 esac
