@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "QueryMsg",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "config"
+      ],
+      "properties": {
+        "config": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "usdc_balance"
+      ],
+      "properties": {
+        "usdc_balance": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Paginated list of authorised keepers.\n\n`start_after`: skip keys ≤ this bech32 (exclusive). `limit`: max entries to return (default 30, capped at 100).",
+      "type": "object",
+      "required": [
+        "keepers"
+      ],
+      "properties": {
+        "keepers": {
+          "type": "object",
+          "properties": {
+            "limit": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0.0
+            },
+            "start_after": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Returns exactly what the next `BridgeUsdc` call would send to chain — owner sanity-check before enabling the keeper.",
+      "type": "object",
+      "required": [
+        "preview_bridge"
+      ],
+      "properties": {
+        "preview_bridge": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

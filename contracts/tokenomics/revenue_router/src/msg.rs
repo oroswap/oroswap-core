@@ -7,33 +7,47 @@ pub struct InstantiateMsg {
     pub owner: String,
     /// USDC IBC denom on Zigchain (e.g. "ibc/6490A7...").
     pub usdc_denom: String,
-    /// Outbound IBC channel on Zigchain (e.g. "channel-0").
+    /// Outbound IBC channel on Zigchain (e.g. "channel-0", typically to Noble).
     pub ibc_channel: String,
     /// IBC packet timeout in seconds (default: 600).
     pub ibc_timeout_secs: Option<u64>,
+    /// First-hop receiver — used verbatim as the outbound MsgTransfer
+    /// `receiver`. Typically a Noble address (`noble1...`).
+    pub first_hop_receiver: String,
+    /// JSON memo carrying PFM / CCTP forwarding instructions. Inserted
+    /// verbatim into the outbound MsgTransfer's `memo` field.
+    pub forward_memo: String,
+    /// Maximum USDC per `BridgeUsdc` call. `None` = uncapped.
+    pub max_bridge_per_tx: Option<Uint128>,
 }
 
 #[cw_serde]
 pub enum ExecuteMsg {
-    /// Bridge USDC from this contract to Ethereum via Skip IBC routing.
+    /// Bridge USDC out of this contract to the destination encoded in
+    /// `Config.first_hop_receiver` + `Config.forward_memo`. Callable by
+    /// the owner or any registered keeper.
     ///
-    /// The keeper calls Skip API off-chain to get the route + PFM memo, then
-    /// passes them here. The contract fires a single MsgTransfer; Skip's
-    /// relayer handles the multi-hop (Zigchain → Noble → Ethereum).
+    /// The caller can only choose how much to bridge — not where. The
+    /// destination is owner-controlled policy in Config; a hijacked keeper
+    /// can only trigger transfers to the configured treasury.
     BridgeUsdc {
         /// Amount to bridge. If None, bridges the full contract balance.
         amount: Option<Uint128>,
-        /// PFM memo from Skip API `/v2/fungible/msgs`.
-        memo: String,
-        /// First-hop receiver address (from Skip API address_list).
-        receiver: String,
     },
 
     /// Update contract configuration. Owner only.
+    ///
+    /// `max_bridge_per_tx`:
+    ///   - omitted / null  → cap left unchanged
+    ///   - Some(Some(x))   → set cap to x
+    ///   - Some(None)      → clear the cap (uncapped)
     UpdateConfig {
         usdc_denom: Option<String>,
         ibc_channel: Option<String>,
         ibc_timeout_secs: Option<u64>,
+        first_hop_receiver: Option<String>,
+        forward_memo: Option<String>,
+        max_bridge_per_tx: Option<Option<Uint128>>,
     },
 
     /// Add an authorized keeper. Owner only.
@@ -71,8 +85,20 @@ pub enum QueryMsg {
     #[returns(BalanceResponse)]
     UsdcBalance {},
 
+    /// Paginated list of authorised keepers.
+    ///
+    /// `start_after`: skip keys ≤ this bech32 (exclusive).
+    /// `limit`: max entries to return (default 30, capped at 100).
     #[returns(KeepersResponse)]
-    Keepers {},
+    Keepers {
+        start_after: Option<String>,
+        limit: Option<u32>,
+    },
+
+    /// Returns exactly what the next `BridgeUsdc` call would send to
+    /// chain — owner sanity-check before enabling the keeper.
+    #[returns(PreviewBridgeResponse)]
+    PreviewBridge {},
 }
 
 #[cw_serde]
@@ -81,6 +107,9 @@ pub struct ConfigResponse {
     pub usdc_denom: String,
     pub ibc_channel: String,
     pub ibc_timeout_secs: u64,
+    pub first_hop_receiver: String,
+    pub forward_memo: String,
+    pub max_bridge_per_tx: Option<Uint128>,
     pub paused: bool,
 }
 
@@ -93,6 +122,18 @@ pub struct BalanceResponse {
 #[cw_serde]
 pub struct KeepersResponse {
     pub keepers: Vec<String>,
+}
+
+/// What the contract would put on chain on the next BridgeUsdc call.
+/// The keeper cannot affect any of these values.
+#[cw_serde]
+pub struct PreviewBridgeResponse {
+    pub channel: String,
+    pub denom: String,
+    pub receiver: String,
+    pub memo: String,
+    pub timeout_secs: u64,
+    pub max_bridge_per_tx: Option<Uint128>,
 }
 
 #[cw_serde]

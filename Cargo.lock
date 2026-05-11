@@ -2271,6 +2271,7 @@ dependencies = [
  "anyhow",
  "cosmwasm-schema 1.5.11",
  "cosmwasm-std 1.5.11",
+ "cw-multi-test 1.2.0",
  "cw-storage-plus",
  "cw2",
  "oroswap-core",
