@@ -41,3 +41,9 @@ pub const REWARD_ORO_RESERVE: Item<Uint128> = Item::new("reward_oro_reserve");
 
 /// Pending ownership proposal created via ProposeNewOwner.
 pub const OWNERSHIP_PROPOSAL: Item<OwnershipProposal> = Item::new("ownership_proposal");
+
+/// Addresses (in addition to the owner) authorised to pause the contract.
+/// Only the owner can add / remove entries, and only the owner can unpause —
+/// so a compromised authority can pause but cannot grief by toggling.
+/// Mirrors the wrapper + factory pattern.
+pub const PAUSE_AUTHORITIES: Map<&Addr, ()> = Map::new("pause_authorities");

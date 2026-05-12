@@ -2,8 +2,6 @@ use cosmwasm_std::StdError;
 use cw_utils::{ParseReplyError, PaymentError};
 use thiserror::Error;
 
-use crate::contract::MINIMUM_STAKE_AMOUNT;
-
 /// This enum describes staking contract errors
 #[derive(Error, Debug, PartialEq)]
 pub enum ContractError {
@@ -15,9 +13,6 @@ pub enum ContractError {
 
     #[error("{0}")]
     ParseReplyError(#[from] ParseReplyError),
-
-    #[error("Initial stake amount must be more than {MINIMUM_STAKE_AMOUNT}")]
-    MinimumStakeAmountError {},
 
     #[error("Insufficient amount of Stake")]
     StakeAmountTooSmall {},
@@ -42,4 +37,16 @@ pub enum ContractError {
 
     #[error("Too many reward denoms, maximum is {max}")]
     TooManyRewardDenoms { max: usize },
+
+    #[error("ORO is non-recoverable: every wei held by the contract is owed to stakers (effective deposit, unbonding queue, or reward reserve). Direct bank-sends of ORO auto-compound into existing xORO share value by design and cannot be reclaimed.")]
+    OroNonRecoverable {},
+
+    #[error("No excess tokens to withdraw")]
+    NoExcessToWithdraw {},
+
+    #[error("Invalid pause authority address: {address}")]
+    InvalidPauseAuthority { address: String },
+
+    #[error("No unpause authority - only contract owner can unpause")]
+    NoUnpauseAuthority {},
 }

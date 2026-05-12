@@ -181,6 +181,64 @@ impl Helper {
         )
     }
 
+    pub fn add_pause_authorities(
+        &mut self,
+        sender: &Addr,
+        authorities: Vec<String>,
+    ) -> AnyResult<AppResponse> {
+        self.app.execute_contract(
+            sender.clone(),
+            self.staking.clone(),
+            &ExecuteMsg::AddPauseAuthorities { authorities },
+            &[],
+        )
+    }
+
+    pub fn remove_pause_authorities(
+        &mut self,
+        sender: &Addr,
+        authorities: Vec<String>,
+    ) -> AnyResult<AppResponse> {
+        self.app.execute_contract(
+            sender.clone(),
+            self.staking.clone(),
+            &ExecuteMsg::RemovePauseAuthorities { authorities },
+            &[],
+        )
+    }
+
+    pub fn query_pause_authorities(&self) -> StdResult<Vec<String>> {
+        self.app
+            .wrap()
+            .query_wasm_smart(&self.staking, &QueryMsg::PauseAuthorities {})
+    }
+
+    pub fn withdraw_excess_tokens(
+        &mut self,
+        sender: &Addr,
+        denom: &str,
+        recipient: Option<String>,
+    ) -> AnyResult<AppResponse> {
+        self.app.execute_contract(
+            sender.clone(),
+            self.staking.clone(),
+            &ExecuteMsg::WithdrawExcessTokens {
+                denom: denom.to_string(),
+                recipient,
+            },
+            &[],
+        )
+    }
+
+    pub fn bank_send(
+        &mut self,
+        sender: &Addr,
+        recipient: &Addr,
+        amount: Vec<Coin>,
+    ) -> AnyResult<AppResponse> {
+        self.app.send_tokens(sender.clone(), recipient.clone(), &amount)
+    }
+
     pub fn query_pending_rewards(&self, address: &Addr) -> StdResult<Vec<Coin>> {
         self.app.wrap().query_wasm_smart(
             &self.staking,

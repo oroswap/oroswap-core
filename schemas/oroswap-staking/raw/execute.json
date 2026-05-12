@@ -52,7 +52,7 @@
       "additionalProperties": false
     },
     {
-      "description": "Burns xORO in exchange for ORO. The receiver is optional. If not set, the sender will receive the ORO.",
+      "description": "Burns xORO and begins unbonding of the proportional ORO amount. The receiver is locked in at this point and stored in the unbonding entry. If not set, the sender will receive ORO on Claim.",
       "type": "object",
       "required": [
         "leave"
@@ -66,6 +66,231 @@
                 "string",
                 "null"
               ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Claims all matured unbonding entries for the sender. Funds go to the receiver set during Leave.",
+      "type": "object",
+      "required": [
+        "claim"
+      ],
+      "properties": {
+        "claim": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Adds reward tokens to the contract to be distributed to stakers. Admin only.",
+      "type": "object",
+      "required": [
+        "add_reward"
+      ],
+      "properties": {
+        "add_reward": {
+          "type": "object",
+          "required": [
+            "duration"
+          ],
+          "properties": {
+            "duration": {
+              "description": "Number of seconds over which rewards are distributed.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0.0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Updates the contract configuration. Only callable by the owner.",
+      "type": "object",
+      "required": [
+        "update_config"
+      ],
+      "properties": {
+        "update_config": {
+          "type": "object",
+          "properties": {
+            "unbonding_period": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0.0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Proposes a new owner. The proposed owner must call ClaimOwnership within expires_in seconds. Only callable by the current owner.",
+      "type": "object",
+      "required": [
+        "propose_new_owner"
+      ],
+      "properties": {
+        "propose_new_owner": {
+          "type": "object",
+          "required": [
+            "expires_in",
+            "owner"
+          ],
+          "properties": {
+            "expires_in": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0.0
+            },
+            "owner": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Removes the pending ownership proposal. Only callable by the current owner.",
+      "type": "object",
+      "required": [
+        "drop_ownership_proposal"
+      ],
+      "properties": {
+        "drop_ownership_proposal": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Claims a pending ownership proposal. Only callable by the proposed new owner.",
+      "type": "object",
+      "required": [
+        "claim_ownership"
+      ],
+      "properties": {
+        "claim_ownership": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Pauses the contract. Only callable by the owner.",
+      "type": "object",
+      "required": [
+        "pause"
+      ],
+      "properties": {
+        "pause": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Unpauses the contract. Only callable by the owner.",
+      "type": "object",
+      "required": [
+        "unpause"
+      ],
+      "properties": {
+        "unpause": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Emergency withdrawal of non-staked tokens accidentally sent to the contract. For ORO: only withdraws the excess above (effective_deposit + total_locked + reward_oro_reserve). For other denoms: withdraws the full balance. Only callable by the owner.",
+      "type": "object",
+      "required": [
+        "withdraw_excess_tokens"
+      ],
+      "properties": {
+        "withdraw_excess_tokens": {
+          "type": "object",
+          "required": [
+            "denom"
+          ],
+          "properties": {
+            "denom": {
+              "type": "string"
+            },
+            "recipient": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Add addresses authorised to pause the contract (in addition to the owner). Owner only. Authorities can `Pause` but cannot `Unpause`, so a compromised authority key can never grief by toggling.",
+      "type": "object",
+      "required": [
+        "add_pause_authorities"
+      ],
+      "properties": {
+        "add_pause_authorities": {
+          "type": "object",
+          "required": [
+            "authorities"
+          ],
+          "properties": {
+            "authorities": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Remove addresses from the pause-authority set. Owner only.",
+      "type": "object",
+      "required": [
+        "remove_pause_authorities"
+      ],
+      "properties": {
+        "remove_pause_authorities": {
+          "type": "object",
+          "required": [
+            "authorities"
+          ],
+          "properties": {
+            "authorities": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "additionalProperties": false

@@ -4,6 +4,20 @@
   "description": "This structure describes the query messages available in the contract.",
   "oneOf": [
     {
+      "description": "State returns the current pool state including exchange rate",
+      "type": "object",
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
       "description": "Config returns the contract configuration specified in a custom [`Config`] structure",
       "type": "object",
       "required": [
@@ -32,7 +46,7 @@
       "additionalProperties": false
     },
     {
-      "description": "Returns total ORO staked in the contract",
+      "description": "Returns total ORO staked in the contract (excluding locked unbonding amounts).",
       "type": "object",
       "required": [
         "total_deposit"
@@ -46,20 +60,7 @@
       "additionalProperties": false
     },
     {
-      "type": "object",
-      "required": [
-        "tracker_config"
-      ],
-      "properties": {
-        "tracker_config": {
-          "type": "object",
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
-    {
-      "description": "BalanceAt returns xORO balance of the given address at at the given timestamp. Returns current balance if timestamp unset.",
+      "description": "BalanceAt returns xORO balance of the given address at the given timestamp. Returns current balance if timestamp unset.",
       "type": "object",
       "required": [
         "balance_at"
@@ -107,6 +108,92 @@
               "minimum": 0.0
             }
           },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Returns total ORO currently in unbonding period.",
+      "type": "object",
+      "required": [
+        "total_locked"
+      ],
+      "properties": {
+        "total_locked": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Returns all pending unbonding entries for the given address.",
+      "type": "object",
+      "required": [
+        "unbonding_entries"
+      ],
+      "properties": {
+        "unbonding_entries": {
+          "type": "object",
+          "required": [
+            "address"
+          ],
+          "properties": {
+            "address": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Returns the configured unbonding period in seconds.",
+      "type": "object",
+      "required": [
+        "unbonding_period"
+      ],
+      "properties": {
+        "unbonding_period": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Returns all pending rewards for the given address.",
+      "type": "object",
+      "required": [
+        "pending_rewards"
+      ],
+      "properties": {
+        "pending_rewards": {
+          "type": "object",
+          "required": [
+            "address"
+          ],
+          "properties": {
+            "address": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Returns the addresses currently in the pause-authority set. The owner has implicit pause authority and is NOT included.",
+      "type": "object",
+      "required": [
+        "pause_authorities"
+      ],
+      "properties": {
+        "pause_authorities": {
+          "type": "object",
           "additionalProperties": false
         }
       },

@@ -576,56 +576,21 @@ fn test_pause_unpause() {
 }
 
 #[test]
-fn test_migration() {
+/// Same-version migrate is a no-op against the in-flight test instance. The
+/// genuine legacy-bytes path (pre-2.2.0 Config without `paused`) cannot be
+/// exercised through cw-multi-test because contract storage is namespaced
+/// behind the wasm keeper — `init_modules` writes to a different keyspace
+/// and is invisible to the migrate handler. That path is covered by the
+/// unit test in `migrate.rs`, which uses `mock_dependencies()` to write
+/// legacy-shaped bytes directly into the contract's own storage. (Audit
+/// N-2.)
+#[test]
+fn test_migration_same_version() {
     let owner = Addr::unchecked("owner");
     let mut helper = Helper::new(&owner).unwrap();
     let staking_addr = helper.staking.clone();
 
-    // 1. Manually set an "old" state and version
-    // We'll use the current contract but overwrite its state with a legacy format
-    // and set its cw2 version to an older one.
-    
-    // Define legacy config locally for simulation
-    #[cw_serde]
-    pub struct LegacyConfig {
-        pub oro_denom: String,
-        pub xoro_denom: String,
-        pub bootstrap_amount: Uint128,
-        pub owner: String,
-        pub unbonding_period: u64,
-        pub xoro_decimals: u32,
-        pub xoro_uri: Option<String>,
-    }
-
-    let legacy_config = LegacyConfig {
-        oro_denom: "coin.assembly.oro".to_string(),
-        xoro_denom: helper.xoro_denom.clone(),
-        bootstrap_amount: Uint128::new(1000),
-        owner: owner.to_string(),
-        unbonding_period: 604800,
-        xoro_decimals: 6,
-        xoro_uri: Some("https://example.com".to_string()),
-    };
-
-    helper.app.init_modules(|router, _, storage| {
-        // Save legacy config
-        let config_item: cw_storage_plus::Item<LegacyConfig> = cw_storage_plus::Item::new("config");
-        config_item.save(storage, &legacy_config).unwrap();
-        
-        // Set old version - use 2.1.0 which is in the migrate list
-        cw2::set_contract_version(storage, "oroswap-staking", "2.1.0").unwrap();
-
-        // Verify it's set in this closure
-        let v = cw2::get_contract_version(storage).unwrap();
-        assert_eq!(v.version, "2.1.0");
-    });
-
-    // Verify it's still set after the closure (if possible, but cw-multi-test storage is tricky)
-    // We'll trust init_modules for now but use 2.1.0 just in case 1.2.0 was somehow confusing
-
-    // 2. Perform migration
     use oroswap::staking::MigrateMsg;
-    // We need to store the code again to get a code ID for migration
     fn staking_contract() -> Box<dyn Contract<Empty>> {
         Box::new(
             ContractWrapper::new_with_empty(
@@ -639,22 +604,18 @@ fn test_migration() {
     }
     let new_code_id = helper.app.store_code(staking_contract());
 
-    helper.app.migrate_contract(
-        owner.clone(),
-        staking_addr.clone(),
-        &MigrateMsg {},
-        new_code_id,
-    ).unwrap();
+    helper
+        .app
+        .migrate_contract(owner.clone(), staking_addr.clone(), &MigrateMsg {}, new_code_id)
+        .unwrap();
 
-    // 3. Verify migration
-    let config: Config = helper.app.wrap().query_wasm_smart(&staking_addr, &QueryMsg::Config {}).unwrap();
-    assert_eq!(config.paused, false);
-    assert_eq!(config.oro_denom, "coin.assembly.oro");
-
-    // 4. Verify pause/unpause works now
-    helper.pause(&owner).unwrap();
-    let config: Config = helper.app.wrap().query_wasm_smart(&staking_addr, &QueryMsg::Config {}).unwrap();
-    assert_eq!(config.paused, true);
+    // Config still reads back coherently; pause flag preserved.
+    let config: Config = helper
+        .app
+        .wrap()
+        .query_wasm_smart(&staking_addr, &QueryMsg::Config {})
+        .unwrap();
+    assert!(!config.paused);
 }
 
 #[test]
@@ -741,4 +702,219 @@ fn test_incentives() {
     // Part 2: floor(10000 * 50/100 * 10000 / 21000) = floor(2380.95...) = 2380
     // But Decimal256 internally accumulates without flooring each step, so total = 6926.
     assert_eq!(alice_usdc_after, 6926);
+}
+
+// ─── PAUSE_AUTHORITIES (audit N-3 follow-up) ─────────────────────────────────
+//
+// Mirrors the wrapper / factory pattern: a delegated authority can pause,
+// but ONLY the owner can unpause. Limits blast radius of a compromised
+// authority key — they can grief by pausing but can't toggle.
+
+#[test]
+fn test_pause_authority_can_pause_but_not_unpause() {
+    let owner = Addr::unchecked("owner");
+    let authority = Addr::unchecked("authority");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    // Owner grants pause authority.
+    helper
+        .add_pause_authorities(&owner, vec![authority.to_string()])
+        .unwrap();
+    let list = helper.query_pause_authorities().unwrap();
+    assert_eq!(list, vec![authority.to_string()]);
+
+    // Authority pauses successfully.
+    helper.pause(&authority).unwrap();
+
+    // Authority CANNOT unpause — typed error.
+    let err = helper.unpause(&authority).unwrap_err();
+    let root = err.downcast::<ContractError>().unwrap();
+    assert!(
+        matches!(root, ContractError::NoUnpauseAuthority {}),
+        "expected NoUnpauseAuthority, got {root:?}",
+    );
+
+    // Owner unpauses successfully.
+    helper.unpause(&owner).unwrap();
+}
+
+#[test]
+fn test_pause_authority_management_owner_only() {
+    let owner = Addr::unchecked("owner");
+    let mallory = Addr::unchecked("mallory");
+    let authority = Addr::unchecked("authority");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    // Non-owner cannot add authorities.
+    let err = helper
+        .add_pause_authorities(&mallory, vec![authority.to_string()])
+        .unwrap_err();
+    let root = err.downcast::<ContractError>().unwrap();
+    assert_eq!(root, ContractError::Unauthorized {});
+
+    // Bogus address rejected with typed error (empty string fails addr_validate
+    // even under the permissive MockApi used by cw-multi-test).
+    let err = helper
+        .add_pause_authorities(&owner, vec!["".to_string()])
+        .unwrap_err();
+    let root = err.downcast::<ContractError>().unwrap();
+    assert!(
+        matches!(root, ContractError::InvalidPauseAuthority { .. }),
+        "expected InvalidPauseAuthority, got {root:?}",
+    );
+
+    // Add, then remove.
+    helper
+        .add_pause_authorities(&owner, vec![authority.to_string()])
+        .unwrap();
+    assert_eq!(helper.query_pause_authorities().unwrap().len(), 1);
+
+    helper
+        .remove_pause_authorities(&owner, vec![authority.to_string()])
+        .unwrap();
+    assert!(helper.query_pause_authorities().unwrap().is_empty());
+
+    // Removed authority can no longer pause.
+    let err = helper.pause(&authority).unwrap_err();
+    let root = err.downcast::<ContractError>().unwrap();
+    assert_eq!(root, ContractError::Unauthorized {});
+}
+
+// ─── WithdrawExcessTokens (audit N-1) ────────────────────────────────────────
+//
+// Pre-fix the function was a structural no-op for the ORO denom: it computed
+// `withdrawable = balance - (effective + locked + reserve)`, but `effective`
+// itself was defined as `balance - locked - reserve`, so the expression was
+// always exactly zero regardless of state. After the fix, the function rejects
+// ORO outright (every wei is owed to stakers / unbonders / reward stream) and
+// fully drains any other denom.
+
+#[test]
+fn test_withdraw_excess_oro_rejected() {
+    let owner = Addr::unchecked("owner");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    let alice = Addr::unchecked("alice");
+    helper.give_oro(10_000, &alice);
+    helper.stake(&alice, 10_000).unwrap();
+
+    // Bank-send 5_000 ORO directly to the contract (auto-compound mechanism;
+    // would-have-been a "recoverable excess" under the no-op fix).
+    helper.give_oro(5_000, &owner);
+    helper
+        .bank_send(&owner, &helper.staking.clone(), coins(5_000, ORO_DENOM))
+        .unwrap();
+
+    // Owner attempts to withdraw the ORO — must be refused, by design.
+    let err = helper
+        .withdraw_excess_tokens(&owner, ORO_DENOM, None)
+        .unwrap_err();
+    let root = err.downcast::<ContractError>().unwrap();
+    assert!(
+        matches!(root, ContractError::OroNonRecoverable {}),
+        "expected OroNonRecoverable, got {root:?}",
+    );
+
+    // Non-owner is rejected before the denom check is reached.
+    let mallory = Addr::unchecked("mallory");
+    let err = helper
+        .withdraw_excess_tokens(&mallory, ORO_DENOM, None)
+        .unwrap_err();
+    let root = err.downcast::<ContractError>().unwrap();
+    assert_eq!(root, ContractError::Unauthorized {});
+}
+
+#[test]
+fn test_withdraw_excess_non_oro_full_balance() {
+    let owner = Addr::unchecked("owner");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    let bogus = "stray/usdc";
+    // Send 7_500 stray tokens directly to the contract (mistaken transfer).
+    helper.mint_coin(&owner, coin(7_500, bogus));
+    helper
+        .bank_send(&owner, &helper.staking.clone(), coins(7_500, bogus))
+        .unwrap();
+
+    let owner_before = helper.query_balance(&owner, bogus).unwrap().u128();
+    let contract_before = helper
+        .query_balance(&helper.staking.clone(), bogus)
+        .unwrap()
+        .u128();
+    assert_eq!(contract_before, 7_500);
+
+    helper
+        .withdraw_excess_tokens(&owner, bogus, None)
+        .unwrap();
+
+    let owner_after = helper.query_balance(&owner, bogus).unwrap().u128();
+    let contract_after = helper
+        .query_balance(&helper.staking.clone(), bogus)
+        .unwrap()
+        .u128();
+    assert_eq!(owner_after - owner_before, 7_500);
+    assert_eq!(contract_after, 0);
+
+    // Second call with the same denom — nothing left to withdraw.
+    let err = helper
+        .withdraw_excess_tokens(&owner, bogus, None)
+        .unwrap_err();
+    let root = err.downcast::<ContractError>().unwrap();
+    assert!(
+        matches!(root, ContractError::NoExcessToWithdraw {}),
+        "expected NoExcessToWithdraw, got {root:?}",
+    );
+}
+
+/// Audit N-3 regression: the per-user `MAX_UNBONDING_ENTRIES` ceiling now
+/// surfaces the typed `TooManyUnbondingEntries { max }` variant instead of
+/// a stringly-typed `StdError::generic_err`. The 11th `Leave` from the same
+/// address must fail with the typed error.
+#[test]
+fn test_too_many_unbonding_entries_typed_error() {
+    let owner = Addr::unchecked("owner");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    let alice = Addr::unchecked("alice");
+    helper.give_oro(11 * 1_000, &alice);
+    helper.stake(&alice, 11 * 1_000).unwrap();
+    let xoro_balance = helper.query_balance(&alice, &helper.xoro_denom.clone()).unwrap().u128();
+    let per_leave = xoro_balance / 11;
+
+    // 10 successful Leave calls — fills the per-user unbonding slots.
+    for _ in 0..10 {
+        helper.unstake(&alice, per_leave).unwrap();
+    }
+
+    // 11th must fail with the typed variant (max = 10).
+    let err = helper.unstake(&alice, per_leave).unwrap_err();
+    let root = err.downcast::<ContractError>().unwrap();
+    assert!(
+        matches!(root, ContractError::TooManyUnbondingEntries { max: 10 }),
+        "expected TooManyUnbondingEntries {{ max: 10 }}, got {root:?}",
+    );
+}
+
+#[test]
+fn test_withdraw_excess_non_oro_custom_recipient() {
+    let owner = Addr::unchecked("owner");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    let bogus = "stray/usdt";
+    helper.mint_coin(&owner, coin(2_000, bogus));
+    helper
+        .bank_send(&owner, &helper.staking.clone(), coins(2_000, bogus))
+        .unwrap();
+
+    let beneficiary = Addr::unchecked("beneficiary");
+    helper
+        .withdraw_excess_tokens(&owner, bogus, Some(beneficiary.to_string()))
+        .unwrap();
+
+    assert_eq!(
+        helper.query_balance(&beneficiary, bogus).unwrap().u128(),
+        2_000,
+        "explicit recipient receives the full amount",
+    );
+    assert_eq!(helper.query_balance(&owner, bogus).unwrap().u128(), 0);
 }

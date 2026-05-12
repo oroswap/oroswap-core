@@ -78,6 +78,14 @@ pub enum ExecuteMsg {
     /// For other denoms: withdraws the full balance.
     /// Only callable by the owner.
     WithdrawExcessTokens { denom: String, recipient: Option<String> },
+
+    /// Add addresses authorised to pause the contract (in addition to the
+    /// owner). Owner only. Authorities can `Pause` but cannot `Unpause`, so
+    /// a compromised authority key can never grief by toggling.
+    AddPauseAuthorities { authorities: Vec<String> },
+
+    /// Remove addresses from the pause-authority set. Owner only.
+    RemovePauseAuthorities { authorities: Vec<String> },
 }
 
 /// This structure describes the query messages available in the contract.
@@ -119,6 +127,11 @@ pub enum QueryMsg {
     /// Returns all pending rewards for the given address.
     #[returns(Vec<cosmwasm_std::Coin>)]
     PendingRewards { address: String },
+
+    /// Returns the addresses currently in the pause-authority set.
+    /// The owner has implicit pause authority and is NOT included.
+    #[returns(Vec<String>)]
+    PauseAuthorities {},
 }
 
 /// This structure stores the main parameters for the staking contract.
@@ -138,7 +151,15 @@ pub struct Config {
     pub xoro_decimals: u32,
     /// xORO metadata URI
     pub xoro_uri: Option<String>,
-    /// Whether the contract is paused
+    /// Whether the contract is paused.
+    ///
+    /// `#[serde(default)]` is load-bearing: any legacy on-chain bytes
+    /// serialised before `paused` was added (pre-2.2.0) deserialise as
+    /// `false`, so a `CONFIG.load()` after `migrate` from such a version
+    /// succeeds without the migrate handler having to rewrite Config. The
+    /// matching default-on-deserialisation behaviour is what makes the
+    /// migration path lazy and safe. (Audit N-2.)
+    #[serde(default)]
     pub paused: bool,
 }
 

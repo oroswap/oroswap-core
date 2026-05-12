@@ -2,8 +2,8 @@
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     attr, coin, ensure, to_json_binary, Addr, BankMsg, Binary, Coin, CosmosMsg, Decimal,
-    Decimal256, Deps, DepsMut, Env, MessageInfo, Reply, Response, StdError, StdResult, Storage,
-    SubMsg, Uint128, WasmMsg,
+    Decimal256, Deps, DepsMut, Env, MessageInfo, Order, Reply, Response, StdError, StdResult,
+    Storage, SubMsg, Uint128, WasmMsg,
 };
 use cw2::set_contract_version;
 use cw_utils::{must_pay, one_coin};
@@ -21,8 +21,8 @@ use oroswap::token_factory::tf_set_denom_metadata_msg;
 
 use crate::error::ContractError;
 use crate::state::{
-    CONFIG, OWNERSHIP_PROPOSAL, REWARD_ORO_RESERVE, REWARDS, TOTAL_LOCKED, UNBONDING, USER_REWARDS, RewardInfo,
-    UserRewardInfo,
+    CONFIG, OWNERSHIP_PROPOSAL, PAUSE_AUTHORITIES, REWARD_ORO_RESERVE, REWARDS, TOTAL_LOCKED,
+    UNBONDING, USER_REWARDS, RewardInfo, UserRewardInfo,
 };
 
 /// Contract name that is used for migration.
@@ -217,6 +217,12 @@ pub fn execute(
         ExecuteMsg::AddReward { duration } => execute_add_reward(deps, env, info, duration),
         ExecuteMsg::WithdrawExcessTokens { denom, recipient } => {
             execute_withdraw_excess_tokens(deps, env, info, denom, recipient)
+        }
+        ExecuteMsg::AddPauseAuthorities { authorities } => {
+            execute_add_pause_authorities(deps, info, authorities)
+        }
+        ExecuteMsg::RemovePauseAuthorities { authorities } => {
+            execute_remove_pause_authorities(deps, info, authorities)
         }
     }
 }
@@ -434,16 +440,19 @@ fn execute_leave(
     };
 
     let sender = info.sender.clone();
-    UNBONDING.update(deps.storage, &sender, |maybe_entries| -> StdResult<_> {
-        let mut entries = maybe_entries.unwrap_or_default();
-        if entries.len() >= MAX_UNBONDING_ENTRIES {
-            return Err(StdError::generic_err(format!(
-                "Too many unbonding entries, maximum is {MAX_UNBONDING_ENTRIES}"
-            )));
-        }
-        entries.push(entry);
-        Ok(entries)
-    })?;
+    // Length check lives outside the `.update` closure so we can surface the
+    // typed `TooManyUnbondingEntries` variant rather than a stringly-typed
+    // `StdError`. The closure body itself is infallible after this guard.
+    let mut entries = UNBONDING
+        .may_load(deps.storage, &sender)?
+        .unwrap_or_default();
+    if entries.len() >= MAX_UNBONDING_ENTRIES {
+        return Err(ContractError::TooManyUnbondingEntries {
+            max: MAX_UNBONDING_ENTRIES,
+        });
+    }
+    entries.push(entry);
+    UNBONDING.save(deps.storage, &sender, &entries)?;
 
     // Increase TOTAL_LOCKED
     TOTAL_LOCKED.update(deps.storage, |locked| -> StdResult<u128> {
@@ -591,30 +600,107 @@ fn execute_update_config(
     Ok(Response::new().add_attribute("action", "update_config"))
 }
 
-/// Pauses the contract. Owner only.
+/// Pauses the contract. Callable by the owner OR any address registered in
+/// `PAUSE_AUTHORITIES`. The owner has implicit pause authority.
 fn execute_pause(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
+    check_pause_authority(deps.storage, &info.sender)?;
     let mut config = CONFIG.load(deps.storage)?;
-    if info.sender.to_string() != config.owner {
-        return Err(ContractError::Unauthorized {});
-    }
-
     config.paused = true;
     CONFIG.save(deps.storage, &config)?;
 
-    Ok(Response::new().add_attribute("action", "pause"))
+    Ok(Response::new().add_attributes([
+        attr("action", "pause"),
+        attr("sender", info.sender),
+    ]))
 }
 
-/// Unpauses the contract. Owner only.
+/// Unpauses the contract. **Owner only** — keeping unpause to the owner
+/// means a compromised pause-authority key can pause-and-grief but cannot
+/// flip pause state back and forth.
 fn execute_unpause(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
     let mut config = CONFIG.load(deps.storage)?;
     if info.sender.to_string() != config.owner {
-        return Err(ContractError::Unauthorized {});
+        return Err(ContractError::NoUnpauseAuthority {});
     }
 
     config.paused = false;
     CONFIG.save(deps.storage, &config)?;
 
     Ok(Response::new().add_attribute("action", "unpause"))
+}
+
+/// Pause-authority check: passes if `sender` is the owner OR a registered
+/// pause authority.
+fn check_pause_authority(
+    storage: &dyn Storage,
+    sender: &Addr,
+) -> Result<(), ContractError> {
+    let config = CONFIG.load(storage)?;
+    if sender.to_string() == config.owner {
+        return Ok(());
+    }
+    if PAUSE_AUTHORITIES.has(storage, sender) {
+        return Ok(());
+    }
+    Err(ContractError::Unauthorized {})
+}
+
+/// Add addresses to the pause-authority set. Owner only.
+fn execute_add_pause_authorities(
+    deps: DepsMut,
+    info: MessageInfo,
+    authorities: Vec<String>,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender.to_string() != config.owner {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    let mut added = 0u32;
+    for raw in authorities {
+        let addr = deps
+            .api
+            .addr_validate(&raw)
+            .map_err(|_| ContractError::InvalidPauseAuthority { address: raw.clone() })?;
+        if !PAUSE_AUTHORITIES.has(deps.storage, &addr) {
+            PAUSE_AUTHORITIES.save(deps.storage, &addr, &())?;
+            added += 1;
+        }
+    }
+
+    Ok(Response::new().add_attributes([
+        attr("action", "add_pause_authorities"),
+        attr("added_count", added.to_string()),
+    ]))
+}
+
+/// Remove addresses from the pause-authority set. Owner only.
+fn execute_remove_pause_authorities(
+    deps: DepsMut,
+    info: MessageInfo,
+    authorities: Vec<String>,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender.to_string() != config.owner {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    let mut removed = 0u32;
+    for raw in authorities {
+        let addr = deps
+            .api
+            .addr_validate(&raw)
+            .map_err(|_| ContractError::InvalidPauseAuthority { address: raw.clone() })?;
+        if PAUSE_AUTHORITIES.has(deps.storage, &addr) {
+            PAUSE_AUTHORITIES.remove(deps.storage, &addr);
+            removed += 1;
+        }
+    }
+
+    Ok(Response::new().add_attributes([
+        attr("action", "remove_pause_authorities"),
+        attr("removed_count", removed.to_string()),
+    ]))
 }
 
 /// Checks if the contract is paused.
@@ -774,6 +860,13 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
             }
             to_json_binary(&pending)
         }
+        QueryMsg::PauseAuthorities {} => {
+            let authorities: Vec<String> = PAUSE_AUTHORITIES
+                .keys(deps.storage, None, None, Order::Ascending)
+                .filter_map(|res| res.ok().map(|addr| addr.into_string()))
+                .collect();
+            to_json_binary(&authorities)
+        }
     }
 }
 
@@ -866,6 +959,16 @@ fn update_rewards(storage: &mut dyn Storage, env: &Env, total_shares: Uint128) -
     REWARDS.save(storage, &rewards)?;
     Ok(rewards)
 }
+/// Recover non-ORO tokens accidentally sent to the contract. Owner only.
+///
+/// **ORO is explicitly non-recoverable**: every ORO held by the contract is
+/// already accounted for as either (a) effective deposit backing xORO shares,
+/// (b) unbonding-queue principal, or (c) reward-reserve principal. By the
+/// design of `effective_deposit` (which reads live balance minus locked and
+/// reserve), any direct bank-send of ORO auto-compounds into existing xORO
+/// share value — a documented protocol mechanism. Trying to "recover" such
+/// ORO would silently dilute stakers, so we refuse the call up front rather
+/// than ship a no-op that pretends to work. (Audit N-1.)
 fn execute_withdraw_excess_tokens(
     deps: DepsMut,
     env: Env,
@@ -878,6 +981,10 @@ fn execute_withdraw_excess_tokens(
         return Err(ContractError::Unauthorized {});
     }
 
+    if denom == config.oro_denom {
+        return Err(ContractError::OroNonRecoverable {});
+    }
+
     let to = recipient.unwrap_or_else(|| config.owner.clone());
     deps.api.addr_validate(&to)?;
 
@@ -886,31 +993,13 @@ fn execute_withdraw_excess_tokens(
         .query_balance(&env.contract.address, &denom)?
         .amount;
 
-    let withdrawable = if denom == config.oro_denom {
-        // For ORO, only withdraw the excess above what the contract owes:
-        // effective staked pool + locked unbonding + reward reserve.
-        // Tokens sent directly inflate the balance without going through Enter,
-        // so excess = balance - proper_effective - owed.
-        let total_locked = TOTAL_LOCKED.load(deps.storage)?;
-        let reward_oro_reserve = REWARD_ORO_RESERVE.load(deps.storage)?;
-        let owed = Uint128::new(total_locked) + reward_oro_reserve;
-        let proper_effective = effective_deposit(balance, total_locked, reward_oro_reserve)
-            .unwrap_or(Uint128::zero());
-        balance.saturating_sub(proper_effective + owed)
-    } else {
-        // Non-ORO tokens not added via AddReward are fully withdrawable
-        balance
-    };
-
-    if withdrawable.is_zero() {
-        return Err(ContractError::Std(StdError::generic_err(
-            "No excess tokens to withdraw",
-        )));
+    if balance.is_zero() {
+        return Err(ContractError::NoExcessToWithdraw {});
     }
 
     let send_msg: CosmosMsg = BankMsg::Send {
         to_address: to.clone(),
-        amount: vec![coin(withdrawable.u128(), &denom)],
+        amount: vec![coin(balance.u128(), &denom)],
     }
     .into();
 
@@ -919,7 +1008,7 @@ fn execute_withdraw_excess_tokens(
         .add_attributes([
             attr("action", "withdraw_excess_tokens"),
             attr("denom", denom),
-            attr("amount", withdrawable),
+            attr("amount", balance),
             attr("recipient", to),
         ]))
 }
