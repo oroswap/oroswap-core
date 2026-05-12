@@ -19,10 +19,17 @@ fi
 
 # ─── Deploy Function ────────────────────────────────────────────────────────
 deploy() {
-    if [[ $# -lt 2 ]]; then echo "❌ Usage: deploy <lock_denom> <mint_subdenom> [owner]"; exit 1; fi
+    if [[ $# -lt 3 ]]; then
+        echo "❌ Usage: deploy <lock_denom> <mint_subdenom> <mint_decimals> [owner]"
+        echo "   <mint_decimals> MUST match the source token's decimals so that"
+        echo "   wallets display 1:1 wrapping correctly. E.g. 6 for USDC,"
+        echo "   18 for most ERC-20s. Baked in once at create-time."
+        exit 1
+    fi
     local lock_denom="$1"
     local mint_subdenom="$2"
-    local admin="${3:-$($BINARY keys show "$KEY_NAME" -a --keyring-backend "$KEYRING_BACKEND")}"
+    local mint_decimals="$3"
+    local admin="${4:-$($BINARY keys show "$KEY_NAME" -a --keyring-backend "$KEYRING_BACKEND")}"
     
     echo "🚀 1. Storing Wrapper Code..."
     local res=$($BINARY tx wasm store "$WASM_PATH" --from "$KEY_NAME" \
@@ -45,8 +52,8 @@ deploy() {
     sleep 5 
 
     echo "🎬 2. Instantiating Wrapper Contract..."
-    # Customize msg based on lock_denom and mint_subdenom
-    local inst_msg="{\"lock_denom\":\"$lock_denom\",\"mint_subdenom\":\"$mint_subdenom\",\"owner\":\"$admin\"}"
+    # mint_decimals is required — must match the source token's decimals.
+    local inst_msg="{\"lock_denom\":\"$lock_denom\",\"mint_subdenom\":\"$mint_subdenom\",\"mint_decimals\":$mint_decimals,\"owner\":\"$admin\"}"
     
     local inst_res=$($BINARY tx wasm instantiate "$code_id" "$inst_msg" --label "Oroswap Wrapper ($mint_subdenom)" \
         --admin "$admin" --from "$KEY_NAME" --keyring-backend "$KEYRING_BACKEND" \
@@ -64,6 +71,7 @@ deploy() {
     echo "📍 Address: $contract_addr"
     echo "🪙 Lock Denom: $lock_denom"
     echo "🪙 Mint Subdenom: $mint_subdenom"
+    echo "🔢 Mint Decimals: $mint_decimals (immutable; baked into denom metadata)"
     echo "💻 Admin: $admin"
 
     # Update env file optionally

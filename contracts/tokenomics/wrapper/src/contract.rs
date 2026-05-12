@@ -16,7 +16,9 @@ use oroswap::token_factory::{tf_propose_denom_admin_msg, tf_set_denom_metadata_f
 
 use crate::error::ContractError;
 use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
-use crate::state::{Config, MintMeta, CONFIG, MINT_META, OWNERSHIP_PROPOSAL, PAUSE_AUTHORITIES};
+use crate::state::{
+    Config, DenomMetadata, CONFIG, DENOM_METADATA, OWNERSHIP_PROPOSAL, PAUSE_AUTHORITIES,
+};
 
 /// Contract name used for migration / cw2 version tracking.
 pub const CONTRACT_NAME: &str = env!("CARGO_PKG_NAME");
@@ -78,27 +80,32 @@ pub fn instantiate(
         StdError::generic_err("mint_subdenom must not be empty")
     );
 
-    // Store reference to uri and decimals for use in reply handler
     CONFIG.save(
         deps.storage,
         &Config {
             lock_denom: msg.lock_denom.clone(),
             mint_denom: "".to_string(), // populated in reply
+            mint_decimals: msg.mint_decimals,
             owner: owner.clone(),
             paused: false,
         },
     )?;
 
-    // Persist mint metadata so the reply handler can build the SetDenomMetadata msg
-    MINT_META.save(
+    // Resolve the canonical metadata once, here at instantiate, so the reply
+    // handler and any future `UpdateDenomMetadata` patches read the same
+    // baseline. Defaults derive from `mint_subdenom`; explicit overrides win.
+    let symbol = msg.mint_symbol.unwrap_or_else(|| msg.mint_subdenom.clone());
+    let name = msg.mint_name.unwrap_or_else(|| format!("Oroswap {}", symbol));
+    let description = msg
+        .mint_description
+        .unwrap_or_else(|| format!("Oroswap {} Token", symbol));
+    DENOM_METADATA.save(
         deps.storage,
-        &MintMeta {
-            subdenom: msg.mint_subdenom.clone(),
-            decimals: msg.mint_decimals.unwrap_or(6),
+        &DenomMetadata {
+            name,
+            symbol,
+            description,
             uri: msg.mint_uri,
-            name: msg.mint_name,
-            symbol: msg.mint_symbol,
-            description: msg.mint_description,
         },
     )?;
 
@@ -142,54 +149,32 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractEr
                     ..
                 } = b.try_into()?;
 
-                // Persist the full denom in config
-                CONFIG.update::<_, StdError>(deps.storage, |mut cfg| {
-                    cfg.mint_denom = new_token_denom.clone();
-                    Ok(cfg)
-                })?;
-
-                let meta = MINT_META.load(deps.storage)?;
-                // Temporary metadata has been consumed; clear it so storage
-                // doesn't leak. The on-chain Metadata struct on the chain
-                // remains updatable via `UpdateDenomMetadata` afterwards.
-                MINT_META.remove(deps.storage);
+                let mut config = CONFIG.load(deps.storage)?;
+                config.mint_denom = new_token_denom.clone();
+                CONFIG.save(deps.storage, &config)?;
 
                 // On ZigChain, also set human-readable token metadata.
                 // Defaults preserve the legacy "Oroswap <subdenom>" naming
                 // when the caller didn't supply overrides.
                 #[cfg(feature = "zigchain")]
                 let set_meta_msg: Option<CosmosMsg> = {
-                    let symbol = meta
-                        .symbol
-                        .clone()
-                        .unwrap_or_else(|| meta.subdenom.clone());
-                    let name = meta
-                        .name
-                        .clone()
-                        .unwrap_or_else(|| format!("Oroswap {}", symbol));
-                    let description = meta
-                        .description
-                        .clone()
-                        .unwrap_or_else(|| format!("Oroswap {} Token", symbol));
-                    let display = symbol.to_lowercase();
+                    let meta = DENOM_METADATA.load(deps.storage)?;
                     Some(tf_set_denom_metadata_full_msg(
                         env.contract.address.clone(),
                         new_token_denom.clone(),
-                        name,
-                        symbol,
-                        description,
-                        display,
-                        meta.decimals,
+                        meta.name,
+                        meta.symbol.clone(),
+                        meta.description,
+                        meta.symbol.to_lowercase(),
+                        config.mint_decimals,
                         meta.uri,
                     ))
                 };
                 #[cfg(not(feature = "zigchain"))]
                 let set_meta_msg: Option<CosmosMsg> = None;
 
-                let mut resp = Response::new().add_attributes([
-                    attr("mint_denom", &new_token_denom),
-                    attr("mint_subdenom", &meta.subdenom),
-                ]);
+                let mut resp = Response::new()
+                    .add_attribute("mint_denom", &new_token_denom);
 
                 if let Some(m) = set_meta_msg {
                     resp = resp.add_message(m);
@@ -484,41 +469,42 @@ fn execute_update_denom_metadata(
 
     #[cfg(feature = "zigchain")]
     {
-        // For Metadata fields the caller didn't supply, fall back to the same
-        // defaults used at instantiation so the resulting Metadata stays
-        // self-consistent. We don't have access to the *chain's* current
-        // Metadata from inside the contract, so this is best-effort: callers
-        // who need to preserve a previously-set custom value must repeat it.
-        let subdenom_default_symbol = config
-            .mint_denom
-            .rsplit('.')
-            .next()
-            .unwrap_or(&config.mint_denom)
-            .to_string();
-        let symbol = symbol.unwrap_or_else(|| subdenom_default_symbol.clone());
-        let name = name.unwrap_or_else(|| format!("Oroswap {}", symbol));
-        let description = description.unwrap_or_else(|| format!("Oroswap {} Token", symbol));
-        let display = symbol.to_lowercase();
+        // True patch semantics: overlay any `Some(_)` fields onto the
+        // currently-stored Metadata, keep the rest as-is, then re-encode
+        // the full Metadata for the chain (which only supports a full set,
+        // not a partial update).
+        let mut meta = DENOM_METADATA.load(deps.storage)?;
+        if let Some(v) = name {
+            meta.name = v;
+        }
+        if let Some(v) = symbol {
+            meta.symbol = v;
+        }
+        if let Some(v) = description {
+            meta.description = v;
+        }
+        if let Some(v) = uri {
+            meta.uri = Some(v);
+        }
+        DENOM_METADATA.save(deps.storage, &meta)?;
 
         let msg = tf_set_denom_metadata_full_msg(
             env.contract.address.clone(),
             config.mint_denom.clone(),
-            name.clone(),
-            symbol.clone(),
-            description.clone(),
-            display,
-            6, // ZigChain Metadata only stores DenomUnits, decimals are baked in once at create-time
-            uri,
+            meta.name.clone(),
+            meta.symbol.clone(),
+            meta.description.clone(),
+            meta.symbol.to_lowercase(),
+            config.mint_decimals,
+            meta.uri.clone(),
         );
 
-        Ok(Response::new()
-            .add_message(msg)
-            .add_attributes([
-                attr("action", "update_denom_metadata"),
-                attr("name", name),
-                attr("symbol", symbol),
-                attr("description", description),
-            ]))
+        Ok(Response::new().add_message(msg).add_attributes([
+            attr("action", "update_denom_metadata"),
+            attr("name", meta.name),
+            attr("symbol", meta.symbol),
+            attr("description", meta.description),
+        ]))
     }
 
     #[cfg(not(feature = "zigchain"))]

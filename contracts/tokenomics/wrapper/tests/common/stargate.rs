@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result as AnyResult;
 use cosmwasm_schema::schemars::JsonSchema;
@@ -8,14 +9,32 @@ use cosmwasm_std::{
 };
 use cw_multi_test::{AppResponse, BankSudo, CosmosRouter, Stargate};
 use oroswap::token_factory::{
-    MsgBurn, MsgCreateDenom, MsgCreateDenomResponse, MsgMint, MsgSetBeforeSendHook,
-    MsgSetDenomMetadata,
+    MsgBurn, MsgCreateDenom, MsgCreateDenomResponse, MsgMint, MsgProposeDenomAdmin,
+    MsgSetBeforeSendHook, MsgSetDenomMetadata,
 };
+
+/// Decoded tokenfactory messages the contract emitted during a test, captured
+/// so tests can assert the payload (not just that the call succeeded).
+///
+/// Mocked execute always returns success, so without this buffer we couldn't
+/// distinguish a correct patch from one that silently set every Metadata
+/// field to the wrong value.
+#[derive(Default, Debug)]
+pub struct CapturedTxs {
+    pub set_metadata: Vec<MsgSetDenomMetadata>,
+    pub propose_admin: Vec<MsgProposeDenomAdmin>,
+}
 
 /// A mock `StargateKeeper` that handles ZigChain tokenfactory messages during
 /// integration tests. Mirrors the equivalent in the staking contract's tests.
-#[derive(Default)]
-pub struct StargateKeeper {}
+///
+/// Captures decoded `MsgSetDenomMetadata` and `MsgProposeDenomAdmin` payloads
+/// in a shared `Arc<Mutex<_>>` so tests holding a clone of the handle can
+/// assert on the exact bytes the contract sent to the chain.
+#[derive(Default, Clone)]
+pub struct StargateKeeper {
+    pub captured: Arc<Mutex<CapturedTxs>>,
+}
 
 impl Stargate for StargateKeeper {
     fn execute<ExecC, QueryC>(
@@ -95,8 +114,26 @@ impl Stargate for StargateKeeper {
                 };
                 router.sudo(api, storage, block, bank_sudo.into())
             }
-            // Set denom metadata — just return success
-            MsgSetDenomMetadata::TYPE_URL => Ok(AppResponse::default()),
+            // Set denom metadata — capture for assertion, then return success
+            MsgSetDenomMetadata::TYPE_URL => {
+                let tf_msg: MsgSetDenomMetadata = value.try_into()?;
+                self.captured
+                    .lock()
+                    .expect("captured mutex poisoned")
+                    .set_metadata
+                    .push(tf_msg);
+                Ok(AppResponse::default())
+            }
+            // Propose denom admin — capture for assertion, then return success
+            MsgProposeDenomAdmin::TYPE_URL => {
+                let tf_msg: MsgProposeDenomAdmin = value.try_into()?;
+                self.captured
+                    .lock()
+                    .expect("captured mutex poisoned")
+                    .propose_admin
+                    .push(tf_msg);
+                Ok(AppResponse::default())
+            }
             _ => Err(anyhow::anyhow!(
                 "Unexpected exec msg {type_url} from {sender:?}",
             )),

@@ -190,7 +190,7 @@ fn bridge_usdc(
         .ok_or_else(|| ContractError::Std(StdError::generic_err("timeout overflow")))?;
 
     let msg = stargate_ibc_transfer(
-        &env.contract.address.to_string(),
+        env.contract.address.as_ref(),
         &cfg.ibc_channel,
         &cfg.first_hop_receiver,
         bridge_amount.u128(),

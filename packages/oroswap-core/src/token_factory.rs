@@ -155,6 +155,20 @@ impl MsgSetDenomMetadata {
     pub const TYPE_URL: &'static str = "/zigchain.factory.MsgSetDenomMetadata";
 }
 
+impl TryFrom<Binary> for MsgSetDenomMetadata {
+    type Error = StdError;
+    fn try_from(binary: Binary) -> Result<Self, Self::Error> {
+        Self::decode(binary.as_slice()).map_err(|e| {
+            StdError::generic_err(format!(
+                "MsgSetDenomMetadata Unable to decode binary: \n  - base64: {}\n  - bytes array: {:?}\n\n{:?}",
+                binary,
+                binary.to_vec(),
+                e
+            ))
+        })
+    }
+}
+
 impl MsgCreateDenom {
     #[cfg(not(any(feature = "zigchain")))]
     pub const TYPE_URL: &'static str = "/osmosis.tokenfactory.v1beta1.MsgCreateDenom";
@@ -595,6 +609,21 @@ pub struct MsgProposeDenomAdmin {
 #[cfg(feature = "zigchain")]
 impl MsgProposeDenomAdmin {
     pub const TYPE_URL: &'static str = "/zigchain.factory.MsgProposeDenomAdmin";
+}
+
+#[cfg(feature = "zigchain")]
+impl TryFrom<Binary> for MsgProposeDenomAdmin {
+    type Error = StdError;
+    fn try_from(binary: Binary) -> Result<Self, Self::Error> {
+        Self::decode(binary.as_slice()).map_err(|e| {
+            StdError::generic_err(format!(
+                "MsgProposeDenomAdmin Unable to decode binary: \n  - base64: {}\n  - bytes array: {:?}\n\n{:?}",
+                binary,
+                binary.to_vec(),
+                e
+            ))
+        })
+    }
 }
 
 /// Propose new bank- and metadata-admin addresses for a denom we currently

@@ -2,7 +2,7 @@ use crate::contract::{execute, CONTRACT_NAME, CONTRACT_VERSION};
 use crate::error::ContractError;
 use crate::migrate::migrate;
 use crate::msg::{ExecuteMsg, MigrateMsg};
-use crate::state::Config;
+use crate::state::{Config, DenomMetadata, DENOM_METADATA};
 use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
 use cosmwasm_std::{coin, Addr};
 
@@ -16,6 +16,7 @@ fn seed_config(deps: &mut cosmwasm_std::OwnedDeps<impl cosmwasm_std::Storage, im
             &Config {
                 lock_denom: lock_denom.to_string(),
                 mint_denom: mint_denom.to_string(),
+                mint_decimals: 6,
                 owner: Addr::unchecked(owner),
                 paused: false,
             },
@@ -79,6 +80,85 @@ fn test_migrate_same_name() {
     assert_eq!(new_name, CONTRACT_NAME);
 }
 
+/// Regression guard for the patch-semantics bug: an `UpdateDenomMetadata`
+/// call that supplies only `uri` must NOT silently overwrite the previously
+/// stored name/symbol/description with subdenom-derived defaults.
+#[cfg(feature = "zigchain")]
+#[test]
+fn test_update_metadata_is_a_patch_not_a_reset() {
+    let mut deps = mock_dependencies();
+    seed_config(&mut deps, "owner", "uzig", "coin.contract.wzig");
+    DENOM_METADATA
+        .save(
+            &mut deps.storage,
+            &DenomMetadata {
+                name: "Custom Wrapped Branding".to_string(),
+                symbol: "wBRAND".to_string(),
+                description: "Hand-picked description".to_string(),
+                uri: Some("https://old.example/logo.png".to_string()),
+            },
+        )
+        .unwrap();
+
+    // "Just update the logo" — everything else should be untouched.
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("owner", &[]),
+        ExecuteMsg::UpdateDenomMetadata {
+            name: None,
+            symbol: None,
+            description: None,
+            uri: Some("https://new.example/logo.png".to_string()),
+        },
+    )
+    .unwrap();
+
+    let stored = DENOM_METADATA.load(&deps.storage).unwrap();
+    assert_eq!(stored.name, "Custom Wrapped Branding");
+    assert_eq!(stored.symbol, "wBRAND");
+    assert_eq!(stored.description, "Hand-picked description");
+    assert_eq!(stored.uri.as_deref(), Some("https://new.example/logo.png"));
+}
+
+/// Patching a single field overlays only that field; the rest are preserved.
+#[cfg(feature = "zigchain")]
+#[test]
+fn test_update_metadata_overlays_supplied_fields() {
+    let mut deps = mock_dependencies();
+    seed_config(&mut deps, "owner", "uzig", "coin.contract.wzig");
+    DENOM_METADATA
+        .save(
+            &mut deps.storage,
+            &DenomMetadata {
+                name: "Original Name".to_string(),
+                symbol: "ORIG".to_string(),
+                description: "Original description".to_string(),
+                uri: Some("https://example/old.png".to_string()),
+            },
+        )
+        .unwrap();
+
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("owner", &[]),
+        ExecuteMsg::UpdateDenomMetadata {
+            name: Some("New Name".to_string()),
+            symbol: None,
+            description: None,
+            uri: None,
+        },
+    )
+    .unwrap();
+
+    let stored = DENOM_METADATA.load(&deps.storage).unwrap();
+    assert_eq!(stored.name, "New Name");
+    assert_eq!(stored.symbol, "ORIG");
+    assert_eq!(stored.description, "Original description");
+    assert_eq!(stored.uri.as_deref(), Some("https://example/old.png"));
+}
+
 #[test]
 fn test_migrate_wrong_name_rejected() {
     let mut deps = mock_dependencies();
@@ -86,4 +166,97 @@ fn test_migrate_wrong_name_rejected() {
 
     let err = migrate(deps.as_mut(), mock_env(), MigrateMsg {}).unwrap_err();
     assert_eq!(err, ContractError::MigrationError {});
+}
+
+// ─── ProposeDenomAdmin guards ────────────────────────────────────────────────
+//
+// `ProposeDenomAdmin` is the highest-blast-radius owner-only handler in the
+// contract (hands off bank/metadata admin of the minted denom to an
+// external address). Audit M-A flagged the lack of test coverage. Each
+// guard below is exercised in isolation.
+
+#[cfg(feature = "zigchain")]
+#[test]
+fn test_propose_denom_admin_non_owner_rejected() {
+    let mut deps = mock_dependencies();
+    seed_config(&mut deps, "owner", "uzig", "coin.contract.wzig");
+
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("not-owner", &[]),
+        ExecuteMsg::ProposeDenomAdmin {
+            bank_admin: "zig1bankadmin000000000000000000000000000000".to_string(),
+            metadata_admin: "zig1metaadmin000000000000000000000000000000".to_string(),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(err, ContractError::Unauthorized {});
+}
+
+/// Reply hasn't yet populated `mint_denom`: the chain-not-yet-initialised
+/// guard must reject the call rather than send `MsgProposeDenomAdmin` for
+/// an empty denom (which the chain would either silently drop or apply to
+/// the wrong/no token).
+#[cfg(feature = "zigchain")]
+#[test]
+fn test_propose_denom_admin_empty_mint_denom_rejected() {
+    let mut deps = mock_dependencies();
+    // Seed with empty mint_denom — mirrors the state between MsgCreateDenom
+    // submsg dispatch and the reply that fills mint_denom in.
+    seed_config(&mut deps, "owner", "uzig", "");
+
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("owner", &[]),
+        ExecuteMsg::ProposeDenomAdmin {
+            bank_admin: "zig1bankadmin000000000000000000000000000000".to_string(),
+            metadata_admin: "zig1metaadmin000000000000000000000000000000".to_string(),
+        },
+    )
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("mint_denom not yet initialised"),
+        "expected init-guard error, got: {err}"
+    );
+}
+
+#[cfg(feature = "zigchain")]
+#[test]
+fn test_propose_denom_admin_invalid_bech32_rejected() {
+    let mut deps = mock_dependencies();
+    seed_config(&mut deps, "owner", "uzig", "coin.contract.wzig");
+
+    // Empty bank_admin — addr_validate refuses.
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("owner", &[]),
+        ExecuteMsg::ProposeDenomAdmin {
+            bank_admin: "".to_string(),
+            metadata_admin: "zig1metaadmin000000000000000000000000000000".to_string(),
+        },
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, ContractError::Std(_)),
+        "expected Std (addr_validate) error, got: {err:?}"
+    );
+
+    // Empty metadata_admin — addr_validate refuses on the second call.
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("owner", &[]),
+        ExecuteMsg::ProposeDenomAdmin {
+            bank_admin: "zig1bankadmin000000000000000000000000000000".to_string(),
+            metadata_admin: "".to_string(),
+        },
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, ContractError::Std(_)),
+        "expected Std (addr_validate) error, got: {err:?}"
+    );
 }

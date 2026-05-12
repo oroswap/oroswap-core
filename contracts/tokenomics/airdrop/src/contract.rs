@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use cosmwasm_std::{
     entry_point, to_json_binary, Binary, CosmosMsg, Deps, DepsMut, Env, MessageInfo, Order, Response,
     StdResult, Uint128, WasmMsg, StdError,
@@ -186,10 +188,20 @@ pub fn execute_add_airdrop(
         },
     )?;
 
-    let mut total = Uint128::zero();
+    // Dedupe the input batch in-memory (last-wins per address) so a caller
+    // passing the same address twice doesn't inflate ELIGIBILITY_TOTAL above
+    // what actually lands in storage. BTreeMap keeps iteration deterministic
+    // for CosmWasm consensus; no storage reads needed since ELIGIBILITY is
+    // fresh for a new airdrop_id — duplicates can only come from this batch.
+    let mut deduped: BTreeMap<cosmwasm_std::Addr, Uint128> = BTreeMap::new();
     for (addr, amount) in eligibility {
         let validated_addr = deps.api.addr_validate(&addr)?;
-        ELIGIBILITY.save(deps.storage, (airdrop_id, &validated_addr), &amount)?;
+        deduped.insert(validated_addr, amount);
+    }
+
+    let mut total = Uint128::zero();
+    for (addr, amount) in deduped {
+        ELIGIBILITY.save(deps.storage, (airdrop_id, &addr), &amount)?;
         total = total.checked_add(amount).map_err(StdError::from)?;
     }
     ELIGIBILITY_TOTAL.save(deps.storage, airdrop_id, &total)?;
@@ -656,12 +668,16 @@ fn query_solvency(deps: Deps, env: Env, id: u64) -> StdResult<SolvencyResponse> 
     // Worst case: every remaining recipient claims at/after vesting end
     // and collects the APY bonus. Bonus accrues on vesting_base = the
     // (100 - initial_claim_percent)% portion that's still locked up.
+    //
+    // `saturating_add`, not `checked_add`: at pathological inputs
+    // (`total_eligibility ≈ Uint128::MAX`, `apy = 10_000 bps`,
+    // `initial_claim_percent = 0`) `outstanding + max_bonus` overflows.
+    // The query is a UI signal — a saturated `Uint128::MAX` with
+    // `is_fully_funded = false` is strictly more useful than a hard error.
     let vesting_base = total_eligibility
         .multiply_ratio(100u128.saturating_sub(airdrop.initial_claim_percent as u128), 100u128);
     let max_bonus = vesting_base.multiply_ratio(airdrop.apy_bonus_bps, 10_000u64);
-    let max_outstanding = outstanding
-        .checked_add(max_bonus)
-        .map_err(StdError::from)?;
+    let max_outstanding = outstanding.saturating_add(max_bonus);
 
     // Pull current contract balance for the airdrop's token.
     let contract_balance: Uint128 = if airdrop.is_native {

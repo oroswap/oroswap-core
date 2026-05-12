@@ -67,9 +67,17 @@ zigchaind tx wasm instantiate $CODE_ID '{
 After instantiate, the minted denom will be
 `coin.<contract_address>.oro`.
 
-`mint_name`, `mint_symbol`, and `mint_description` are optional. When
-omitted the contract falls back to `"Oroswap <subdenom>"`,
-`"<subdenom>"`, and `"Oroswap <subdenom> Token"` respectively.
+`mint_name`, `mint_symbol`, `mint_description`, and `mint_uri` are
+optional. When omitted the contract falls back to `"Oroswap <subdenom>"`,
+`"<subdenom>"`, and `"Oroswap <subdenom> Token"` respectively
+(`mint_uri` stays empty).
+
+`mint_decimals` is **required** — no default. It must match the
+`lock_denom`'s source-token decimals (e.g. 6 for USDC, 18 for most
+ERC-20s) so that the 1:1 wrap-mint displays correctly in wallets.
+The chain bakes this exponent into the denom's `Metadata.denom_units`
+at create-time and the contract refuses to change it later, so getting
+it right here is critical.
 
 ## ExecuteMsg
 
@@ -120,15 +128,36 @@ to the contract without going through `Lock`. Errors with
 `"No excess tokens to recover"` when the invariant already holds.
 
 ### `UpdateDenomMetadata { name, symbol, description, uri }`
-Owner only. Rewrites the minted denom's ZigChain Metadata. All four fields
-are optional — the contract falls back to defaults derived from the
-stored `subdenom` for any field left as `null`. Note that the ZigChain
-factory module replaces Metadata wholesale on each set, so to preserve a
-previously-set custom value you must repeat it in the call.
+Owner only. **Patch semantics**: any field left as `null` keeps the
+value currently stored on-chain; only `Some(_)` fields are overwritten.
+So `{ "uri": "https://new/logo.png" }` updates the URI alone and leaves
+name/symbol/description untouched — even if they were customised at
+instantiate.
+
+Under the hood the ZigChain factory module rewrites Metadata as a whole
+on each `MsgSetDenomMetadata`, so the contract keeps an authoritative
+copy in storage, overlays the supplied fields onto it, and re-encodes
+the full Metadata on every call. `decimals` is sourced from
+`config.mint_decimals` (set once at instantiate, immutable) — never a
+hardcoded value.
 
 ### `ProposeDenomAdmin { bank_admin, metadata_admin }`
 Owner only. Begins the two-step transfer of the minted denom's bank-admin
 and metadata-admin roles to new addresses.
+
+> ⚠️ **Run this AFTER mint supply has been fully drained.** Once the new
+> admin claims, this wrapper can no longer mint or burn the denom, so any
+> outstanding `mint_denom` held by users becomes **unredeemable through
+> this contract** — `Unlock` calls will fail at the chain layer with
+> `incorrect admin for denom`. The correct order is:
+>
+> 1. `Pause` — stop new locks.
+> 2. **Wait for `MintSupply` to drain to zero** (users unwind their
+>    positions, or pre-arrange unlock with affected holders).
+> 3. `ProposeDenomAdmin` — only now hand off the admin roles.
+>
+> Skipping step 2 bricks every remaining holder. See "Retiring a wrapper"
+> below for the full runbook.
 
 The proposed `bank_admin` and `metadata_admin` must then sign
 `MsgClaimDenomAdmin` directly on chain from their own addresses — not
@@ -156,7 +185,7 @@ calls will fail at the chain level with `incorrect admin for denom`.
 ## QueryMsg
 
 ### `Config {}`
-Returns the full `Config { lock_denom, mint_denom, owner, paused }`.
+Returns the full `Config { lock_denom, mint_denom, mint_decimals, owner, paused }`.
 
 ### `TotalLocked {}`
 Returns the wrapper's current balance of `lock_denom` as `Uint128`. If
@@ -180,13 +209,28 @@ gated by the wasm contract admin (see the admin-roles table above), not by
 
 ## Retiring a wrapper
 
-End-to-end retirement is three separate handovers:
+End-to-end retirement is three separate handovers. **Order matters**: the
+denom-admin handover must come last, after circulating `mint_denom` has
+been fully redeemed, otherwise any remaining holder is permanently locked
+out of their underlying `lock_denom`.
 
-1. **Denom admins** — `ProposeDenomAdmin` (wrapper owner) + external
+Operational sequence:
+
+1. **`Pause`** — stops new `Lock` calls so circulating supply can only
+   shrink from here.
+2. **Drain `MintSupply`** — wait for / facilitate users to `Unlock` their
+   positions. Confirm with `query MintSupply {}` that it has reached
+   zero (or the residual you're willing to write off, e.g. lost keys).
+3. **Denom admins** — `ProposeDenomAdmin` (wrapper owner) + external
    `MsgClaimDenomAdmin` (new admin). Required if the successor needs to
-   keep minting/burning the denom.
-2. **Wrapper internal owner** — `ProposeNewOwner` + `ClaimOwnership`.
+   keep minting/burning the denom. After this step the wrapper can no
+   longer process `Unlock`.
+4. **Wrapper internal owner** — `ProposeNewOwner` + `ClaimOwnership`.
    Optional; only matters if the wrapper will remain administratively
    useful (e.g. `RecoverExcess`, future `Unpause`).
-3. **Wasm contract admin** — direct `wasmd MsgUpdateAdmin` (transfer) or
+5. **Wasm contract admin** — direct `wasmd MsgUpdateAdmin` (transfer) or
    `MsgClearAdmin` (freeze migrations permanently). One-way once cleared.
+
+If you must hand off the denom admin while `MintSupply > 0` (e.g. emergency
+migration), the successor admin is responsible for honouring the
+outstanding 1:1 claims — there is no on-chain mechanism to compel them.

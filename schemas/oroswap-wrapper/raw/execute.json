@@ -146,7 +146,7 @@
       "additionalProperties": false
     },
     {
-      "description": "Update the on-chain Metadata of the minted denom. Owner only. All fields are optional; any field left as `None` keeps its current value (the tokenfactory module overwrites Metadata as a whole, so the contract reuses the originally-stored values for fields that aren't being changed).",
+      "description": "Update the on-chain Metadata of the minted denom. Owner only. True patch semantics: any field left as `None` keeps the value currently stored on-chain; only `Some(_)` fields are overwritten. (The tokenfactory module rewrites Metadata as a whole, so the contract keeps an authoritative copy in storage and re-encodes the full Metadata on every call — never silently regenerating defaults.)",
       "type": "object",
       "required": [
         "update_denom_metadata"

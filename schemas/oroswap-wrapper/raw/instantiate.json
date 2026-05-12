@@ -5,6 +5,7 @@
   "type": "object",
   "required": [
     "lock_denom",
+    "mint_decimals",
     "mint_subdenom",
     "owner"
   ],
@@ -14,11 +15,8 @@
       "type": "string"
     },
     "mint_decimals": {
-      "description": "Number of decimals for the minted token (default: 6).",
-      "type": [
-        "integer",
-        "null"
-      ],
+      "description": "Number of decimals for the minted token. Must match the `lock_denom`'s decimals so wallets display 1:1 wrapping correctly. Required — no default, since silently assuming 6 would mis-state precision for any non-stable source token (e.g. 18-decimal ERC-20s).",
+      "type": "integer",
       "format": "uint32",
       "minimum": 0.0
     },

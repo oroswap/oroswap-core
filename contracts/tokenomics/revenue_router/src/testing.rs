@@ -591,7 +591,7 @@ fn test_query_config() {
     assert_eq!(res.ibc_timeout_secs, DEFAULT_IBC_TIMEOUT_SECS);
     assert_eq!(res.first_hop_receiver, FIRST_HOP_RECEIVER);
     assert_eq!(res.forward_memo, FORWARD_MEMO);
-    assert_eq!(res.paused, false);
+    assert!(!res.paused);
 }
 
 #[test]

@@ -1056,3 +1056,124 @@ fn test_withdraw_allowed_for_unrelated_token() {
     .unwrap();
     assert_eq!(res.messages.len(), 1);
 }
+
+/// Regression guard for N-1: AddAirdrop with duplicate addresses must not
+/// inflate ELIGIBILITY_TOTAL above what actually lands in storage. Last-wins
+/// dedupe semantics (matches `execute_update_eligibility`).
+#[test]
+fn test_add_airdrop_deduplicates_repeated_addresses() {
+    use crate::msg::SolvencyResponse;
+    let mut deps = mock_dependencies();
+    instantiate(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("creator", &[]),
+        InstantiateMsg { admin: "admin".to_string() },
+    )
+    .unwrap();
+
+    let now = mock_env().block.time.seconds();
+    // user1 appears twice (100, then 200 — last wins). user2 distinct.
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::AddAirdrop {
+            token_address: "native.oro".to_string(),
+            is_native: true,
+            start_time: now + 1,
+            vesting_start_time: now + 1,
+            vesting_end_time: now + 1000,
+            initial_claim_percent: 0,
+            apy_bonus_bps: 0,
+            eligibility: vec![
+                ("user1".to_string(), Uint128::new(100)),
+                ("user1".to_string(), Uint128::new(200)),
+                ("user2".to_string(), Uint128::new(50)),
+            ],
+            expiry_time: Some(now + 2000),
+        },
+    )
+    .unwrap();
+
+    // Stored eligibility: user1 = 200 (last wins), user2 = 50 → total = 250.
+    // Buggy behaviour would have produced total = 100 + 200 + 50 = 350.
+    let res: SolvencyResponse = from_json(
+        &query(deps.as_ref(), mock_env(), QueryMsg::Solvency { id: 1 }).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        res.total_eligibility.u128(),
+        250,
+        "ELIGIBILITY_TOTAL must reflect deduped storage, not the inflated sum",
+    );
+
+    // Cross-check user1's actual eligibility is the last-supplied amount.
+    let status: UserAirdropStatusResponse = from_json(
+        &query(
+            deps.as_ref(),
+            mock_env(),
+            QueryMsg::UserAirdropStatus {
+                id: 1,
+                address: "user1".to_string(),
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(status.total_allocation.u128(), 200);
+}
+
+/// Regression guard for N-2: `Solvency.max_outstanding` must NOT abort the
+/// query when `outstanding + max_bonus` would overflow Uint128. It should
+/// saturate to Uint128::MAX with `is_fully_funded = false`.
+#[test]
+fn test_solvency_saturates_on_max_outstanding_overflow() {
+    use crate::msg::SolvencyResponse;
+    use crate::state::{AirdropInfo, AIRDROPS, ELIGIBILITY_TOTAL, CLAIMED_TOTAL};
+
+    let mut deps = mock_dependencies();
+    instantiate(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("creator", &[]),
+        InstantiateMsg { admin: "admin".to_string() },
+    )
+    .unwrap();
+
+    let now = mock_env().block.time.seconds();
+    // Seed an extreme state directly: total_eligibility = Uint128::MAX,
+    // initial_claim_percent = 0 (so vesting_base = MAX), apy = 10_000 bps
+    // (so max_bonus = MAX). outstanding + max_bonus overflows.
+    AIRDROPS
+        .save(
+            deps.as_mut().storage,
+            1,
+            &AirdropInfo {
+                id: 1,
+                token_address: "native.oro".to_string(),
+                start_time: now,
+                vesting_start_time: now,
+                vesting_end_time: now + 1000,
+                initial_claim_percent: 0,
+                apy_bonus_bps: 10_000,
+                is_active: true,
+                is_native: true,
+                expiry_time: None,
+            },
+        )
+        .unwrap();
+    ELIGIBILITY_TOTAL
+        .save(deps.as_mut().storage, 1, &Uint128::MAX)
+        .unwrap();
+    CLAIMED_TOTAL
+        .save(deps.as_mut().storage, 1, &Uint128::zero())
+        .unwrap();
+
+    let res: SolvencyResponse = from_json(
+        &query(deps.as_ref(), mock_env(), QueryMsg::Solvency { id: 1 }).unwrap(),
+    )
+    .expect("query must not abort on overflow");
+    assert_eq!(res.max_outstanding, Uint128::MAX);
+    assert!(!res.is_fully_funded);
+}

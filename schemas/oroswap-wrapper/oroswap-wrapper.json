@@ -9,6 +9,7 @@
     "type": "object",
     "required": [
       "lock_denom",
+      "mint_decimals",
       "mint_subdenom",
       "owner"
     ],
@@ -18,11 +19,8 @@
         "type": "string"
       },
       "mint_decimals": {
-        "description": "Number of decimals for the minted token (default: 6).",
-        "type": [
-          "integer",
-          "null"
-        ],
+        "description": "Number of decimals for the minted token. Must match the `lock_denom`'s decimals so wallets display 1:1 wrapping correctly. Required — no default, since silently assuming 6 would mis-state precision for any non-stable source token (e.g. 18-decimal ERC-20s).",
+        "type": "integer",
         "format": "uint32",
         "minimum": 0.0
       },
@@ -213,7 +211,7 @@
         "additionalProperties": false
       },
       {
-        "description": "Update the on-chain Metadata of the minted denom. Owner only. All fields are optional; any field left as `None` keeps its current value (the tokenfactory module overwrites Metadata as a whole, so the contract reuses the originally-stored values for fields that aren't being changed).",
+        "description": "Update the on-chain Metadata of the minted denom. Owner only. True patch semantics: any field left as `None` keeps the value currently stored on-chain; only `Some(_)` fields are overwritten. (The tokenfactory module rewrites Metadata as a whole, so the contract keeps an authoritative copy in storage and re-encodes the full Metadata on every call — never silently regenerating defaults.)",
         "type": "object",
         "required": [
           "update_denom_metadata"
@@ -409,6 +407,7 @@
       "type": "object",
       "required": [
         "lock_denom",
+        "mint_decimals",
         "mint_denom",
         "owner",
         "paused"
@@ -417,6 +416,12 @@
         "lock_denom": {
           "description": "The token to be locked — can be any native denom: plain native (e.g. \"uzig\"), IBC (e.g. \"ibc/F1073E...\"), or a tokenfactory coin (e.g. \"coin.xxx.yyy\")",
           "type": "string"
+        },
+        "mint_decimals": {
+          "description": "Decimal precision of the minted denom, baked in once at `MsgCreateDenom` time. Persisted so `UpdateDenomMetadata` can echo the correct exponent — the chain's Metadata stores DenomUnits, not a free-standing decimals field, and rewriting them with the wrong exponent would mis-state precision in every wallet/explorer.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
         },
         "mint_denom": {
           "description": "The tokenfactory token minted 1:1 for each locked token (e.g. \"coin.<contract_address>.<mint_subdenom>\"). Set to \"\" initially and populated in the reply handler.",

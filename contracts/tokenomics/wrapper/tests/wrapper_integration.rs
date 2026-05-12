@@ -574,3 +574,136 @@ fn test_migrate() {
     let mut helper = Helper::new(&owner).unwrap();
     helper.migrate_self().unwrap();
 }
+
+// ─── UpdateDenomMetadata + ProposeDenomAdmin payload captures ────────────────
+//
+// Audit M-A / M-B asked for end-to-end coverage that asserts on the *exact*
+// `MsgSetDenomMetadata` / `MsgProposeDenomAdmin` bytes the contract sends to
+// the chain — execute() returning Ok isn't enough, since the patch-vs-set
+// bug fixed in B-3 still let "success" responses through while silently
+// corrupting Metadata.
+
+/// Reply-handler invariant: the very first `MsgSetDenomMetadata` sent at
+/// instantiate carries the resolved defaults (derived from `mint_subdenom`
+/// since the helper passes `None` for name/symbol/description), plus the
+/// `mint_decimals` from `InstantiateMsg` — not a hardcoded value.
+#[test]
+fn test_initial_metadata_emitted_at_instantiate() {
+    let owner = Addr::unchecked("owner");
+    let helper = Helper::new(&owner).unwrap();
+
+    let captured = helper.captured.lock().unwrap();
+    assert_eq!(
+        captured.set_metadata.len(),
+        1,
+        "exactly one MsgSetDenomMetadata expected from the create-denom reply"
+    );
+    let m = captured.set_metadata[0]
+        .metadata
+        .as_ref()
+        .expect("metadata field");
+    // Defaults derive from MINT_SUBDENOM = "xoro"
+    assert_eq!(m.symbol, MINT_SUBDENOM);
+    assert_eq!(m.name, format!("Oroswap {}", MINT_SUBDENOM));
+    assert_eq!(m.description, format!("Oroswap {} Token", MINT_SUBDENOM));
+    assert_eq!(m.display, MINT_SUBDENOM.to_lowercase());
+    assert_eq!(m.base, helper.mint_denom);
+    assert_eq!(m.uri, "https://example.com/metadata.json");
+    // DenomUnits: [{base, 0}, {display, mint_decimals=6}]
+    assert_eq!(m.denom_units.len(), 2);
+    assert_eq!(m.denom_units[0].exponent, 0);
+    assert_eq!(m.denom_units[1].exponent, 6);
+    assert_eq!(m.denom_units[1].denom, MINT_SUBDENOM.to_lowercase());
+}
+
+/// Regression for B-3: a partial `UpdateDenomMetadata { uri: Some, rest: None }`
+/// must emit a `MsgSetDenomMetadata` that preserves the previously-stored
+/// name/symbol/description — NOT regenerate them from subdenom defaults — and
+/// must echo back the stored `mint_decimals`, never a hardcoded 6.
+#[test]
+fn test_update_metadata_partial_patch_preserves_custom_fields() {
+    let owner = Addr::unchecked("owner");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    // First: set custom branding via a full patch (all fields Some).
+    helper
+        .update_denom_metadata(
+            &owner,
+            Some("Custom Wrapped Branding".to_string()),
+            Some("xCUSTOM".to_string()),
+            Some("Hand-picked description".to_string()),
+            Some("https://example/v1.png".to_string()),
+        )
+        .unwrap();
+
+    // Then: "just update the logo" — only uri.
+    helper
+        .update_denom_metadata(
+            &owner,
+            None,
+            None,
+            None,
+            Some("https://example/v2.png".to_string()),
+        )
+        .unwrap();
+
+    let captured = helper.captured.lock().unwrap();
+    // 1 from reply + 2 from the two UpdateDenomMetadata calls = 3.
+    assert_eq!(captured.set_metadata.len(), 3);
+
+    let latest = captured.set_metadata[2]
+        .metadata
+        .as_ref()
+        .expect("metadata field");
+    // The custom branding must survive the uri-only patch.
+    assert_eq!(latest.name, "Custom Wrapped Branding");
+    assert_eq!(latest.symbol, "xCUSTOM");
+    assert_eq!(latest.description, "Hand-picked description");
+    // display tracks the (latest) symbol.
+    assert_eq!(latest.display, "xcustom");
+    // uri was the only field actually patched.
+    assert_eq!(latest.uri, "https://example/v2.png");
+    // Decimals echo the instantiate-time value, NOT a hardcoded 6.
+    assert_eq!(latest.denom_units[1].exponent, 6);
+}
+
+/// `ProposeDenomAdmin` payload capture: owner-only handler reaches the chain
+/// with the right signer, denom, and admin addresses.
+#[test]
+fn test_propose_denom_admin_emits_correct_payload() {
+    let owner = Addr::unchecked("owner");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    let bank_admin = "zig1bankadmin000000000000000000000000000000";
+    let metadata_admin = "zig1metaadmin000000000000000000000000000000";
+    helper
+        .propose_denom_admin(&owner, bank_admin, metadata_admin)
+        .unwrap();
+
+    let captured = helper.captured.lock().unwrap();
+    assert_eq!(captured.propose_admin.len(), 1);
+    let p = &captured.propose_admin[0];
+    assert_eq!(p.signer, helper.wrapper.to_string());
+    assert_eq!(p.denom, helper.mint_denom);
+    assert_eq!(p.bank_admin, bank_admin);
+    assert_eq!(p.metadata_admin, metadata_admin);
+}
+
+/// Non-owner cannot call `ProposeDenomAdmin` even at the integration layer
+/// (defence in depth — also covered by the unit test).
+#[test]
+fn test_propose_denom_admin_non_owner_rejected_integration() {
+    let owner = Addr::unchecked("owner");
+    let mallory = Addr::unchecked("mallory");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    let err = helper
+        .propose_denom_admin(
+            &mallory,
+            "zig1bankadmin000000000000000000000000000000",
+            "zig1metaadmin000000000000000000000000000000",
+        )
+        .unwrap_err();
+    let root = err.downcast::<ContractError>().unwrap();
+    assert_eq!(root, ContractError::Unauthorized {});
+}

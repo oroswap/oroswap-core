@@ -22,8 +22,11 @@ pub struct InstantiateMsg {
     /// Optional URI for the minted token's on-chain metadata.
     pub mint_uri: Option<String>,
 
-    /// Number of decimals for the minted token (default: 6).
-    pub mint_decimals: Option<u32>,
+    /// Number of decimals for the minted token. Must match the
+    /// `lock_denom`'s decimals so wallets display 1:1 wrapping correctly.
+    /// Required — no default, since silently assuming 6 would mis-state
+    /// precision for any non-stable source token (e.g. 18-decimal ERC-20s).
+    pub mint_decimals: u32,
 
     /// Human-readable name for the minted token (e.g. "Wrapped ORO").
     /// Falls back to "Oroswap <subdenom>" if not provided.
@@ -77,10 +80,11 @@ pub enum ExecuteMsg {
     RecoverExcess {},
 
     /// Update the on-chain Metadata of the minted denom. Owner only.
-    /// All fields are optional; any field left as `None` keeps its current
-    /// value (the tokenfactory module overwrites Metadata as a whole, so the
-    /// contract reuses the originally-stored values for fields that aren't
-    /// being changed).
+    /// True patch semantics: any field left as `None` keeps the value
+    /// currently stored on-chain; only `Some(_)` fields are overwritten.
+    /// (The tokenfactory module rewrites Metadata as a whole, so the
+    /// contract keeps an authoritative copy in storage and re-encodes the
+    /// full Metadata on every call — never silently regenerating defaults.)
     UpdateDenomMetadata {
         name: Option<String>,
         symbol: Option<String>,

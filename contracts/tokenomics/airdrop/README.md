@@ -66,6 +66,10 @@ Validation: `start_time ≥ now`, `start_time ≤ vesting_start_time < vesting_e
 `initial_claim_percent ≤ 100`, `apy_bonus_bps ≤ 10_000`,
 `expiry_time > vesting_end_time` (if set), `eligibility.len() ≤ 200`.
 
+Duplicate addresses in the same `eligibility` batch are deduped in-memory
+with last-wins semantics — the running `Solvency.total_eligibility`
+reflects what actually lands in storage, never the inflated sum.
+
 ### `UpdateEligibility`
 Admin only, **before `start_time`**. Adds or overwrites entries (no remove
 op — set an amount to a new value to revise). Same 200-entry cap per call;

@@ -13,7 +13,9 @@ use cw_multi_test::{
 use oroswap_wrapper::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
 use oroswap_wrapper::state::Config;
 
-use crate::common::stargate::StargateKeeper;
+use std::sync::{Arc, Mutex};
+
+use crate::common::stargate::{CapturedTxs, StargateKeeper};
 
 /// The mock IBC denom used as `lock_denom` in tests.
 /// Simulates a real IBC token path.
@@ -44,6 +46,10 @@ pub struct Helper {
     pub wrapper: Addr,
     /// The full tokenfactory denom of the minted token.
     pub mint_denom: String,
+    /// Shared handle to the StargateKeeper's captured-msg buffer. Tests use
+    /// this to assert the exact payload the contract emitted to the chain
+    /// (e.g. `MsgSetDenomMetadata.metadata.symbol == "xORO"`).
+    pub captured: Arc<Mutex<CapturedTxs>>,
 }
 
 fn wrapper_contract() -> Box<dyn Contract<Empty>> {
@@ -63,8 +69,10 @@ impl Helper {
     /// The owner receives an initial balance of `LOCK_DENOM` tokens so tests
     /// can fund users.
     pub fn new(owner: &Addr) -> AnyResult<Self> {
+        let stargate = StargateKeeper::default();
+        let captured = stargate.captured.clone();
         let mut app = BasicAppBuilder::new()
-            .with_stargate(StargateKeeper::default())
+            .with_stargate(stargate)
             .build(|router, _, storage| {
                 // Give the owner a large supply of the IBC token for distribution
                 router
@@ -79,7 +87,7 @@ impl Helper {
             lock_denom: LOCK_DENOM.to_string(),
             mint_subdenom: MINT_SUBDENOM.to_string(),
             mint_uri: Some("https://example.com/metadata.json".to_string()),
-            mint_decimals: Some(6),
+            mint_decimals: 6,
             mint_name: None,
             mint_symbol: None,
             mint_description: None,
@@ -107,6 +115,7 @@ impl Helper {
             owner: owner.clone(),
             wrapper,
             mint_denom,
+            captured,
         })
     }
 
@@ -280,6 +289,44 @@ impl Helper {
             sender.clone(),
             self.wrapper.clone(),
             &ExecuteMsg::ClaimOwnership {},
+            &[],
+        )
+    }
+
+    pub fn update_denom_metadata(
+        &mut self,
+        sender: &Addr,
+        name: Option<String>,
+        symbol: Option<String>,
+        description: Option<String>,
+        uri: Option<String>,
+    ) -> AnyResult<AppResponse> {
+        self.app.execute_contract(
+            sender.clone(),
+            self.wrapper.clone(),
+            &ExecuteMsg::UpdateDenomMetadata {
+                name,
+                symbol,
+                description,
+                uri,
+            },
+            &[],
+        )
+    }
+
+    pub fn propose_denom_admin(
+        &mut self,
+        sender: &Addr,
+        bank_admin: &str,
+        metadata_admin: &str,
+    ) -> AnyResult<AppResponse> {
+        self.app.execute_contract(
+            sender.clone(),
+            self.wrapper.clone(),
+            &ExecuteMsg::ProposeDenomAdmin {
+                bank_admin: bank_admin.to_string(),
+                metadata_admin: metadata_admin.to_string(),
+            },
             &[],
         )
     }
