@@ -895,6 +895,78 @@ fn test_too_many_unbonding_entries_typed_error() {
     );
 }
 
+/// CRITICAL audit follow-up #1: the owner must NOT be able to recover the
+/// contract's own bootstrap xORO. If they could, they could `Leave` on
+/// those bootstrap shares and drain the proportional ORO from the pool —
+/// defeating the first-deposit-attack guard the bootstrap exists for.
+#[test]
+fn test_withdraw_excess_xoro_rejected() {
+    let owner = Addr::unchecked("owner");
+    let helper = Helper::new(&owner).unwrap();
+
+    // Sanity: contract holds the bootstrap xORO supply.
+    let contract_xoro = helper
+        .query_balance(&helper.staking.clone(), &helper.xoro_denom.clone())
+        .unwrap()
+        .u128();
+    assert!(contract_xoro > 0, "contract must hold bootstrap xORO");
+
+    let mut helper = helper;
+    let err = helper
+        .withdraw_excess_tokens(&owner, &helper.xoro_denom.clone(), None)
+        .unwrap_err();
+    let root = err.downcast::<ContractError>().unwrap();
+    assert!(
+        matches!(root, ContractError::XoroNonRecoverable {}),
+        "expected XoroNonRecoverable, got {root:?}",
+    );
+
+    // Bootstrap untouched.
+    let after = helper
+        .query_balance(&helper.staking.clone(), &helper.xoro_denom.clone())
+        .unwrap()
+        .u128();
+    assert_eq!(after, contract_xoro);
+}
+
+/// CRITICAL audit follow-up #2: the owner must NOT be able to sweep tokens
+/// that are committed to an active (or historically active) reward stream.
+/// Doing so would drain funds the contract owes to stakers' pending rewards
+/// and to mature `UnbondingEntry.reward_coins`, bricking `Claim` calls with
+/// insufficient-funds bank reverts.
+#[test]
+fn test_withdraw_excess_reward_denom_rejected() {
+    let owner = Addr::unchecked("owner");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    // Some stakers so the reward stream has a denominator.
+    let alice = Addr::unchecked("alice");
+    helper.give_oro(10_000, &alice);
+    helper.stake(&alice, 10_000).unwrap();
+
+    // Admin opens a USDC reward stream — 5_000 USDC over 1000 seconds.
+    let usdc = "usdc";
+    helper.mint_coin(&owner, coin(5_000, usdc));
+    helper
+        .add_reward(&owner, coin(5_000, usdc), 1_000)
+        .unwrap();
+
+    // Owner attempts to sweep the USDC the stream is paying out from.
+    let err = helper.withdraw_excess_tokens(&owner, usdc, None).unwrap_err();
+    let root = err.downcast::<ContractError>().unwrap();
+    assert!(
+        matches!(root, ContractError::DenomInRewardStream { ref denom } if denom == usdc),
+        "expected DenomInRewardStream {{ denom: \"usdc\" }}, got {root:?}",
+    );
+
+    // Contract still holds the USDC committed to the stream.
+    let contract_usdc = helper
+        .query_balance(&helper.staking.clone(), usdc)
+        .unwrap()
+        .u128();
+    assert_eq!(contract_usdc, 5_000);
+}
+
 #[test]
 fn test_withdraw_excess_non_oro_custom_recipient() {
     let owner = Addr::unchecked("owner");

@@ -981,8 +981,29 @@ fn execute_withdraw_excess_tokens(
         return Err(ContractError::Unauthorized {});
     }
 
+    // ORO is non-recoverable (every wei is share-backed or reward-reserved).
     if denom == config.oro_denom {
         return Err(ContractError::OroNonRecoverable {});
+    }
+
+    // xORO is non-recoverable. The contract holds `bootstrap_amount` xORO at
+    // its own address as the permanent first-deposit-attack guard. If the
+    // owner could sweep it, they could then `Leave` on those shares and
+    // drain the proportional ORO from the pool — defeating the very
+    // inflation guarantee the bootstrap exists to provide.
+    if denom == config.xoro_denom {
+        return Err(ContractError::XoroNonRecoverable {});
+    }
+
+    // Reward-stream denoms are also off-limits. Once a denom has been used
+    // via `AddReward`, the contract owes accrued-but-unclaimed amounts to
+    // stakers (in `USER_REWARDS`) and to pending `UnbondingEntry.reward_coins`
+    // payouts. `REWARDS` entries are never removed, so a hit here means the
+    // contract genuinely holds liability against that denom and a full-balance
+    // sweep would brick user `Claim` calls with insufficient-funds reverts.
+    let rewards = REWARDS.may_load(deps.storage)?.unwrap_or_default();
+    if rewards.iter().any(|r| r.denom == denom) {
+        return Err(ContractError::DenomInRewardStream { denom });
     }
 
     let to = recipient.unwrap_or_else(|| config.owner.clone());
