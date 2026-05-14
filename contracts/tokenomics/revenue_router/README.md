@@ -1,15 +1,22 @@
-# Revenue Router (Zigchain → Noble → {Osmosis | Ethereum})
+# Revenue Router (Zigchain → Ethereum, via Noble CCTP)
 
 ## Overview
 
 CosmWasm contract that holds USDC on Zigchain and lets an authorised keeper
 trigger a bridge to a destination that is **pre-configured in `Config` by the
 owner** — never specified by the caller. The contract is environment-agnostic:
-the same code runs on testnet (Zigchain → Noble → Osmosis) and mainnet
-(Zigchain → Noble → Ethereum via CCTP); only the `Config` values differ.
+the same code runs on testnet and mainnet; only the `Config` values differ.
 
-Zigchain does not speak CCTP directly. Bridging uses IBC with a memo that
-either Packet Forward Middleware (PFM) or Noble's CCTP middleware interprets.
+The mainnet route is **Zigchain → Ethereum**. Zigchain does not speak CCTP
+directly, so the transfer routes through Noble (Circle's native USDC hub):
+the contract fires a single IBC `MsgTransfer` to Noble carrying a memo, and
+Noble's **Orbiter** module reads that memo and forwards the USDC to Ethereum
+over CCTP. The Noble hop is transparent — it is not a destination, just the
+CCTP gateway. (The testnet route used a different intermediary purely for
+validation; only the `Config` values differ.)
+
+The memo is **fully static** — set once by the owner, used verbatim on every
+bridge, never needs refreshing. See "Example `forward_memo`" below.
 
 ## Trust model
 
@@ -38,13 +45,15 @@ USDC accumulates in contract (Zigchain)
             ▼
   Contract fires ICS-20 MsgTransfer (Stargate) with:
     receiver = Config.first_hop_receiver       ← owner-set, immutable per call
+                                                 (Noble Orbiter module address)
     memo     = Config.forward_memo             ← owner-set, immutable per call
+                                                 (Orbiter CCTP forwarding memo)
             │
             ▼
-  Noble (USDC native chain in Cosmos)
+  Noble — Orbiter module reads the memo, burns USDC via CCTP
             │
             ▼
-  Final receiver (Osmosis on testnet / Ethereum via CCTP on mainnet)
+  Ethereum — USDC minted to Config-defined treasury (mint_recipient in memo)
 ```
 
 ## Config
@@ -53,45 +62,50 @@ USDC accumulates in contract (Zigchain)
 |---|---|
 | `owner` | Address — only role that can change destination / pause / withdraw |
 | `usdc_denom` | USDC IBC denom on Zigchain |
-| `ibc_channel` | Zigchain outbound channel for the first hop (typically Noble) |
+| `ibc_channel` | Zigchain outbound channel to Noble (mainnet: `channel-3`) |
 | `ibc_timeout_secs` | Packet timeout; ≤ 86400 |
-| `first_hop_receiver` | Used as the IBC `MsgTransfer.receiver` — Noble address |
-| `forward_memo` | JSON object inserted into `MsgTransfer.memo` verbatim |
+| `first_hop_receiver` | IBC `MsgTransfer.receiver` — the **Noble Orbiter module address**, not the treasury. The treasury is encoded inside `forward_memo`. |
+| `forward_memo` | Orbiter CCTP forwarding memo, inserted into `MsgTransfer.memo` verbatim. Static — set once. |
 | `max_bridge_per_tx` | `Option<Uint128>` — max USDC per single `BridgeUsdc` call. `None` = uncapped. Bounds hijacked-keeper blast radius. |
 | `paused` | If true, `BridgeUsdc` returns `Paused` |
 
-### Example `forward_memo` shapes
+### Example `forward_memo` — mainnet, Noble Orbiter CCTP to Ethereum
 
-**Testnet — PFM forward to Osmosis:**
-
-```json
-{
-  "forward": {
-    "receiver": "osmo1<treasury>",
-    "port":     "transfer",
-    "channel":  "channel-<noble-to-osmo>",
-    "timeout":  "10m",
-    "retries":  2
-  }
-}
-```
-
-**Mainnet — Noble CCTP direct to Ethereum:**
+Noble's forwarding is handled by its **Orbiter** module. The contract treats
+this memo as opaque JSON and validates only its basic shape — the structure
+below is interpreted entirely by Noble.
 
 ```json
 {
-  "noble": {
-    "cctp": {
-      "destination_chain_id": "1",
-      "mint_recipient":       "0x<treasury>"
+  "orbiter": {
+    "forwarding": {
+      "protocol_id": "PROTOCOL_CCTP",
+      "attributes": {
+        "@type": "/noble.orbiter.controller.forwarding.v1.CCTPAttributes",
+        "destination_domain": 0,
+        "mint_recipient": "<base64 of the treasury's 32-byte left-padded ETH address>",
+        "destination_caller": ""
+      },
+      "passthrough_payload": ""
     }
   }
 }
 ```
 
-Or via PFM forward through a CCTP channel — depends on which Noble version
-the destination chain is paired with. The contract treats the memo as opaque
-JSON and validates only its basic shape.
+- `destination_domain: 0` is Ethereum (CCTP domain id).
+- `mint_recipient` is the treasury's Ethereum address, left-padded to 32 bytes
+  and base64-encoded — this is where the USDC lands.
+- `destination_caller` empty = anyone may relay the CCTP message on Ethereum.
+- This memo is **fully static**: nothing in it expires, so it is set once at
+  instantiate (or via `UpdateConfig`) and never touched again.
+
+> **Smart-relay note.** Skip's routing API can also produce an Orbiter memo
+> with a `pre_actions` → `ACTION_FEE` block that pays a relayer to auto-deliver
+> on Ethereum. That fee quote **expires (~15 min)** and is therefore unsuitable
+> for a static `Config` memo — do not use that variant here. With the static
+> memo above, the CCTP message is delivered manually: after the burn on Noble,
+> treasury ops submits one `receiveMessage` call on Ethereum to mint. The CCTP
+> attestation itself is free.
 
 ## Messages
 
@@ -101,10 +115,10 @@ JSON and validates only its basic shape.
 |---|---|---|
 | `owner` | String | Contract owner |
 | `usdc_denom` | String | USDC IBC denom on Zigchain |
-| `ibc_channel` | String | Outbound IBC channel on Zigchain |
+| `ibc_channel` | String | Outbound IBC channel on Zigchain to Noble (mainnet: `channel-3`) |
 | `ibc_timeout_secs` | u64? | Packet timeout (default: 600) |
-| `first_hop_receiver` | String | Noble address for the first hop |
-| `forward_memo` | String | JSON memo (PFM or Noble CCTP) |
+| `first_hop_receiver` | String | Noble Orbiter module address (not the treasury) |
+| `forward_memo` | String | Orbiter CCTP forwarding memo (static JSON) |
 | `max_bridge_per_tx` | Uint128? | Per-call cap. Omit for uncapped (not recommended for prod). |
 
 ### ExecuteMsg
@@ -137,11 +151,14 @@ JSON and validates only its basic shape.
 ## Operational notes
 
 1. Deploy with `--admin <owner>` so the owner controls migrations.
-2. Set `first_hop_receiver` and `forward_memo` to the correct testnet route.
+2. Set `ibc_channel` (`channel-3` on mainnet), `first_hop_receiver` (Noble
+   Orbiter module address), and `forward_memo` (Orbiter CCTP memo with the
+   treasury's ETH address as `mint_recipient`).
 3. Call `PreviewBridge` and verify the response matches the intended route.
 4. `SetPaused { paused: false }`, then have the keeper call `BridgeUsdc`.
-5. For mainnet, deploy a fresh instance (or migrate) with the Ethereum
-   `forward_memo`; the rest of the operational pattern is identical.
+5. After the burn lands on Noble, treasury ops submits one `receiveMessage`
+   call on Ethereum to mint the USDC (manual CCTP delivery — see the
+   smart-relay note under "Example `forward_memo`").
 
 When rotating the keeper key, removing the compromised keeper with
 `RemoveKeeper` is enough to lock the attacker out — they have no destination
@@ -182,10 +199,9 @@ The reply handler emits attributes for both success and failure:
 
 What reply does **NOT** see:
 
-- **Asynchronous ack failure** — the destination chain accepts the packet
-  but the application module (e.g. PFM on Noble) refuses it on `OnRecvPacket`.
-  Funds are refunded via the standard IBC ack flow, but this contract gets
-  no callback.
+- **Asynchronous ack failure** — Noble accepts the packet but the Orbiter
+  module rejects the memo / forwarding on `OnRecvPacket`. Funds are refunded
+  via the standard IBC ack flow, but this contract gets no callback.
 - **Packet timeout** — the relayer fails to deliver before
   `timeout_timestamp` and the funds are refunded by IBC's timeout
   machinery. Again, no callback to this contract.
