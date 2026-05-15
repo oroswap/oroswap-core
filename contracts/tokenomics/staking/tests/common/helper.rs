@@ -4,12 +4,12 @@ use anyhow::Result as AnyResult;
 use cosmwasm_schema::serde::Serialize;
 use cosmwasm_std::testing::MockApi;
 use cosmwasm_std::{
-    coins, to_json_binary, Addr, Coin, DepsMut, Empty, Env, GovMsg, IbcMsg, IbcQuery,
-    MemoryStorage, MessageInfo, Response, StdResult, Uint128,
+    coins, to_json_binary, Addr, Coin, Empty, GovMsg, IbcMsg, IbcQuery,
+    MemoryStorage, StdResult, Uint128,
 };
 use cw_multi_test::{
     App, AppResponse, BankKeeper, BasicAppBuilder, Contract, ContractWrapper, DistributionKeeper,
-    Executor, FailingModule, StakeKeeper, WasmKeeper, TOKEN_FACTORY_MODULE,
+    Executor, FailingModule, StakeKeeper, WasmKeeper,
 };
 
 use oroswap::staking::{Config, ExecuteMsg, InstantiateMsg, QueryMsg};

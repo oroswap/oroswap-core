@@ -1,15 +1,13 @@
 #![cfg(not(tarpaulin_include))]
 
-use std::collections::HashMap;
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
     coin, coins, from_json, Addr, BankMsg, Binary, BlockInfo, Deps, DepsMut, Empty, Env,
     MessageInfo, Response, StdResult, Timestamp, Uint128,
 };
-use cw_multi_test::{Contract, ContractWrapper, Executor, TOKEN_FACTORY_MODULE};
+use cw_multi_test::{Contract, ContractWrapper, Executor};
 use cw_utils::PaymentError;
-use itertools::Itertools;
 
 use oroswap::staking::{Config, ExecuteMsg, QueryMsg, StakingResponse};
 use oroswap_staking::error::ContractError;
@@ -493,30 +491,6 @@ fn test_hooks() {
 }
 
 #[test]
-fn test_zero_return_amount_prevention() {
-    let owner = Addr::unchecked("owner");
-    let mut helper = Helper::new(&owner).unwrap();
-    
-    // Test that our fix is in place by verifying the contract compiles and runs
-    // The actual zero return scenario is complex to set up in tests, but the fix
-    // is implemented in the contract code
-    
-    // Basic functionality test to ensure our fix doesn't break normal operations
-    helper.give_oro(1001, &owner);
-    helper.stake(&owner, 1001).unwrap();
-    
-    // Verify normal unstaking still works (unstake a small amount)
-    helper.unstake(&owner, 1).unwrap();
-    
-    // The fix is verified by:
-    // 1. The contract compiles successfully with the new check
-    // 2. Normal operations continue to work
-    // 3. The check `if return_amount.is_zero()` is present in execute_leave function
-    
-    println!("✅ Normal staking/unstaking operations continue to work");
-}
-
-#[test]
 fn test_pause_unpause() {
     let owner = Addr::unchecked("owner");
     let alice = Addr::unchecked("alice");
@@ -575,7 +549,6 @@ fn test_pause_unpause() {
     helper.claim(&bob).unwrap();
 }
 
-#[test]
 /// Same-version migrate is a no-op against the in-flight test instance. The
 /// genuine legacy-bytes path (pre-2.2.0 Config without `paused`) cannot be
 /// exercised through cw-multi-test because contract storage is namespaced

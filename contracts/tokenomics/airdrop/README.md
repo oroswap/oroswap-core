@@ -32,7 +32,7 @@ or after `vesting_end_time`. Supports native / IBC denoms and CW20 tokens.
 
 | Role | Powers |
 |---|---|
-| `admin` (in `Config`) | Add/toggle airdrops, update eligibility (before start), deposit/withdraw funds, transfer ownership |
+| `admin` (in `Config`) | Add/toggle airdrops, update eligibility (before start), update APY bonus (free pre-start, increase-only mid-vesting, locked post-vesting), deposit/withdraw funds, transfer ownership |
 | Anyone | Claim their own allocation; read queries |
 
 Admin can be rotated via the standard two-step
@@ -84,6 +84,40 @@ the running total used by `Solvency`.
   }
 }
 ```
+
+### `UpdateApyBonus`
+Admin only. Adjust the cliff bonus rate for a season. Two-phase gate:
+
+| Phase | Direction allowed |
+|---|---|
+| `now < start_time` | any direction (configuration fix) |
+| `start_time ≤ now < vesting_end_time` | **increase only** (`new > old`) |
+| `now ≥ vesting_end_time` | rejected — some users may have already claimed at the old rate |
+
+Rationale: once the season opens, users who chose to wait through vesting
+made that decision based on the advertised bonus. A decrease would punish
+them with no way to un-make the choice. Increases are always safe — they
+can only make holders better off.
+
+Any increase is additionally gated by a **funding check**: the resulting
+worst-case payout (`outstanding + max_bonus_at_new_bps`) must already be
+backed by the contract's current token balance, otherwise the call is
+rejected with `ApyUpdateUnderfunded { required, available }`. Top up via
+`DepositFunds` before raising the rate.
+
+The new value is still capped at `MAX_APY_BONUS_BPS = 10_000`.
+
+```json
+{ "update_apy_bonus": { "airdrop_id": 1, "apy_bonus_bps": 1500 } }
+```
+
+Possible errors:
+- `Unauthorized` — non-admin caller.
+- `ApyBonusTooHigh { got, max }` — new value above the 10_000 bps cap.
+- `ApyDecreaseNotAllowed { old, new }` — decrease attempted after start.
+- `ApyUpdateAfterVestingEnd {}` — any update attempted post-vesting.
+- `ApyUpdateUnderfunded { required, available }` — increase not backed by
+  current contract balance.
 
 ### `Claim`
 User only. **One-shot settlement** — pays out everything the user is

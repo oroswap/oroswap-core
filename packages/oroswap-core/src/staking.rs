@@ -73,10 +73,11 @@ pub enum ExecuteMsg {
     Pause {},
     /// Unpauses the contract. Only callable by the owner.
     Unpause {},
-    /// Emergency withdrawal of non-staked tokens accidentally sent to the contract.
-    /// For ORO: only withdraws the excess above (effective_deposit + total_locked + reward_oro_reserve).
-    /// For other denoms: withdraws the full balance.
-    /// Only callable by the owner.
+    /// Emergency withdrawal of tokens accidentally sent to the contract.
+    /// ORO and xORO are non-recoverable (every unit is owed to stakers,
+    /// unbonders, or future reward claimants). Active reward-stream denoms are
+    /// also non-recoverable while their stream is funded. All other denoms
+    /// drain the full balance. Only callable by the owner.
     WithdrawExcessTokens { denom: String, recipient: Option<String> },
 
     /// Add addresses authorised to pause the contract (in addition to the
@@ -168,12 +169,6 @@ pub struct StateResponse {
     pub total_shares: Uint128,
     pub total_deposit: Uint128,
     pub exchange_rate: cosmwasm_std::Decimal,
-}
-
-/// This structure stores the tracking contract data (DEPRECATED: keeping for type compatibility if needed, but remove fields for safety or just keep as is)
-#[cw_serde]
-pub struct TrackerData {
-    pub token_factory_addr: String,
 }
 
 /// Message used to trigger a contract migration.

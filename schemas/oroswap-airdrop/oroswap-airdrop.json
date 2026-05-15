@@ -305,6 +305,36 @@
           }
         },
         "additionalProperties": false
+      },
+      {
+        "description": "Admin-only. Update the APY bonus rate for a season. Two-phase gate: - Before `start_time`: any direction allowed (configuration fix). - `start_time <= now < vesting_end_time`: strictly increase only — decreases would punish users who already chose to wait based on the advertised APY. - `now >= vesting_end_time`: rejected — some users may have already claimed with the old value; the rate must stay consistent. New value is capped at `MAX_APY_BONUS_BPS` and any increase is rejected if the contract balance cannot cover the resulting worst-case payout (`max_outstanding`).",
+        "type": "object",
+        "required": [
+          "update_apy_bonus"
+        ],
+        "properties": {
+          "update_apy_bonus": {
+            "type": "object",
+            "required": [
+              "airdrop_id",
+              "apy_bonus_bps"
+            ],
+            "properties": {
+              "airdrop_id": {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 0.0
+              },
+              "apy_bonus_bps": {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 0.0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
       }
     ],
     "definitions": {

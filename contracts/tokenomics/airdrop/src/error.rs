@@ -1,4 +1,4 @@
-use cosmwasm_std::StdError;
+use cosmwasm_std::{StdError, Uint128};
 use cw_utils::PaymentError;
 use thiserror::Error;
 
@@ -60,4 +60,13 @@ pub enum ContractError {
 
     #[error("Withdrawal blocked: airdrop {airdrop_id} uses this token and has no expiry_time configured (cannot be reclaimed).")]
     WithdrawalBlockedNoExpiry { airdrop_id: u64 },
+
+    #[error("APY decrease not allowed once the airdrop has started: old {old} bps, attempted {new} bps")]
+    ApyDecreaseNotAllowed { old: u64, new: u64 },
+
+    #[error("APY update blocked: airdrop has reached vesting_end_time — bonus value is locked")]
+    ApyUpdateAfterVestingEnd {},
+
+    #[error("APY update would exceed contract funding: max_outstanding {required} > balance {available}. Deposit funds first.")]
+    ApyUpdateUnderfunded { required: Uint128, available: Uint128 },
 }

@@ -48,6 +48,20 @@ pub enum ExecuteMsg {
         airdrop_id: u64,
         eligibility: Vec<(String, Uint128)>,
     },
+    /// Admin-only. Update the APY bonus rate for a season. Two-phase gate:
+    ///   - Before `start_time`: any direction allowed (configuration fix).
+    ///   - `start_time <= now < vesting_end_time`: strictly increase only —
+    ///     decreases would punish users who already chose to wait based on
+    ///     the advertised APY.
+    ///   - `now >= vesting_end_time`: rejected — some users may have already
+    ///     claimed with the old value; the rate must stay consistent.
+    /// New value is capped at `MAX_APY_BONUS_BPS` and any increase is
+    /// rejected if the contract balance cannot cover the resulting
+    /// worst-case payout (`max_outstanding`).
+    UpdateApyBonus {
+        airdrop_id: u64,
+        apy_bonus_bps: u64,
+    },
 }
 
 #[cw_serde]

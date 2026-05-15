@@ -1177,3 +1177,221 @@ fn test_solvency_saturates_on_max_outstanding_overflow() {
     assert_eq!(res.max_outstanding, Uint128::MAX);
     assert!(!res.is_fully_funded);
 }
+
+// ─── UpdateApyBonus ──────────────────────────────────────────────────────────
+
+/// Helper: instantiate + add a season starting `start_offset` seconds from
+/// `mock_env().block.time`, vesting `duration` seconds long, with the given
+/// `initial_pct` and `apy_bps`. Eligibility is a single 1000-unit user
+/// (so totals are easy to reason about). Returns the start_time.
+fn setup_season(
+    deps: &mut cosmwasm_std::OwnedDeps<
+        cosmwasm_std::MemoryStorage,
+        cosmwasm_std::testing::MockApi,
+        cosmwasm_std::testing::MockQuerier,
+    >,
+    denom: &str,
+    start_offset: u64,
+    duration: u64,
+    initial_pct: u64,
+    apy_bps: u64,
+    eligibility: Uint128,
+) -> u64 {
+    instantiate(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("creator", &[]),
+        InstantiateMsg { admin: "admin".to_string() },
+    )
+    .unwrap();
+
+    let now = mock_env().block.time.seconds();
+    let start_time = now + start_offset;
+    let msg = ExecuteMsg::AddAirdrop {
+        token_address: denom.to_string(),
+        is_native: true,
+        start_time,
+        vesting_start_time: start_time,
+        vesting_end_time: start_time + duration,
+        initial_claim_percent: initial_pct,
+        apy_bonus_bps: apy_bps,
+        eligibility: vec![("user".to_string(), eligibility)],
+        expiry_time: None,
+    };
+    execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
+    start_time
+}
+
+#[test]
+fn test_update_apy_bonus_unauthorized_and_capped() {
+    let mut deps = mock_dependencies();
+    setup_season(&mut deps, "native.oro", 100, 1000, 40, 1000, Uint128::new(1000));
+
+    // Non-admin rejected.
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("user", &[]),
+        ExecuteMsg::UpdateApyBonus { airdrop_id: 1, apy_bonus_bps: 1500 },
+    )
+    .unwrap_err();
+    assert!(matches!(err, ContractError::Unauthorized {}));
+
+    // Above the cap rejected.
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateApyBonus { airdrop_id: 1, apy_bonus_bps: 10_001 },
+    )
+    .unwrap_err();
+    assert!(matches!(err, ContractError::ApyBonusTooHigh { got: 10_001, max: 10_000 }));
+}
+
+#[test]
+fn test_update_apy_bonus_pre_start_free_direction() {
+    let mut deps = mock_dependencies();
+    setup_season(&mut deps, "native.oro", 100, 1000, 40, 1000, Uint128::new(1000));
+
+    // Before start: increase allowed (with empty balance is fine — outstanding
+    // is reachable but we're checking direction logic; the funding gate runs
+    // and will fail unless balance is set. Use the same denom-balance helper
+    // to ensure the funding gate passes for the increase case).
+    let mut deps_funded = cosmwasm_std::testing::mock_dependencies_with_balance(
+        &cosmwasm_std::coins(2_000, "native.oro"),
+    );
+    setup_season(&mut deps_funded, "native.oro", 100, 1000, 40, 1000, Uint128::new(1000));
+
+    // Pre-start increase: 1000 → 2000.
+    execute(
+        deps_funded.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateApyBonus { airdrop_id: 1, apy_bonus_bps: 2000 },
+    )
+    .unwrap();
+    let res: AirdropResponse =
+        from_json(&query(deps_funded.as_ref(), mock_env(), QueryMsg::Airdrop { id: 1 }).unwrap())
+            .unwrap();
+    assert_eq!(res.apy_bonus_bps, 2000);
+
+    // Pre-start decrease: 2000 → 500 (allowed because pre-start).
+    execute(
+        deps_funded.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateApyBonus { airdrop_id: 1, apy_bonus_bps: 500 },
+    )
+    .unwrap();
+    let res: AirdropResponse =
+        from_json(&query(deps_funded.as_ref(), mock_env(), QueryMsg::Airdrop { id: 1 }).unwrap())
+            .unwrap();
+    assert_eq!(res.apy_bonus_bps, 500);
+}
+
+#[test]
+fn test_update_apy_bonus_decrease_blocked_after_start() {
+    let mut deps = mock_dependencies();
+    let start_time = setup_season(&mut deps, "native.oro", 0, 1000, 40, 1000, Uint128::new(1000));
+
+    // Advance to after start_time (we set start_offset=0, so default env is past start).
+    let mut env = mock_env();
+    env.block.time = env.block.time.plus_seconds(10);
+    let _ = start_time;
+
+    let err = execute(
+        deps.as_mut(),
+        env,
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateApyBonus { airdrop_id: 1, apy_bonus_bps: 500 },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        ContractError::ApyDecreaseNotAllowed { old: 1000, new: 500 }
+    ));
+}
+
+#[test]
+fn test_update_apy_bonus_increase_after_start_with_funding() {
+    // Pre-fund the contract so the solvency gate passes for an increase.
+    // allocation = 1000, initial = 40% → vesting_base = 600.
+    // outstanding = 1000. New max bonus at 2000 bps = 600 * 20% = 120.
+    // max_outstanding = 1120. Balance 2000 is enough.
+    let mut deps = cosmwasm_std::testing::mock_dependencies_with_balance(
+        &cosmwasm_std::coins(2_000, "native.oro"),
+    );
+    setup_season(&mut deps, "native.oro", 0, 1000, 40, 1000, Uint128::new(1000));
+
+    // Just after start, before vesting end.
+    let mut env = mock_env();
+    env.block.time = env.block.time.plus_seconds(10);
+
+    execute(
+        deps.as_mut(),
+        env.clone(),
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateApyBonus { airdrop_id: 1, apy_bonus_bps: 2000 },
+    )
+    .unwrap();
+
+    let res: AirdropResponse =
+        from_json(&query(deps.as_ref(), env, QueryMsg::Airdrop { id: 1 }).unwrap()).unwrap();
+    assert_eq!(res.apy_bonus_bps, 2000);
+}
+
+#[test]
+fn test_update_apy_bonus_increase_underfunded() {
+    // allocation = 1000, initial = 40% → vesting_base = 600.
+    // outstanding = 1000. Target new bps = 5000 (50%). Max bonus = 300.
+    // max_outstanding = 1300. Balance 500 is too low.
+    let mut deps = cosmwasm_std::testing::mock_dependencies_with_balance(
+        &cosmwasm_std::coins(500, "native.oro"),
+    );
+    setup_season(&mut deps, "native.oro", 0, 1000, 40, 1000, Uint128::new(1000));
+
+    let mut env = mock_env();
+    env.block.time = env.block.time.plus_seconds(10);
+
+    let err = execute(
+        deps.as_mut(),
+        env,
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateApyBonus { airdrop_id: 1, apy_bonus_bps: 5000 },
+    )
+    .unwrap_err();
+    match err {
+        ContractError::ApyUpdateUnderfunded { required, available } => {
+            assert_eq!(required.u128(), 1300);
+            assert_eq!(available.u128(), 500);
+        }
+        other => panic!("expected ApyUpdateUnderfunded, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_update_apy_bonus_after_vesting_end_rejected() {
+    let mut deps = cosmwasm_std::testing::mock_dependencies_with_balance(
+        &cosmwasm_std::coins(10_000, "native.oro"),
+    );
+    setup_season(&mut deps, "native.oro", 0, 1000, 40, 1000, Uint128::new(1000));
+
+    // Jump well past vesting_end_time.
+    let mut env = mock_env();
+    env.block.time = env.block.time.plus_seconds(2000);
+
+    // Increase, decrease, and no-op are all rejected once vesting has ended.
+    for new_bps in [500, 1000, 2000] {
+        let err = execute(
+            deps.as_mut(),
+            env.clone(),
+            mock_info("admin", &[]),
+            ExecuteMsg::UpdateApyBonus { airdrop_id: 1, apy_bonus_bps: new_bps },
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ContractError::ApyUpdateAfterVestingEnd {}),
+            "unexpected error for new_bps={new_bps}: {err:?}"
+        );
+    }
+}

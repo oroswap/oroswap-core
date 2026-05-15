@@ -111,7 +111,8 @@ pub fn execute(
             })
             .map_err(Into::into)
         }
-        ExecuteMsg::UpdateEligibility { airdrop_id, eligibility } => execute_update_eligibility(deps, env, info, airdrop_id, eligibility)
+        ExecuteMsg::UpdateEligibility { airdrop_id, eligibility } => execute_update_eligibility(deps, env, info, airdrop_id, eligibility),
+        ExecuteMsg::UpdateApyBonus { airdrop_id, apy_bonus_bps } => execute_update_apy_bonus(deps, env, info, airdrop_id, apy_bonus_bps),
     }
 }
 
@@ -522,6 +523,104 @@ pub fn execute_update_eligibility(
         .add_attribute("action", "update_eligibility")
         .add_attribute("airdrop_id", airdrop_id.to_string())
         .add_attribute("total_eligibility", total))
+}
+
+/// Update the APY bonus for a season. Two-phase gate:
+///   - `now < start_time`: free (config fix before launch).
+///   - `start_time <= now < vesting_end_time`: increase-only. A decrease
+///     would punish users who already chose to wait for the advertised
+///     bonus and cannot un-make that decision.
+///   - `now >= vesting_end_time`: rejected. Some users may have already
+///     claimed at the old rate and the rate must remain consistent for
+///     everyone else past the cliff.
+/// Any increase is gated by a funding check: the worst-case payout
+/// (`outstanding + max_bonus_at_new_bps`) must be backed by the contract's
+/// current token balance, so admins can't promise more than is on hand.
+pub fn execute_update_apy_bonus(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    airdrop_id: u64,
+    apy_bonus_bps: u64,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.admin {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    if apy_bonus_bps > MAX_APY_BONUS_BPS {
+        return Err(ContractError::ApyBonusTooHigh {
+            got: apy_bonus_bps,
+            max: MAX_APY_BONUS_BPS,
+        });
+    }
+
+    let mut airdrop = AIRDROPS
+        .may_load(deps.storage, airdrop_id)?
+        .ok_or(ContractError::AirdropNotFound {})?;
+
+    let now = env.block.time.seconds();
+    let old_bps = airdrop.apy_bonus_bps;
+
+    if now >= airdrop.vesting_end_time {
+        return Err(ContractError::ApyUpdateAfterVestingEnd {});
+    }
+
+    if now >= airdrop.start_time && apy_bonus_bps < old_bps {
+        return Err(ContractError::ApyDecreaseNotAllowed {
+            old: old_bps,
+            new: apy_bonus_bps,
+        });
+    }
+
+    // Solvency gate on increases: worst case is every remaining recipient
+    // claims at/after vesting end and collects the new bonus on top.
+    if apy_bonus_bps > old_bps {
+        let total_eligibility = ELIGIBILITY_TOTAL
+            .may_load(deps.storage, airdrop_id)?
+            .unwrap_or_default();
+        let total_claimed = CLAIMED_TOTAL
+            .may_load(deps.storage, airdrop_id)?
+            .unwrap_or_default();
+        let outstanding = total_eligibility.saturating_sub(total_claimed);
+
+        let vesting_base = total_eligibility.multiply_ratio(
+            100u128.saturating_sub(airdrop.initial_claim_percent as u128),
+            100u128,
+        );
+        let max_bonus = vesting_base.multiply_ratio(apy_bonus_bps, 10_000u64);
+        let max_outstanding = outstanding.saturating_add(max_bonus);
+
+        let balance: Uint128 = if airdrop.is_native {
+            deps.querier
+                .query_balance(&env.contract.address, &airdrop.token_address)?
+                .amount
+        } else {
+            let resp: cw20::BalanceResponse = deps.querier.query_wasm_smart(
+                &airdrop.token_address,
+                &cw20::Cw20QueryMsg::Balance {
+                    address: env.contract.address.to_string(),
+                },
+            )?;
+            resp.balance
+        };
+
+        if max_outstanding > balance {
+            return Err(ContractError::ApyUpdateUnderfunded {
+                required: max_outstanding,
+                available: balance,
+            });
+        }
+    }
+
+    airdrop.apy_bonus_bps = apy_bonus_bps;
+    AIRDROPS.save(deps.storage, airdrop_id, &airdrop)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "update_apy_bonus")
+        .add_attribute("airdrop_id", airdrop_id.to_string())
+        .add_attribute("old_apy_bonus_bps", old_bps.to_string())
+        .add_attribute("new_apy_bonus_bps", apy_bonus_bps.to_string()))
 }
 
 #[entry_point]
