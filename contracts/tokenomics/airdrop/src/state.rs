@@ -44,3 +44,10 @@ pub const ELIGIBILITY_TOTAL: Map<u64, Uint128> = Map::new("eligibility_total");
 
 /// Running total of `amount_claimed` per airdrop. Updated on each `Claim`.
 pub const CLAIMED_TOTAL: Map<u64, Uint128> = Map::new("claimed_total");
+
+/// Running total of `amount_eligible` for users who have already claimed,
+/// per airdrop. Lets the solvency gate compute the unpaid vesting base
+/// (and thus the worst-case APY bonus) from only the remaining unclaimed
+/// recipients, instead of inflating it with the eligibility of users
+/// whose bonus liability has already been settled.
+pub const CLAIMED_ELIGIBILITY_TOTAL: Map<u64, Uint128> = Map::new("claimed_eligibility_total");

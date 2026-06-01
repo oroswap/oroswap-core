@@ -497,12 +497,18 @@ fn test_edge_cases_and_unauthorized() {
     };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
-    // Claim at start time (0% initial + vesting not elapsed → 0 payout)
-    let msg = ExecuteMsg::Claim { airdrop_id: 1 };
-    let res = execute(deps.as_mut(), mock_env(), mock_info("user1", &[]), msg).unwrap();
-    assert_eq!(res.messages.len(), 0);
-    let total_attr = res.attributes.iter().find(|a| a.key == "total_payout").unwrap();
-    assert_eq!(total_attr.value, "0");
+    // Claim at start time (0% initial + vesting not elapsed → 0 payout) must
+    // revert with NothingToClaim. Settling a zero-payout claim would lock the
+    // user out of their entire allocation via the AlreadyClaimed gate, so the
+    // user is expected to retry once at least one portion has unlocked.
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("user1", &[]),
+        ExecuteMsg::Claim { airdrop_id: 1 },
+    )
+    .unwrap_err();
+    assert!(matches!(err, ContractError::NothingToClaim {}));
 }
 
 #[test]
@@ -703,7 +709,14 @@ fn test_solvency_query_totals_and_funding() {
     )
     .unwrap();
     assert_eq!(res.total_claimed.u128(), 500);
-    assert_eq!(res.outstanding.u128(), 1000);
+    // user1's full eligibility (1000) is now settled — they can't claim
+    // again, so the remaining liability is just user2's 500. The earlier
+    // formulation `total_eligibility - total_claimed = 1000` overstated
+    // this because it conflated paid-out tokens with claimed eligibility.
+    assert_eq!(res.outstanding.u128(), 500);
+    // Worst case for the one remaining user: 500 + (500 * 50% vesting * 10% apy) = 525.
+    // Critically, user1's 1000 eligibility is NOT included in the bonus base.
+    assert_eq!(res.max_outstanding.u128(), 525);
 }
 
 #[test]
@@ -1394,4 +1407,273 @@ fn test_update_apy_bonus_after_vesting_end_rejected() {
             "unexpected error for new_bps={new_bps}: {err:?}"
         );
     }
+}
+
+/// Audit regression: the APY-bonus solvency gate must compute the worst-case
+/// bonus from the *unclaimed* eligibility only — settled users no longer
+/// carry a future bonus obligation. A version that anchored `max_bonus` to
+/// `total_eligibility` would reject this increase as underfunded even though
+/// the contract holds more than enough for everyone still able to claim.
+#[test]
+fn test_update_apy_bonus_excludes_claimed_users_from_bonus_base() {
+    let denom = "native.oro";
+    // 2 users × 1000 eligibility = 2000 total, 40% initial, 1000 bps (10%) starting APY.
+    let mut deps = cosmwasm_std::testing::mock_dependencies_with_balance(
+        &cosmwasm_std::coins(1_500, denom),
+    );
+    instantiate(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("creator", &[]),
+        InstantiateMsg { admin: "admin".to_string() },
+    )
+    .unwrap();
+
+    let now = mock_env().block.time.seconds();
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::AddAirdrop {
+            token_address: denom.to_string(),
+            is_native: true,
+            start_time: now,
+            vesting_start_time: now,
+            vesting_end_time: now + 1000,
+            initial_claim_percent: 40,
+            apy_bonus_bps: 1000,
+            eligibility: vec![
+                ("user1".to_string(), Uint128::new(1000)),
+                ("user2".to_string(), Uint128::new(1000)),
+            ],
+            expiry_time: None,
+        },
+    )
+    .unwrap();
+
+    // user1 settles at t = now + 10: initial 400 + 10/1000 of 600 vesting = 406.
+    let mut env = mock_env();
+    env.block.time = env.block.time.plus_seconds(10);
+    execute(
+        deps.as_mut(),
+        env.clone(),
+        mock_info("user1", &[]),
+        ExecuteMsg::Claim { airdrop_id: 1 },
+    )
+    .unwrap();
+
+    // Admin raises APY 1000 → 5000 bps. Only user2 (1000 eligibility) still has
+    // a bonus claim against the contract:
+    //   remaining_eligibility    = 1000
+    //   remaining_vesting_base   = 1000 * 60% = 600
+    //   max_bonus @ 5000 bps     = 600 * 50% = 300
+    //   max_outstanding          = 1000 + 300 = 1300  ≤  balance 1500 → OK.
+    // An eligibility-based gate would compute max_bonus over 2000 (both users)
+    // → vesting_base 1200 → bonus 600 → max_outstanding ≈ 2194, blocking the
+    // increase even though user1's obligation is already settled.
+    execute(
+        deps.as_mut(),
+        env.clone(),
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateApyBonus { airdrop_id: 1, apy_bonus_bps: 5000 },
+    )
+    .unwrap();
+
+    let res: AirdropResponse =
+        from_json(&query(deps.as_ref(), env.clone(), QueryMsg::Airdrop { id: 1 }).unwrap())
+            .unwrap();
+    assert_eq!(res.apy_bonus_bps, 5000);
+
+    // Solvency snapshot reflects the same accounting: outstanding == remaining
+    // eligibility, and max_outstanding uses the remaining vesting base.
+    use crate::msg::SolvencyResponse;
+    let solvency: SolvencyResponse =
+        from_json(&query(deps.as_ref(), env, QueryMsg::Solvency { id: 1 }).unwrap()).unwrap();
+    assert_eq!(solvency.outstanding.u128(), 1000);
+    assert_eq!(solvency.max_outstanding.u128(), 1300);
+    assert!(solvency.is_fully_funded);
+}
+
+/// Audit regression: with `initial_claim_percent = 0` and no vesting unlocked
+/// yet, a `Claim` between `start_time` and `vesting_start_time` would have
+/// permanently settled the user with `amount_claimed = 0`, locking them out
+/// of their real allocation. The contract now rejects the empty claim and
+/// the user can come back once vesting has unlocked.
+#[test]
+fn test_claim_rejected_when_payout_is_zero_then_succeeds_later() {
+    let denom = "native.oro";
+    let mut deps = cosmwasm_std::testing::mock_dependencies_with_balance(
+        &cosmwasm_std::coins(1_000, denom),
+    );
+    instantiate(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("creator", &[]),
+        InstantiateMsg { admin: "admin".to_string() },
+    )
+    .unwrap();
+
+    let now = mock_env().block.time.seconds();
+    let start = now;
+    let vesting_start = now + 100;
+    let vesting_end = vesting_start + 1000;
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::AddAirdrop {
+            token_address: denom.to_string(),
+            is_native: true,
+            start_time: start,
+            vesting_start_time: vesting_start,
+            vesting_end_time: vesting_end,
+            initial_claim_percent: 0,
+            apy_bonus_bps: 0,
+            eligibility: vec![("user".to_string(), Uint128::new(1000))],
+            expiry_time: None,
+        },
+    )
+    .unwrap();
+
+    // (a) Premature claim — past start, before vesting begins, 0% initial.
+    // Total payout = 0. Must revert without touching USER_CLAIMS so the user
+    // can try again later.
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("user", &[]),
+        ExecuteMsg::Claim { airdrop_id: 1 },
+    )
+    .unwrap_err();
+    assert!(matches!(err, ContractError::NothingToClaim {}));
+
+    // No state should have been written: claimed totals stay at zero.
+    use crate::msg::SolvencyResponse;
+    let solvency: SolvencyResponse =
+        from_json(&query(deps.as_ref(), mock_env(), QueryMsg::Solvency { id: 1 }).unwrap()).unwrap();
+    assert_eq!(solvency.total_claimed.u128(), 0);
+    assert_eq!(solvency.outstanding.u128(), 1000);
+
+    // (b) Same user retries at vesting end — full allocation paid out.
+    let mut env_end = mock_env();
+    env_end.block.time = cosmwasm_std::Timestamp::from_seconds(vesting_end);
+    let res = execute(
+        deps.as_mut(),
+        env_end,
+        mock_info("user", &[]),
+        ExecuteMsg::Claim { airdrop_id: 1 },
+    )
+    .unwrap();
+    let total_attr = res.attributes.iter().find(|a| a.key == "total_payout").unwrap();
+    assert_eq!(total_attr.value, "1000");
+}
+
+/// Audit regression: `Claim` must reject attached native funds. The claim
+/// path only reads `info.sender`; without a `nonpayable` guard, any coins
+/// sent by a faulty frontend/wallet would be silently kept by the contract
+/// with no record of who deposited them.
+#[test]
+fn test_claim_rejects_attached_funds() {
+    let denom = "native.oro";
+    let mut deps = cosmwasm_std::testing::mock_dependencies_with_balance(
+        &cosmwasm_std::coins(1_000, denom),
+    );
+    instantiate(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("creator", &[]),
+        InstantiateMsg { admin: "admin".to_string() },
+    )
+    .unwrap();
+
+    let now = mock_env().block.time.seconds();
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::AddAirdrop {
+            token_address: denom.to_string(),
+            is_native: true,
+            start_time: now,
+            vesting_start_time: now,
+            vesting_end_time: now + 1000,
+            initial_claim_percent: 100,
+            apy_bonus_bps: 0,
+            eligibility: vec![("user".to_string(), Uint128::new(500))],
+            expiry_time: None,
+        },
+    )
+    .unwrap();
+
+    // Sanity: a clean (no-funds) claim succeeds.
+    let mut clean_deps = cosmwasm_std::testing::mock_dependencies_with_balance(
+        &cosmwasm_std::coins(1_000, denom),
+    );
+    instantiate(
+        clean_deps.as_mut(),
+        mock_env(),
+        mock_info("creator", &[]),
+        InstantiateMsg { admin: "admin".to_string() },
+    )
+    .unwrap();
+    execute(
+        clean_deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::AddAirdrop {
+            token_address: denom.to_string(),
+            is_native: true,
+            start_time: now,
+            vesting_start_time: now,
+            vesting_end_time: now + 1000,
+            initial_claim_percent: 100,
+            apy_bonus_bps: 0,
+            eligibility: vec![("user".to_string(), Uint128::new(500))],
+            expiry_time: None,
+        },
+    )
+    .unwrap();
+    execute(
+        clean_deps.as_mut(),
+        mock_env(),
+        mock_info("user", &[]),
+        ExecuteMsg::Claim { airdrop_id: 1 },
+    )
+    .unwrap();
+
+    // Wrong-denom attached: PaymentError::ExtraDenom.
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("user", &cosmwasm_std::coins(5, "uatom")),
+        ExecuteMsg::Claim { airdrop_id: 1 },
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, ContractError::PaymentError(_)),
+        "expected PaymentError on attached funds, got: {err:?}"
+    );
+
+    // Right denom but still attached: PaymentError::NonPayable.
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("user", &cosmwasm_std::coins(5, denom)),
+        ExecuteMsg::Claim { airdrop_id: 1 },
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, ContractError::PaymentError(_)),
+        "expected PaymentError on attached funds, got: {err:?}"
+    );
+
+    // After the two rejected attempts, the user must still be eligible: the
+    // guard runs before any state mutation, so no USER_CLAIMS entry was saved.
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("user", &[]),
+        ExecuteMsg::Claim { airdrop_id: 1 },
+    )
+    .unwrap();
 }

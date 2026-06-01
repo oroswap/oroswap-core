@@ -6,7 +6,7 @@ use cosmwasm_std::{
 };
 use cw2::set_contract_version;
 use cw20::Cw20ExecuteMsg;
-use cw_utils::must_pay;
+use cw_utils::{must_pay, nonpayable};
 use oroswap::common::{propose_new_owner, drop_ownership_proposal, claim_ownership};
 
 use crate::error::ContractError;
@@ -15,8 +15,8 @@ use crate::msg::{
     InstantiateMsg, LatestAirdropIdResponse, QueryMsg, SolvencyResponse, UserAirdropStatusResponse,
 };
 use crate::state::{
-    AirdropInfo, Config, UserClaim, AIRDROPS, CLAIMED_TOTAL, CONFIG, ELIGIBILITY,
-    ELIGIBILITY_TOTAL, LATEST_AIRDROP_ID, OWNERSHIP_PROPOSAL, USER_CLAIMS,
+    AirdropInfo, Config, UserClaim, AIRDROPS, CLAIMED_ELIGIBILITY_TOTAL, CLAIMED_TOTAL, CONFIG,
+    ELIGIBILITY, ELIGIBILITY_TOTAL, LATEST_AIRDROP_ID, OWNERSHIP_PROPOSAL, USER_CLAIMS,
 };
 
 pub const CONTRACT_NAME: &str = env!("CARGO_PKG_NAME");
@@ -207,6 +207,7 @@ pub fn execute_add_airdrop(
     }
     ELIGIBILITY_TOTAL.save(deps.storage, airdrop_id, &total)?;
     CLAIMED_TOTAL.save(deps.storage, airdrop_id, &Uint128::zero())?;
+    CLAIMED_ELIGIBILITY_TOTAL.save(deps.storage, airdrop_id, &Uint128::zero())?;
 
     Ok(Response::new()
         .add_attribute("action", "add_airdrop")
@@ -245,6 +246,12 @@ pub fn execute_claim(
     info: MessageInfo,
     airdrop_id: u64,
 ) -> Result<Response, ContractError> {
+    // Reject any attached funds. Claim payouts are one-way (contract → user);
+    // any coins sent in by a faulty frontend, wallet, or tx builder would be
+    // silently kept by the contract since the claim flow only reads
+    // `info.sender`. Bouncing the tx with a clear error keeps user funds safe.
+    nonpayable(&info)?;
+
     let airdrop = AIRDROPS
         .may_load(deps.storage, airdrop_id)?
         .ok_or(ContractError::AirdropNotFound {})?;
@@ -304,6 +311,16 @@ pub fn execute_claim(
     let total_payout = initial_payout.checked_add(unlocked_vesting).map_err(StdError::from)?
                                    .checked_add(bonus).map_err(StdError::from)?;
 
+    // Refuse to settle a zero-payout claim. Otherwise a user claiming
+    // between `start_time` and `vesting_start_time` with `initial_claim_percent == 0`
+    // (or with an allocation small enough that the initial portion rounds to
+    // zero) would be permanently recorded as claimed with `amount_claimed = 0`,
+    // forfeiting their entire vested allocation. Returning here lets them retry
+    // once at least one portion is actually unlocked.
+    if total_payout.is_zero() {
+        return Err(ContractError::NothingToClaim {});
+    }
+
     USER_CLAIMS.save(
         deps.storage,
         (airdrop_id, &info.sender),
@@ -314,7 +331,11 @@ pub fn execute_claim(
         },
     )?;
 
-    // Update running claimed total so the Solvency query stays O(1).
+    // Update running claimed totals so the Solvency query stays O(1).
+    // CLAIMED_TOTAL tracks tokens paid; CLAIMED_ELIGIBILITY_TOTAL tracks
+    // eligibility committed to settled users — the latter is what lets the
+    // APY-bonus gate exclude already-claimed recipients from the worst-case
+    // bonus calculation.
     let prior_total = CLAIMED_TOTAL
         .may_load(deps.storage, airdrop_id)?
         .unwrap_or_default();
@@ -325,32 +346,39 @@ pub fn execute_claim(
             .checked_add(total_payout)
             .map_err(StdError::from)?,
     )?;
+    let prior_claimed_eligibility = CLAIMED_ELIGIBILITY_TOTAL
+        .may_load(deps.storage, airdrop_id)?
+        .unwrap_or_default();
+    CLAIMED_ELIGIBILITY_TOTAL.save(
+        deps.storage,
+        airdrop_id,
+        &prior_claimed_eligibility
+            .checked_add(amount_eligible)
+            .map_err(StdError::from)?,
+    )?;
 
-    let mut messages: Vec<CosmosMsg> = vec![];
-    if !total_payout.is_zero() {
-        let msg: CosmosMsg = if airdrop.is_native {
-            cosmwasm_std::BankMsg::Send {
-                to_address: info.sender.to_string(),
-                amount: vec![cosmwasm_std::Coin {
-                    denom: airdrop.token_address,
-                    amount: total_payout,
-                }],
-            }.into()
-        } else {
-            WasmMsg::Execute {
-                contract_addr: airdrop.token_address,
-                msg: to_json_binary(&Cw20ExecuteMsg::Transfer {
-                    recipient: info.sender.to_string(),
-                    amount: total_payout,
-                })?,
-                funds: vec![],
-            }.into()
-        };
-        messages.push(msg);
-    }
+    // total_payout > 0 is guaranteed by the NothingToClaim guard above.
+    let transfer_msg: CosmosMsg = if airdrop.is_native {
+        cosmwasm_std::BankMsg::Send {
+            to_address: info.sender.to_string(),
+            amount: vec![cosmwasm_std::Coin {
+                denom: airdrop.token_address,
+                amount: total_payout,
+            }],
+        }.into()
+    } else {
+        WasmMsg::Execute {
+            contract_addr: airdrop.token_address,
+            msg: to_json_binary(&Cw20ExecuteMsg::Transfer {
+                recipient: info.sender.to_string(),
+                amount: total_payout,
+            })?,
+            funds: vec![],
+        }.into()
+    };
 
     Ok(Response::new()
-        .add_messages(messages)
+        .add_message(transfer_msg)
         .add_attribute("action", "claim")
         .add_attribute("airdrop_id", airdrop_id.to_string())
         .add_attribute("user", info.sender)
@@ -573,23 +601,25 @@ pub fn execute_update_apy_bonus(
         });
     }
 
-    // Solvency gate on increases: worst case is every remaining recipient
-    // claims at/after vesting end and collects the new bonus on top.
+    // Solvency gate on increases: worst case is every *unclaimed* recipient
+    // claims at/after vesting end and collects the new bonus on top. Users
+    // who already claimed are fully settled — their eligibility no longer
+    // backs a future bonus obligation, so it's excluded from the base.
     if apy_bonus_bps > old_bps {
         let total_eligibility = ELIGIBILITY_TOTAL
             .may_load(deps.storage, airdrop_id)?
             .unwrap_or_default();
-        let total_claimed = CLAIMED_TOTAL
+        let claimed_eligibility = CLAIMED_ELIGIBILITY_TOTAL
             .may_load(deps.storage, airdrop_id)?
             .unwrap_or_default();
-        let outstanding = total_eligibility.saturating_sub(total_claimed);
+        let remaining_eligibility = total_eligibility.saturating_sub(claimed_eligibility);
 
-        let vesting_base = total_eligibility.multiply_ratio(
+        let remaining_vesting_base = remaining_eligibility.multiply_ratio(
             100u128.saturating_sub(airdrop.initial_claim_percent as u128),
             100u128,
         );
-        let max_bonus = vesting_base.multiply_ratio(apy_bonus_bps, 10_000u64);
-        let max_outstanding = outstanding.saturating_add(max_bonus);
+        let max_bonus = remaining_vesting_base.multiply_ratio(apy_bonus_bps, 10_000u64);
+        let max_outstanding = remaining_eligibility.saturating_add(max_bonus);
 
         let balance: Uint128 = if airdrop.is_native {
             deps.querier
@@ -702,6 +732,17 @@ fn query_user_airdrop_status(deps: Deps, env: Env, id: u64, address: String) -> 
         });
     }
 
+    if !airdrop.is_active {
+        return Ok(UserAirdropStatusResponse {
+            total_allocation,
+            current_claimable: Uint128::zero(),
+            is_claimed: false,
+            amount_claimed: Uint128::zero(),
+            claim_time: None,
+            vesting_status: "inactive".to_string(),
+        });
+    }
+
     if let Some(expiry) = airdrop.expiry_time {
         if current_time >= expiry {
             return Ok(UserAirdropStatusResponse {
@@ -762,20 +803,29 @@ fn query_solvency(deps: Deps, env: Env, id: u64) -> StdResult<SolvencyResponse> 
         .may_load(deps.storage, id)?
         .unwrap_or_default();
     let total_claimed = CLAIMED_TOTAL.may_load(deps.storage, id)?.unwrap_or_default();
-    let outstanding = total_eligibility.saturating_sub(total_claimed);
+    let claimed_eligibility = CLAIMED_ELIGIBILITY_TOTAL
+        .may_load(deps.storage, id)?
+        .unwrap_or_default();
+    // Remaining eligibility = Σ amount_eligible for users who have NOT yet
+    // claimed. This is the pessimistic non-bonus liability bound: if every
+    // remaining user claims at vesting end, exactly this much capital is
+    // still owed (forfeited mid-vesting portions are excluded — they can't
+    // be claimed anymore).
+    let outstanding = total_eligibility.saturating_sub(claimed_eligibility);
 
-    // Worst case: every remaining recipient claims at/after vesting end
-    // and collects the APY bonus. Bonus accrues on vesting_base = the
-    // (100 - initial_claim_percent)% portion that's still locked up.
+    // Worst case: every *unclaimed* recipient claims at/after vesting end
+    // and collects the APY bonus. Bonus accrues on the (100 - initial_claim_percent)%
+    // portion of the remaining eligibility — users who already claimed are
+    // fully settled and cannot collect any more bonus.
     //
     // `saturating_add`, not `checked_add`: at pathological inputs
-    // (`total_eligibility ≈ Uint128::MAX`, `apy = 10_000 bps`,
+    // (`outstanding ≈ Uint128::MAX`, `apy = 10_000 bps`,
     // `initial_claim_percent = 0`) `outstanding + max_bonus` overflows.
     // The query is a UI signal — a saturated `Uint128::MAX` with
     // `is_fully_funded = false` is strictly more useful than a hard error.
-    let vesting_base = total_eligibility
+    let remaining_vesting_base = outstanding
         .multiply_ratio(100u128.saturating_sub(airdrop.initial_claim_percent as u128), 100u128);
-    let max_bonus = vesting_base.multiply_ratio(airdrop.apy_bonus_bps, 10_000u64);
+    let max_bonus = remaining_vesting_base.multiply_ratio(airdrop.apy_bonus_bps, 10_000u64);
     let max_outstanding = outstanding.saturating_add(max_bonus);
 
     // Pull current contract balance for the airdrop's token.

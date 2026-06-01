@@ -123,13 +123,14 @@ pub struct SolvencyResponse {
     pub total_eligibility: Uint128,
     /// Σ amounts actually paid out across all `Claim` calls so far.
     pub total_claimed: Uint128,
-    /// `total_eligibility - total_claimed`. Note: forfeited mid-vesting
-    /// portions reduce *paid* but not *eligibility*, so this is the
-    /// pessimistic "still-to-pay if everyone claims at vesting end" bound,
-    /// before APY bonus.
+    /// Σ `amount_eligible` for users who have NOT yet claimed. Pessimistic
+    /// "still-to-pay if every remaining user claims at vesting end" bound,
+    /// before the APY bonus. Forfeited mid-vesting portions are excluded —
+    /// once a user claims, their entire eligibility is settled.
     pub outstanding: Uint128,
     /// Worst-case outstanding: assumes every unclaimed user claims at or
-    /// after `vesting_end_time` and receives the full APY bonus.
+    /// after `vesting_end_time` and receives the full APY bonus. The bonus
+    /// base is the remaining (unclaimed) vesting portion only.
     pub max_outstanding: Uint128,
     /// Current contract balance for `token_address` (native via bank,
     /// CW20 via the contract's `Balance` query).

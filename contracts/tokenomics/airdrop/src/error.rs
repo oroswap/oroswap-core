@@ -69,4 +69,7 @@ pub enum ContractError {
 
     #[error("APY update would exceed contract funding: max_outstanding {required} > balance {available}. Deposit funds first.")]
     ApyUpdateUnderfunded { required: Uint128, available: Uint128 },
+
+    #[error("Nothing to claim yet: initial portion is zero and no vesting has unlocked. Wait until at least one portion is available.")]
+    NothingToClaim {},
 }
