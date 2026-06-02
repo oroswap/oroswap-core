@@ -1677,3 +1677,67 @@ fn test_claim_rejects_attached_funds() {
     )
     .unwrap();
 }
+
+/// Audit regression: `query_user_airdrop_status` must mirror `execute_claim`'s
+/// `is_active` gate. After `ToggleAirdrop(active=false)`, the query must
+/// report `current_claimable = 0` with a distinct `"inactive"` status string
+/// — otherwise frontends/bots would advertise a claim that any Claim tx
+/// would revert with `AirdropInactive`.
+#[test]
+fn test_user_airdrop_status_returns_inactive_when_disabled() {
+    let mut deps = mock_dependencies();
+    instantiate(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("creator", &[]),
+        InstantiateMsg { admin: "admin".to_string() },
+    )
+    .unwrap();
+    let now = mock_env().block.time.seconds();
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::AddAirdrop {
+            token_address: "native.oro".to_string(),
+            is_native: true,
+            start_time: now,
+            vesting_start_time: now,
+            vesting_end_time: now + 1000,
+            initial_claim_percent: 40,
+            apy_bonus_bps: 0,
+            eligibility: vec![("user".to_string(), Uint128::new(1000))],
+            expiry_time: None,
+        },
+    )
+    .unwrap();
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::ToggleAirdrop { id: 1, active: false },
+    )
+    .unwrap();
+
+    let res: UserAirdropStatusResponse = from_json(
+        &query(
+            deps.as_ref(),
+            mock_env(),
+            QueryMsg::UserAirdropStatus { id: 1, address: "user".to_string() },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(res.vesting_status, "inactive");
+    assert_eq!(res.current_claimable, Uint128::zero());
+
+    // Parity check: a Claim now would also revert.
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("user", &[]),
+        ExecuteMsg::Claim { airdrop_id: 1 },
+    )
+    .unwrap_err();
+    assert!(matches!(err, ContractError::AirdropInactive {}));
+}
