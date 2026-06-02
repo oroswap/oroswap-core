@@ -1826,14 +1826,14 @@ fn test_withdraw_scans_only_token_bucket() {
     assert_eq!(total_airdrops, 51, "all 51 airdrops should be stored in AIRDROPS");
 
     let target_bucket: Vec<u64> = AIRDROPS_BY_TOKEN
-        .prefix((target_denom, 1u8))
+        .prefix(target_denom)
         .range(&deps.storage, None, None, cosmwasm_std::Order::Ascending)
         .map(|kv| kv.unwrap().0)
         .collect();
     assert_eq!(
         target_bucket,
         vec![1u64],
-        "AIRDROPS_BY_TOKEN[(target_denom, native)] must contain exactly the target airdrop id",
+        "AIRDROPS_BY_TOKEN[target_denom] must contain exactly the target airdrop id",
     );
 
     // Advance past the target airdrop's expiry so it is no longer blocking.
@@ -1855,4 +1855,89 @@ fn test_withdraw_scans_only_token_bucket() {
     )
     .unwrap();
     assert_eq!(res.messages.len(), 1, "withdraw must emit exactly one BankMsg");
+}
+
+/// FIND-011 regression: the withdraw guard must derive token type from
+/// stored `AirdropInfo`, not from the caller-supplied `is_native`. With an
+/// active CW20 airdrop on a `token_address`, the admin passing
+/// `is_native = true` for the SAME `token_address` must still be blocked
+/// — even though the payout branch would otherwise route through
+/// `BankMsg::Send` and (harmlessly) fail. The guard now sees the airdrop
+/// regardless of the caller's flag.
+#[test]
+fn test_withdraw_guard_uses_stored_is_native_not_caller_flag() {
+    // Use a string that's syntactically both a plausible native denom AND
+    // a "contract address" — what matters is the GUARD treats both
+    // `is_native` modes as the same key for matching.
+    let shared = "uoro";
+    let mut deps = cosmwasm_std::testing::mock_dependencies_with_balance(
+        &cosmwasm_std::coins(1_000, shared),
+    );
+    instantiate(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("creator", &[]),
+        InstantiateMsg { admin: "admin".to_string() },
+    )
+    .unwrap();
+
+    let now = mock_env().block.time.seconds();
+
+    // Add an ACTIVE CW20 airdrop on `shared`. The CW20 deposit pool and
+    // native bank balance are separate, but the guard should still block
+    // any withdraw with the same token_address string.
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::AddAirdrop {
+            token_address: shared.to_string(),
+            is_native: false, // CW20
+            start_time: now,
+            vesting_start_time: now,
+            vesting_end_time: now + 1000,
+            initial_claim_percent: 100,
+            apy_bonus_bps: 0,
+            eligibility: vec![],
+            expiry_time: None,
+        },
+    )
+    .unwrap();
+
+    // Admin tries to withdraw with the WRONG is_native (true instead of false).
+    // Pre-FIND-011 behaviour: the guard's (token, is_native=true) filter would
+    // skip the CW20 airdrop, allow the call to proceed, and a BankMsg::Send
+    // would (harmlessly) fail at sub-message execution.
+    // Post-FIND-011: the guard finds the active airdrop on `shared` regardless
+    // of caller-supplied is_native and blocks with WithdrawalBlocked.
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::WithdrawFunds {
+            token_address: shared.to_string(),
+            amount: cosmwasm_std::Uint128::new(100),
+            is_native: true, // <-- WRONG: the airdrop is CW20
+        },
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, ContractError::WithdrawalBlocked { airdrop_id: 1 }),
+        "guard must block on stored is_native, got {err:?}"
+    );
+
+    // And the correct is_native is also blocked (sanity check — same airdrop
+    // is still active).
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::WithdrawFunds {
+            token_address: shared.to_string(),
+            amount: cosmwasm_std::Uint128::new(100),
+            is_native: false,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err, ContractError::WithdrawalBlocked { airdrop_id: 1 }));
 }

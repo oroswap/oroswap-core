@@ -190,12 +190,9 @@ pub fn execute_add_airdrop(
         },
     )?;
     // Secondary index for the withdraw guard (FIND-008): bounds the scan in
-    // execute_withdraw_funds to O(n_per_token) instead of O(n_global).
-    AIRDROPS_BY_TOKEN.save(
-        deps.storage,
-        (token_address.as_str(), is_native as u8, airdrop_id),
-        &(),
-    )?;
+    // execute_withdraw_funds to O(n_per_token) instead of O(n_global). The key
+    // omits is_native deliberately — see FIND-011 comment in state.rs.
+    AIRDROPS_BY_TOKEN.save(deps.storage, (token_address.as_str(), airdrop_id), &())?;
 
     // Dedupe the input batch in-memory (last-wins per address) so a caller
     // passing the same address twice doesn't inflate ELIGIBILITY_TOTAL above
@@ -461,13 +458,20 @@ pub fn execute_withdraw_funds(
     // `expiry_time` before draining the pool — protects claimants while
     // an airdrop is live.
     //
-    // FIND-008: iterate only the (token_address, is_native) bucket via the
+    // FIND-008: iterate only the (token_address) bucket via the
     // AIRDROPS_BY_TOKEN secondary index instead of scanning the whole
     // AIRDROPS map. Bounded by airdrops-for-this-token, not by global
     // historical campaign count.
+    //
+    // FIND-011: the guard does NOT filter by the caller-supplied is_native.
+    // Authority on token type comes from the stored AirdropInfo: if any
+    // airdrop sharing the same token_address string is still blocking, the
+    // withdraw is rejected regardless of native/cw20 packaging. Avoids the
+    // prior fragile coupling where passing the wrong is_native flag would
+    // make the guard skip a matching airdrop on the same token_address.
     let now = env.block.time.seconds();
     for kv in AIRDROPS_BY_TOKEN
-        .prefix((token_address.as_str(), is_native as u8))
+        .prefix(token_address.as_str())
         .range(deps.storage, None, None, Order::Ascending)
     {
         let (id, _) = kv?;
