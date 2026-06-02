@@ -1,3 +1,12 @@
+# Profile settings (opt-level, lto, overflow-checks, etc.) live exclusively
+# in the workspace `Cargo.toml`. Stable Cargo does not read `[profile.*]`
+# from `.cargo/config.toml` (that was an unstable `-Z config-profile`
+# feature that was never stabilized), so any profile block here would be
+# silently ignored — and worse, would create the illusion of an override
+# that diverges from the real workspace settings (FIND-014).
+#
+# Only target-specific rustflags belong in this file.
+
 [target.wasm32-unknown-unknown]
 rustflags = [
     "-C", "target-cpu=generic",
@@ -5,16 +14,3 @@ rustflags = [
     "-C", "target-feature=+crt-static",
     "-C", "link-arg=--strip-all",
 ]
-
-[profile.release]
-opt-level = 3
-lto = true
-panic = "abort"
-strip = true
-debug = false
-overflow-checks = false
-codegen-units = 1
-
-[profile.release.build-override]
-opt-level = 3
-debug = false 
