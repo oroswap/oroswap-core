@@ -149,6 +149,14 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractEr
                     ..
                 } = b.try_into()?;
 
+                // FIND-013: protobuf decoding can succeed while leaving the
+                // denom string empty (mismatched feature flags, future schema
+                // drift). Refuse to persist an unusable mint_denom — every
+                // subsequent Lock/Unlock would fail on the empty denom.
+                if new_token_denom.is_empty() {
+                    return Err(ContractError::FailedToParseReply {});
+                }
+
                 let mut config = CONFIG.load(deps.storage)?;
                 config.mint_denom = new_token_denom.clone();
                 CONFIG.save(deps.storage, &config)?;

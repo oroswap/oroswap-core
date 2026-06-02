@@ -170,17 +170,25 @@ pub fn execute(
         ExecuteMsg::EnterWithHook {
             contract_address,
             msg,
-        } => execute_enter(deps, env, info).map(|(resp, minted_coins)| {
-            resp.add_message(WasmMsg::Execute {
-                contract_addr: contract_address.clone(),
-                msg,
-                funds: vec![minted_coins],
+        } => {
+            // FIND-010: validate the caller-supplied destination BEFORE running
+            // execute_enter so a malformed address fails fast with a clear
+            // StdError instead of completing the mint and then reverting at
+            // sub-message dispatch. Mirrors the validation `Enter { receiver }`
+            // does on its recipient.
+            deps.api.addr_validate(&contract_address)?;
+            execute_enter(deps, env, info).map(|(resp, minted_coins)| {
+                resp.add_message(WasmMsg::Execute {
+                    contract_addr: contract_address.clone(),
+                    msg,
+                    funds: vec![minted_coins],
+                })
+                .add_attributes([
+                    ("action", "enter_with_hook"),
+                    ("next_contract", &contract_address),
+                ])
             })
-            .add_attributes([
-                ("action", "enter_with_hook"),
-                ("next_contract", &contract_address),
-            ])
-        }),
+        }
         ExecuteMsg::Leave { receiver } => {
             let recipient = receiver.unwrap_or_else(|| info.sender.to_string());
             deps.api.addr_validate(&recipient)?;
@@ -240,6 +248,14 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractEr
                 let MsgCreateDenomResponse { new_token_denom } = b.try_into()?;
                 #[cfg(feature = "zigchain")]
                 let MsgCreateDenomResponse { denom: new_token_denom, .. } = b.try_into()?;
+
+                // FIND-013: protobuf decoding can succeed while leaving the
+                // denom string empty (mismatched feature flags, future schema
+                // drift). Refuse to persist an unusable xoro_denom — every
+                // subsequent Enter/Leave/Claim would fail on the empty denom.
+                if new_token_denom.is_empty() {
+                    return Err(ContractError::FailedToParseReply {});
+                }
 
                 CONFIG.update::<_, StdError>(deps.storage, |mut config| {
                     config.xoro_denom = new_token_denom.clone();

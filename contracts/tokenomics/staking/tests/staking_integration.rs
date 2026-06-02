@@ -490,6 +490,73 @@ fn test_hooks() {
         .unwrap_err();
 }
 
+/// FIND-010 regression: `EnterWithHook` must validate the caller-supplied
+/// `contract_address` BEFORE running `execute_enter`, mirroring the
+/// `Enter { receiver }` path. A malformed destination must fail fast with
+/// a clear StdError and leave no state mutation (ORO not consumed, xORO
+/// not minted, total_locked unchanged).
+#[test]
+fn test_enter_with_hook_validates_contract_address() {
+    use cosmwasm_schema::cw_serde;
+
+    #[cw_serde]
+    enum NoopMsg {
+        Noop {},
+    }
+
+    let owner = Addr::unchecked("owner");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    let alice = Addr::unchecked("alice");
+    helper.give_oro(10_000, &alice);
+
+    let oro_before = helper
+        .query_balance(&alice, ORO_DENOM)
+        .unwrap()
+        .u128();
+    let xoro_supply_before = helper.query_xoro_supply_at(None).unwrap().u128();
+    let total_locked_before = helper.query_total_locked().unwrap().u128();
+
+    // Malformed bech32 — MockApi rejects this in `addr_validate` before any
+    // state is touched.
+    let err = helper
+        .stake_with_hook(
+            &alice,
+            10_000,
+            "not_a_valid_bech32_addr!!!".to_string(),
+            &NoopMsg::Noop {},
+        )
+        .unwrap_err();
+    // The error surfaces as a cw-multi-test wrapping of the inner StdError.
+    // We don't need to match the exact variant — just confirm the tx reverted.
+    let _ = err;
+
+    // State invariant: alice's ORO is unchanged, no xORO was minted, and
+    // total_locked is unchanged. Pre-fix the validation happened only at
+    // sub-message dispatch, AFTER execute_enter had already mutated state;
+    // the wasm-vm would roll the tx back, so this assertion would still
+    // hold, but the post-fix flow does not even start the mint.
+    assert_eq!(
+        helper.query_balance(&alice, ORO_DENOM).unwrap().u128(),
+        oro_before,
+        "alice's ORO must not be consumed when the hook destination is invalid",
+    );
+    assert_eq!(
+        helper.query_xoro_supply_at(None).unwrap().u128(),
+        xoro_supply_before,
+        "no xORO must be minted on a rejected EnterWithHook",
+    );
+    assert_eq!(
+        helper.query_total_locked().unwrap().u128(),
+        total_locked_before,
+        "total_locked must not change on a rejected EnterWithHook",
+    );
+
+    // Sanity: the SAME alice can still stake afterwards with a valid
+    // destination — proving the rejected attempt left no orphan state behind.
+    helper.stake(&alice, 5_000).unwrap();
+}
+
 #[test]
 fn test_pause_unpause() {
     let owner = Addr::unchecked("owner");

@@ -266,3 +266,47 @@ fn test_propose_denom_admin_invalid_bech32_rejected() {
         "expected Std (addr_validate) error, got: {err:?}"
     );
 }
+
+/// FIND-013 regression: the InstantiateDenom reply handler must refuse to
+/// persist an empty mint_denom. Protobuf decode can succeed while leaving
+/// the string empty (mismatched feature flags, future schema drift).
+/// Without the guard, the contract would store an unusable denom and every
+/// subsequent Lock/Unlock would fail.
+#[test]
+fn reply_rejects_empty_mint_denom() {
+    use crate::contract::reply;
+    use cosmwasm_std::{Binary, Reply, SubMsgResponse, SubMsgResult};
+    use oroswap::token_factory::MsgCreateDenomResponse;
+
+    let mut deps = mock_dependencies();
+
+    // Encode the zigchain-variant MsgCreateDenomResponse with denom = "".
+    // (The wrapper's default feature set includes "zigchain", so the reply
+    // handler decodes this 8-field struct.)
+    #[allow(non_snake_case)]
+    let proto: Binary = MsgCreateDenomResponse {
+        creator: String::new(),
+        bank_admin: String::new(),
+        metadata_admin: String::new(),
+        denom: String::new(),
+        minting_cap: String::new(),
+        can_change_minting_cap: false,
+        URI: String::new(),
+        URI_hash: String::new(),
+    }
+    .into();
+
+    let reply_msg = Reply {
+        id: 1, // ReplyIds::InstantiateDenom
+        result: SubMsgResult::Ok(SubMsgResponse {
+            events: vec![],
+            data: Some(proto),
+        }),
+    };
+
+    let err = reply(deps.as_mut(), mock_env(), reply_msg).unwrap_err();
+    assert!(
+        matches!(err, ContractError::FailedToParseReply {}),
+        "empty mint_denom must surface as FailedToParseReply, got {err:?}",
+    );
+}
