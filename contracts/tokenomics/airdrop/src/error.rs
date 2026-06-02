@@ -34,9 +34,6 @@ pub enum ContractError {
     #[error("Airdrop has expired")]
     AirdropExpired {},
 
-    #[error("Contract name mismatch during migration")]
-    MigrationError {},
-
     #[error("Invalid vesting window: require start_time <= vesting_start_time < vesting_end_time")]
     InvalidVestingWindow {},
 

@@ -224,5 +224,7 @@ in O(1), so the query is cheap even for very large airdrops.
 
 ## Migration
 
-Standard cw2 same-name guard. `cw2::set_contract_version` re-stamps the
-version on migrate; a name mismatch returns `MigrationError`.
+Forward-only via `cw2::ensure_from_older_version`: a contract-name mismatch
+or a downgrade (`stored_version > CONTRACT_VERSION`) is rejected with a
+generic `StdError` wrapped into `ContractError::Std`; an equal version is
+a silent no-op; an older stored version is bumped to `CONTRACT_VERSION`.

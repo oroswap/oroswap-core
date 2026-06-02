@@ -165,7 +165,13 @@ fn test_migrate_wrong_name_rejected() {
     cw2::set_contract_version(&mut deps.storage, "some-other-contract", "0.0.1").unwrap();
 
     let err = migrate(deps.as_mut(), mock_env(), MigrateMsg {}).unwrap_err();
-    assert_eq!(err, ContractError::MigrationError {});
+    // FIND-007 fix: migrate now delegates the name guard to
+    // cw2::ensure_from_older_version, which surfaces a generic StdError
+    // wrapped into ContractError::Std on mismatch.
+    assert!(
+        matches!(err, ContractError::Std(_)),
+        "expected wrapped StdError on name mismatch, got {err:?}"
+    );
 }
 
 // ─── ProposeDenomAdmin guards ────────────────────────────────────────────────

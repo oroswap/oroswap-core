@@ -201,11 +201,12 @@ The owner has implicit pause authority and is NOT included in this list.
 
 ## Migration
 
-Standard cw2 migration with same-name guard: `migrate` succeeds if the
-existing cw2 contract name is `oroswap-wrapper` and returns
-`ContractError::MigrationError` otherwise. Wasm-level migrate rights are
-gated by the wasm contract admin (see the admin-roles table above), not by
-`config.owner`.
+Forward-only via `cw2::ensure_from_older_version`: `migrate` succeeds when
+the stored cw2 name is `oroswap-wrapper` AND the stored version is `<=
+CONTRACT_VERSION`. A name mismatch or a downgrade returns a generic
+`StdError` wrapped into `ContractError::Std`; an equal stored version is a
+silent no-op. Wasm-level migrate rights are gated by the wasm contract
+admin (see the admin-roles table above), not by `config.owner`.
 
 ## Retiring a wrapper
 

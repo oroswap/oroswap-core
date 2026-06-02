@@ -1,7 +1,7 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{DepsMut, Env, Response};
-use cw2::{get_contract_version, set_contract_version};
+use cw2::ensure_from_older_version;
 
 use crate::contract::{CONTRACT_NAME, CONTRACT_VERSION};
 use crate::error::ContractError;
@@ -9,19 +9,16 @@ use crate::state::{REWARD_ORO_RESERVE, TOTAL_LOCKED};
 use oroswap::staking::MigrateMsg;
 use cosmwasm_std::Uint128;
 
-/// Migration entry point.
+/// Forward-only migration entry point.
 ///
-/// This contract is freshly deployed — no legacy state to migrate.
-/// The handler initialises any state items that may be absent on older
-/// deployments and bumps the stored contract version.
+/// `ensure_from_older_version` validates contract name parity and rejects
+/// downgrades (storage_version > CONTRACT_VERSION). Same-version migrations
+/// are silent no-ops per cw2 convention. The handler then initialises any
+/// state items added in later versions so subsequent execute paths can
+/// rely on them without panicking on `load()`.
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
-    let contract_version = get_contract_version(deps.storage)?;
-
-    // Only allow migrating from the same contract name.
-    if contract_version.contract != CONTRACT_NAME {
-        return Err(ContractError::MigrationError {});
-    }
+    let stored_version = ensure_from_older_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
     // Ensure new state items exist (idempotent — safe to run on any version).
     if REWARD_ORO_RESERVE.may_load(deps.storage)?.is_none() {
@@ -31,11 +28,9 @@ pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, C
         TOTAL_LOCKED.save(deps.storage, &0u128)?;
     }
 
-    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
-
     Ok(Response::new()
-        .add_attribute("previous_contract_name", &contract_version.contract)
-        .add_attribute("previous_contract_version", &contract_version.version)
+        .add_attribute("previous_contract_name", CONTRACT_NAME)
+        .add_attribute("previous_contract_version", stored_version.to_string())
         .add_attribute("new_contract_name", CONTRACT_NAME)
         .add_attribute("new_contract_version", CONTRACT_VERSION))
 }
@@ -156,6 +151,79 @@ mod tests {
         cw2::set_contract_version(&mut deps.storage, "some-other-contract", "0.0.1").unwrap();
 
         let err = migrate(deps.as_mut(), mock_env(), MigrateMsg {}).unwrap_err();
-        assert!(matches!(err, ContractError::MigrationError {}));
+        // ensure_from_older_version surfaces a generic StdError on mismatch,
+        // wrapped into ContractError::Std by the `?` operator.
+        assert!(
+            matches!(err, ContractError::Std(_)),
+            "expected wrapped StdError on name mismatch, got {err:?}"
+        );
+    }
+
+    /// Audit FIND-007 regression: migrating to an OLDER version must be
+    /// rejected so a stale wasm code id can't accidentally roll the
+    /// contract back. Storage version must remain unchanged on failure.
+    #[test]
+    fn migrate_rejects_downgrade() {
+        let mut deps = mock_dependencies();
+        // Seed a stored version strictly higher than CONTRACT_VERSION (currently 2.2.0).
+        cw2::set_contract_version(&mut deps.storage, CONTRACT_NAME, "99.0.0").unwrap();
+
+        let err = migrate(deps.as_mut(), mock_env(), MigrateMsg {}).unwrap_err();
+        assert!(
+            matches!(err, ContractError::Std(_)),
+            "expected wrapped StdError on downgrade, got {err:?}"
+        );
+
+        // State items must NOT have been initialised on the rejected path,
+        // and the stored version must not have moved.
+        let stored = cw2::get_contract_version(&deps.storage).unwrap();
+        assert_eq!(stored.version, "99.0.0", "downgrade must not mutate stored version");
+        assert!(
+            REWARD_ORO_RESERVE.may_load(&deps.storage).unwrap().is_none(),
+            "state-init must not run on a rejected migration",
+        );
+    }
+
+    /// Belt-and-braces against a future Cargo.toml bump to a non-semver
+    /// string (e.g. "1.0", "v1.0.0", "latest"). `ensure_from_older_version`
+    /// parses CONTRACT_VERSION via the semver crate at runtime; a bad bump
+    /// would brick every on-chain migrate including the first one. This
+    /// test catches it at `cargo test` time instead — and doubles as a
+    /// positive-path upgrade test from a synthetic 0.0.1 baseline.
+    #[test]
+    fn migrate_upgrade_from_older_version_succeeds_and_parses_semver() {
+        let mut deps = mock_dependencies();
+        cw2::set_contract_version(&mut deps.storage, CONTRACT_NAME, "0.0.1").unwrap();
+
+        migrate(deps.as_mut(), mock_env(), MigrateMsg {})
+            .expect("CONTRACT_VERSION must be strict semver and accept an older stored version");
+        let stored = cw2::get_contract_version(&deps.storage).unwrap();
+        assert_eq!(stored.version, CONTRACT_VERSION, "stored version must advance on forward migration");
+        // State-init must have run on the upgrade path.
+        assert_eq!(
+            REWARD_ORO_RESERVE.load(&deps.storage).unwrap(),
+            cosmwasm_std::Uint128::zero(),
+        );
+        assert_eq!(TOTAL_LOCKED.load(&deps.storage).unwrap(), 0u128);
+    }
+
+    /// Same-version migration is a no-op per cw2 convention but the handler
+    /// must still complete successfully and run the idempotent state-init
+    /// so newly-added items are guaranteed present.
+    #[test]
+    fn migrate_accepts_same_version_as_noop() {
+        let mut deps = mock_dependencies();
+        cw2::set_contract_version(&mut deps.storage, CONTRACT_NAME, CONTRACT_VERSION).unwrap();
+
+        migrate(deps.as_mut(), mock_env(), MigrateMsg {}).unwrap();
+
+        let stored = cw2::get_contract_version(&deps.storage).unwrap();
+        assert_eq!(stored.version, CONTRACT_VERSION);
+        // State items still initialised.
+        assert_eq!(
+            REWARD_ORO_RESERVE.load(&deps.storage).unwrap(),
+            cosmwasm_std::Uint128::zero(),
+        );
+        assert_eq!(TOTAL_LOCKED.load(&deps.storage).unwrap(), 0u128);
     }
 }
