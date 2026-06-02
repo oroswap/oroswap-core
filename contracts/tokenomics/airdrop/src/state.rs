@@ -33,6 +33,17 @@ pub struct UserClaim {
 pub const CONFIG: Item<Config> = Item::new("config");
 pub const LATEST_AIRDROP_ID: Item<u64> = Item::new("latest_airdrop_id");
 pub const AIRDROPS: Map<u64, AirdropInfo> = Map::new("airdrops");
+
+/// Secondary index keyed by `(token_address, is_native, airdrop_id)` →
+/// `()`. Lets `execute_withdraw_funds` enumerate only the airdrops that
+/// use a specific token instead of scanning the entire `AIRDROPS` map,
+/// bounding the scan from O(n_global) to O(n_per_token). The `bool`
+/// `is_native` is encoded as `u8` (0 = cw20, 1 = native) because
+/// `cw-storage-plus` does not implement `PrimaryKey` for `bool`.
+///
+/// Append-only: an `AirdropInfo`'s `token_address`/`is_native` are fixed
+/// at creation, so no toggle/update/claim path needs to touch this map.
+pub const AIRDROPS_BY_TOKEN: Map<(&str, u8, u64), ()> = Map::new("airdrops_by_token");
 pub const ELIGIBILITY: Map<(u64, &Addr), Uint128> = Map::new("eligibility");
 pub const USER_CLAIMS: Map<(u64, &Addr), UserClaim> = Map::new("user_claims");
 pub const OWNERSHIP_PROPOSAL: Item<OwnershipProposal> = Item::new("ownership_proposal");

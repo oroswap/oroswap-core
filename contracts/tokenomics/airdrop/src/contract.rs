@@ -15,8 +15,9 @@ use crate::msg::{
     InstantiateMsg, LatestAirdropIdResponse, QueryMsg, SolvencyResponse, UserAirdropStatusResponse,
 };
 use crate::state::{
-    AirdropInfo, Config, UserClaim, AIRDROPS, CLAIMED_ELIGIBILITY_TOTAL, CLAIMED_TOTAL, CONFIG,
-    ELIGIBILITY, ELIGIBILITY_TOTAL, LATEST_AIRDROP_ID, OWNERSHIP_PROPOSAL, USER_CLAIMS,
+    AirdropInfo, Config, UserClaim, AIRDROPS, AIRDROPS_BY_TOKEN, CLAIMED_ELIGIBILITY_TOTAL,
+    CLAIMED_TOTAL, CONFIG, ELIGIBILITY, ELIGIBILITY_TOTAL, LATEST_AIRDROP_ID, OWNERSHIP_PROPOSAL,
+    USER_CLAIMS,
 };
 
 pub const CONTRACT_NAME: &str = env!("CARGO_PKG_NAME");
@@ -187,6 +188,13 @@ pub fn execute_add_airdrop(
             is_native,
             expiry_time,
         },
+    )?;
+    // Secondary index for the withdraw guard (FIND-008): bounds the scan in
+    // execute_withdraw_funds to O(n_per_token) instead of O(n_global).
+    AIRDROPS_BY_TOKEN.save(
+        deps.storage,
+        (token_address.as_str(), is_native as u8, airdrop_id),
+        &(),
     )?;
 
     // Dedupe the input batch in-memory (last-wins per address) so a caller
@@ -452,12 +460,18 @@ pub fn execute_withdraw_funds(
     // admin to first `ToggleAirdrop(active=false)` and wait until
     // `expiry_time` before draining the pool — protects claimants while
     // an airdrop is live.
+    //
+    // FIND-008: iterate only the (token_address, is_native) bucket via the
+    // AIRDROPS_BY_TOKEN secondary index instead of scanning the whole
+    // AIRDROPS map. Bounded by airdrops-for-this-token, not by global
+    // historical campaign count.
     let now = env.block.time.seconds();
-    for kv in AIRDROPS.range(deps.storage, None, None, Order::Ascending) {
-        let (id, airdrop) = kv?;
-        if airdrop.token_address != token_address || airdrop.is_native != is_native {
-            continue;
-        }
+    for kv in AIRDROPS_BY_TOKEN
+        .prefix((token_address.as_str(), is_native as u8))
+        .range(deps.storage, None, None, Order::Ascending)
+    {
+        let (id, _) = kv?;
+        let airdrop = AIRDROPS.load(deps.storage, id)?;
         if airdrop.is_active {
             return Err(ContractError::WithdrawalBlocked { airdrop_id: id });
         }

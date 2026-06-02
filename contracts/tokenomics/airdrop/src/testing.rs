@@ -1741,3 +1741,118 @@ fn test_user_airdrop_status_returns_inactive_when_disabled() {
     .unwrap_err();
     assert!(matches!(err, ContractError::AirdropInactive {}));
 }
+
+/// FIND-008 regression: `execute_withdraw_funds` must not scan the entire
+/// AIRDROPS map. With many active airdrops on UNRELATED tokens, withdrawing
+/// a settled token must still succeed without iterating over the unrelated
+/// entries. Pin the secondary-index invariant by also asserting the bucket
+/// contains exactly the right ids per (token, is_native).
+#[test]
+fn test_withdraw_scans_only_token_bucket() {
+    use crate::state::{AIRDROPS_BY_TOKEN, AIRDROPS};
+
+    let target_denom = "native.target";
+    // Pre-fund the contract so the actual BankMsg::Send the withdraw emits
+    // would be satisfiable (mock_dependencies_with_balance only affects the
+    // balance the contract sees; the BankMsg itself is emitted as a sub-message
+    // and not executed in this test environment, but seeding is hygienic).
+    let mut deps = cosmwasm_std::testing::mock_dependencies_with_balance(
+        &cosmwasm_std::coins(10_000, target_denom),
+    );
+    instantiate(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("creator", &[]),
+        InstantiateMsg { admin: "admin".to_string() },
+    )
+    .unwrap();
+
+    let now = mock_env().block.time.seconds();
+
+    // The settled airdrop on the target token: inactive, expiry passed → not blocking.
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::AddAirdrop {
+            token_address: target_denom.to_string(),
+            is_native: true,
+            start_time: now,
+            vesting_start_time: now,
+            vesting_end_time: now + 100,
+            initial_claim_percent: 100,
+            apy_bonus_bps: 0,
+            eligibility: vec![],
+            expiry_time: Some(now + 200),
+        },
+    )
+    .unwrap();
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::ToggleAirdrop { id: 1, active: false },
+    )
+    .unwrap();
+
+    // 50 decoy airdrops on OTHER tokens (active, no expiry — would all be
+    // "blocking" if the scan touched them, but they should be skipped because
+    // they live in different (token, is_native) buckets).
+    for i in 0..50u64 {
+        let denom = format!("native.decoy{i}");
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            mock_info("admin", &[]),
+            ExecuteMsg::AddAirdrop {
+                token_address: denom,
+                is_native: true,
+                start_time: now,
+                vesting_start_time: now,
+                vesting_end_time: now + 1000,
+                initial_claim_percent: 100,
+                apy_bonus_bps: 0,
+                eligibility: vec![],
+                expiry_time: None,
+            },
+        )
+        .unwrap();
+    }
+
+    // AIRDROPS now has 51 entries total; the target-token bucket must hold exactly id=1.
+    let total_airdrops = AIRDROPS
+        .range(&deps.storage, None, None, cosmwasm_std::Order::Ascending)
+        .count();
+    assert_eq!(total_airdrops, 51, "all 51 airdrops should be stored in AIRDROPS");
+
+    let target_bucket: Vec<u64> = AIRDROPS_BY_TOKEN
+        .prefix((target_denom, 1u8))
+        .range(&deps.storage, None, None, cosmwasm_std::Order::Ascending)
+        .map(|kv| kv.unwrap().0)
+        .collect();
+    assert_eq!(
+        target_bucket,
+        vec![1u64],
+        "AIRDROPS_BY_TOKEN[(target_denom, native)] must contain exactly the target airdrop id",
+    );
+
+    // Advance past the target airdrop's expiry so it is no longer blocking.
+    let mut env_after_expiry = mock_env();
+    env_after_expiry.block.time = env_after_expiry.block.time.plus_seconds(300);
+
+    // Withdraw the target token. With the FIND-008 fix the scan only touches
+    // id=1 (the settled airdrop); the 50 active decoys on other tokens are
+    // skipped at the prefix level, not at the per-entry filter.
+    let res = execute(
+        deps.as_mut(),
+        env_after_expiry,
+        mock_info("admin", &[]),
+        ExecuteMsg::WithdrawFunds {
+            token_address: target_denom.to_string(),
+            amount: cosmwasm_std::Uint128::new(1_000),
+            is_native: true,
+        },
+    )
+    .unwrap();
+    assert_eq!(res.messages.len(), 1, "withdraw must emit exactly one BankMsg");
+}
