@@ -1030,3 +1030,209 @@ fn test_withdraw_excess_non_oro_custom_recipient() {
     );
     assert_eq!(helper.query_balance(&owner, bogus).unwrap().u128(), 0);
 }
+
+// ─── FIND-015: expired-reward pruning ─────────────────────────────────────────
+//
+// Audit recommendation: `MAX_REWARD_DENOMS = 5` should cap *concurrent active*
+// reward streams, not *lifetime* denoms. Expired entries are lazily moved out
+// of the active list into FINISHED_REWARDS on the next interaction, freeing
+// the slot. A user who hadn't synced before the prune is still credited via
+// the FINISHED_REWARDS final-index fallback in `sync_user_rewards`.
+
+/// 1) Cap-respect: 5 active streams → adding a 6th fails.
+#[test]
+fn test_reward_cap_rejects_sixth_when_all_active() {
+    let owner = Addr::unchecked("owner");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    // Five denoms, all with the same generous end_ts so none have expired.
+    let denoms = ["uusdc", "uusdt", "ubtc", "ueth", "uatom"];
+    for d in &denoms {
+        helper.mint_coin(&owner, coin(1_000, *d));
+        helper.add_reward(&owner, coin(1_000, *d), 10_000).unwrap();
+    }
+
+    helper.mint_coin(&owner, coin(1_000, "ufluffy"));
+    let err = helper.add_reward(&owner, coin(1_000, "ufluffy"), 10_000).unwrap_err();
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::TooManyRewardDenoms { max: 5 },
+    );
+}
+
+/// 2) Lazy prune on AddReward: one of the 5 expires → adding a 6th succeeds
+///    in the same tx (update_rewards prunes the expired one first).
+#[test]
+fn test_reward_slot_freed_after_expiry_and_sixth_admitted() {
+    let owner = Addr::unchecked("owner");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    // Need at least one staker so accrual happens (otherwise the orphaned-
+    // reward path muddies the assertion; not relevant to this finding).
+    let alice = Addr::unchecked("alice");
+    helper.give_oro(10_000, &alice);
+    helper.stake(&alice, 10_000).unwrap();
+
+    let short_lived = "ushortlived";
+    helper.mint_coin(&owner, coin(1_000, short_lived));
+    helper.add_reward(&owner, coin(1_000, short_lived), 100).unwrap();
+
+    for d in &["uusdt", "ubtc", "ueth", "uatom"] {
+        helper.mint_coin(&owner, coin(1_000, *d));
+        helper.add_reward(&owner, coin(1_000, *d), 10_000).unwrap();
+    }
+
+    // All 5 slots full, can't add a sixth.
+    helper.mint_coin(&owner, coin(1_000, "ufluffy"));
+    let err = helper
+        .add_reward(&owner, coin(1_000, "ufluffy"), 10_000)
+        .unwrap_err();
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::TooManyRewardDenoms { max: 5 },
+    );
+
+    // Fast-forward past `short_lived`'s end_ts.
+    helper.next_block(150);
+
+    // The sixth attempt now succeeds: update_rewards prunes `short_lived`,
+    // freeing one slot, then the cap check passes against the post-prune list.
+    helper.mint_coin(&owner, coin(1_000, "ufluffy"));
+    helper.add_reward(&owner, coin(1_000, "ufluffy"), 10_000).unwrap();
+}
+
+/// 3) FIND-015 LOAD-BEARING: a user staked while a reward stream was active.
+///    The stream expires and is pruned. The user only syncs much later.
+///    They must still receive the full accrual via FINISHED_REWARDS fallback.
+#[test]
+fn test_pruned_reward_still_payable_via_finished_index() {
+    let owner = Addr::unchecked("owner");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    let alice = Addr::unchecked("alice");
+    helper.give_oro(10_000, &alice);
+
+    let denom = "uusdc";
+    helper.mint_coin(&owner, coin(10_000, denom));
+
+    // Alice stakes BEFORE the reward exists — she has an empty
+    // `last_rewards_index` for `uusdc`, exactly the case the two-tier
+    // default needs to handle via FINISHED_REWARDS once the stream is pruned.
+    helper.stake(&alice, 10_000).unwrap();
+
+    // 100s stream of 10_000 USDC.
+    helper.add_reward(&owner, coin(10_000, denom), 100).unwrap();
+
+    // Let it fully expire AND force a different tx to trigger the prune.
+    // Bob stakes after expiry, which calls update_rewards → prune happens.
+    helper.next_block(150);
+    let bob = Addr::unchecked("bob");
+    helper.give_oro(1, &bob);
+    helper.stake(&bob, 1).unwrap();
+
+    // Alice has not interacted at all since staking. Her snapshot is still
+    // empty for `uusdc`. The PendingRewards query must surface what she's
+    // owed via the FINISHED_REWARDS fallback (Pass 2).
+    let pending = helper.query_pending_rewards(&alice).unwrap();
+    let alice_usdc_pending = pending
+        .iter()
+        .find(|c| c.denom == denom)
+        .expect("Alice must see USDC pending via the finished-index fallback")
+        .amount
+        .u128();
+
+    // Alice's share: 10_000 / (10_000 + 1000 bootstrap) of 10_000 USDC = ~9090.
+    // Match the test_incentives floor convention via Decimal256 internal math.
+    assert!(
+        alice_usdc_pending > 9000 && alice_usdc_pending <= 9091,
+        "alice USDC pending = {alice_usdc_pending} (expected ~9090)"
+    );
+
+    // And actually claiming pays it out — proves the credit isn't just a
+    // query projection. Alice claims via the unbond → claim flow.
+    helper.unstake(&alice, 10_000).unwrap();
+    helper.next_block(7 * 24 * 60 * 60);
+    let alice_usdc_before = helper.query_balance(&alice, denom).unwrap().u128();
+    helper.claim(&alice).unwrap();
+    let alice_usdc_after = helper.query_balance(&alice, denom).unwrap().u128();
+    assert_eq!(
+        alice_usdc_after - alice_usdc_before,
+        alice_usdc_pending,
+        "claim must pay out exactly what PendingRewards advertised"
+    );
+}
+
+/// 4) Re-adding a previously-finished denom must resume from the old final
+///    index so existing user snapshots don't lose credit for the prior stream.
+#[test]
+fn test_re_adding_finished_denom_resumes_from_final_index() {
+    let owner = Addr::unchecked("owner");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    let alice = Addr::unchecked("alice");
+    helper.give_oro(10_000, &alice);
+    helper.stake(&alice, 10_000).unwrap();
+
+    let denom = "uusdc";
+    helper.mint_coin(&owner, coin(20_000, denom));
+
+    // Stream A: 10_000 USDC over 100s. Alice will earn ~9090.
+    helper.add_reward(&owner, coin(10_000, denom), 100).unwrap();
+    helper.next_block(150); // expire
+
+    // Admin re-adds USDC. update_rewards prunes the finished entry; the new
+    // push reads the prior finished index from FINISHED_REWARDS and uses it
+    // as the starting `index` of the new RewardInfo. Without that, Alice
+    // would lose her ~9090 from stream A on her next sync.
+    helper.add_reward(&owner, coin(10_000, denom), 100).unwrap();
+
+    // Alice hasn't synced yet. Her pending should reflect stream-A credit
+    // even though stream B is now live (its accrual is still 0 at this
+    // instant since no time has passed since the AddReward call).
+    let pending = helper.query_pending_rewards(&alice).unwrap();
+    let alice_usdc = pending
+        .iter()
+        .find(|c| c.denom == denom)
+        .unwrap()
+        .amount
+        .u128();
+    assert!(
+        alice_usdc > 9000 && alice_usdc <= 9091,
+        "stream A credit must survive the re-add via starting_index init, got {alice_usdc}"
+    );
+}
+
+/// 5) Withdraw-excess guard must reject denoms that are in FINISHED_REWARDS,
+///    not just live REWARDS. Pending claims still owe stakers of that denom.
+#[test]
+fn test_withdraw_excess_blocked_for_finished_reward_denom() {
+    let owner = Addr::unchecked("owner");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    let alice = Addr::unchecked("alice");
+    helper.give_oro(10_000, &alice);
+    helper.stake(&alice, 10_000).unwrap();
+
+    let denom = "uusdc";
+    helper.mint_coin(&owner, coin(1_000, denom));
+    helper.add_reward(&owner, coin(1_000, denom), 100).unwrap();
+
+    // Expire + force the prune via a no-op stake.
+    helper.next_block(150);
+    let bob = Addr::unchecked("bob");
+    helper.give_oro(1, &bob);
+    helper.stake(&bob, 1).unwrap();
+
+    // USDC is no longer in REWARDS (pruned) but IS in FINISHED_REWARDS — the
+    // admin must not be allowed to sweep the contract's USDC balance, since
+    // Alice still has unsynced claim against the finished index.
+    let err = helper
+        .withdraw_excess_tokens(&owner, denom, None)
+        .unwrap_err();
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::DenomInRewardStream {
+            denom: denom.to_string()
+        },
+    );
+}

@@ -21,8 +21,8 @@ use oroswap::token_factory::tf_set_denom_metadata_msg;
 
 use crate::error::ContractError;
 use crate::state::{
-    CONFIG, OWNERSHIP_PROPOSAL, PAUSE_AUTHORITIES, REWARD_ORO_RESERVE, REWARDS, TOTAL_LOCKED,
-    UNBONDING, USER_REWARDS, RewardInfo, UserRewardInfo,
+    CONFIG, FINISHED_REWARDS, OWNERSHIP_PROPOSAL, PAUSE_AUTHORITIES, REWARD_ORO_RESERVE, REWARDS,
+    TOTAL_LOCKED, UNBONDING, USER_REWARDS, RewardInfo, UserRewardInfo,
 };
 
 /// Contract name that is used for migration.
@@ -845,7 +845,11 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
             let config = CONFIG.load(deps.storage)?;
             let user_xoro_balance = deps.querier.query_balance(&addr, &config.xoro_denom)?.amount;
 
-            for global_reward in rewards {
+            // Pass 1: credit accrual from currently-active reward streams.
+            // Track live denoms so Pass 2 can skip them.
+            let live_denoms: std::collections::HashSet<String> =
+                rewards.iter().map(|r| r.denom.clone()).collect();
+            for global_reward in &rewards {
                 // Consistent with sync_user_rewards: two-tier default logic
                 let user_index = user_reward_info
                     .last_rewards_index
@@ -870,6 +874,47 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
                             c.amount += pending_amount;
                         } else {
                             pending.push(coin(pending_amount.u128(), &global_reward.denom));
+                        }
+                    }
+                }
+            }
+
+            // FIND-015 Pass 2: include rewards from streams that have already
+            // been pruned to FINISHED_REWARDS. Mirrors `sync_user_rewards` —
+            // iterates FINISHED_REWARDS (not the user's snapshot) so entered
+            // users with no snapshot for a finished denom still get the
+            // owed credit via the two-tier default. Read-only: this is the
+            // PendingRewards query, no mutation.
+            for entry in FINISHED_REWARDS.range(deps.storage, None, None, Order::Ascending) {
+                let (denom, finished_index) = entry?;
+                if live_denoms.contains(&denom) {
+                    continue;
+                }
+
+                let user_index = user_reward_info
+                    .last_rewards_index
+                    .iter()
+                    .find(|(d, _)| d == &denom)
+                    .map(|(_, idx)| *idx)
+                    .unwrap_or_else(|| {
+                        if is_entered_user {
+                            Decimal256::zero()
+                        } else {
+                            finished_index
+                        }
+                    });
+
+                if finished_index > user_index && !user_xoro_balance.is_zero() {
+                    let diff = finished_index - user_index;
+                    let pending_amount_u256 =
+                        diff * Decimal256::from_ratio(user_xoro_balance, 1u64);
+                    let pending_amount: Uint128 =
+                        pending_amount_u256.to_uint_floor().try_into()?;
+                    if !pending_amount.is_zero() {
+                        if let Some(c) = pending.iter_mut().find(|c| c.denom == denom) {
+                            c.amount += pending_amount;
+                        } else {
+                            pending.push(coin(pending_amount.u128(), &denom));
                         }
                     }
                 }
@@ -926,17 +971,33 @@ pub fn execute_add_reward(
         let remaining_time = reward.end_ts.saturating_sub(current_ts);
         let remaining_amount = reward.rps * Decimal256::from_ratio(remaining_time, 1u64);
         let new_total_amount = remaining_amount + Decimal256::from_ratio(reward_coin.amount, 1u64);
-        
+
         reward.rps = new_total_amount / Decimal256::from_ratio(duration, 1u64);
         reward.end_ts = end_ts;
     } else {
+        // Cap check runs against the POST-PRUNE active list (FIND-015): if a
+        // previous stream just expired, update_rewards has already moved it
+        // out of `global_rewards` into FINISHED_REWARDS, freeing this slot.
         if global_rewards.len() >= MAX_REWARD_DENOMS {
             return Err(ContractError::TooManyRewardDenoms { max: MAX_REWARD_DENOMS });
+        }
+        // FIND-015: if this denom previously had a finished stream, resume
+        // the new RewardInfo at the OLD final index — not zero. Otherwise a
+        // user whose `last_rewards_index` still holds the old finished
+        // index would see `global_reward.index < user_index` on next sync
+        // and miss credit for the prior stream's accrual. Removing the
+        // FINISHED_REWARDS entry simultaneously avoids double-counting via
+        // the Pass-2 fallback in sync_user_rewards.
+        let starting_index = FINISHED_REWARDS
+            .may_load(deps.storage, reward_coin.denom.as_str())?
+            .unwrap_or(Decimal256::zero());
+        if !starting_index.is_zero() {
+            FINISHED_REWARDS.remove(deps.storage, reward_coin.denom.as_str());
         }
         global_rewards.push(RewardInfo {
             denom: reward_coin.denom.clone(),
             rps: Decimal256::from_ratio(reward_coin.amount, duration),
-            index: Decimal256::zero(),
+            index: starting_index,
             last_update_ts: current_ts,
             end_ts,
         });
@@ -956,6 +1017,9 @@ fn update_rewards(storage: &mut dyn Storage, env: &Env, total_shares: Uint128) -
     let mut rewards = REWARDS.may_load(storage)?.unwrap_or_default();
     let current_ts = env.block.time.seconds();
 
+    // Pass 1: accrue each active stream up to min(now, end_ts). The cap at
+    // `end_ts` means an entry's index is FINAL once we've passed end_ts —
+    // subsequent calls won't change it.
     for reward in rewards.iter_mut() {
         let last_ts = reward.last_update_ts;
         if last_ts >= current_ts {
@@ -972,8 +1036,24 @@ fn update_rewards(storage: &mut dyn Storage, env: &Env, total_shares: Uint128) -
         reward.last_update_ts = current_ts;
     }
 
-    REWARDS.save(storage, &rewards)?;
-    Ok(rewards)
+    // Pass 2 (FIND-015): lazy-prune entries whose stream has fully elapsed.
+    // Move the final index into FINISHED_REWARDS and drop from the active
+    // list. `sync_user_rewards` (and the PendingRewards query) check
+    // FINISHED_REWARDS as a fallback so users who hadn't synced before the
+    // prune still get credited the `(final_index - snapshot) * shares` they
+    // were owed. This makes the MAX_REWARD_DENOMS cap apply to concurrent
+    // active streams instead of lifetime denoms.
+    let mut still_active = Vec::with_capacity(rewards.len());
+    for reward in rewards.into_iter() {
+        if current_ts >= reward.end_ts {
+            FINISHED_REWARDS.save(storage, reward.denom.as_str(), &reward.index)?;
+        } else {
+            still_active.push(reward);
+        }
+    }
+
+    REWARDS.save(storage, &still_active)?;
+    Ok(still_active)
 }
 /// Recover non-ORO tokens accidentally sent to the contract. Owner only.
 ///
@@ -1014,11 +1094,17 @@ fn execute_withdraw_excess_tokens(
     // Reward-stream denoms are also off-limits. Once a denom has been used
     // via `AddReward`, the contract owes accrued-but-unclaimed amounts to
     // stakers (in `USER_REWARDS`) and to pending `UnbondingEntry.reward_coins`
-    // payouts. `REWARDS` entries are never removed, so a hit here means the
-    // contract genuinely holds liability against that denom and a full-balance
-    // sweep would brick user `Claim` calls with insufficient-funds reverts.
+    // payouts. Two storage maps could indicate liability:
+    //   - `REWARDS`: a currently-active stream.
+    //   - `FINISHED_REWARDS` (FIND-015): a stream that has expired and been
+    //     pruned, but whose frozen final index is still drawn from by users
+    //     who haven't synced past `end_ts` yet.
+    // A full-balance sweep of either would brick those users' Claim calls.
     let rewards = REWARDS.may_load(deps.storage)?.unwrap_or_default();
     if rewards.iter().any(|r| r.denom == denom) {
+        return Err(ContractError::DenomInRewardStream { denom });
+    }
+    if FINISHED_REWARDS.has(deps.storage, denom.as_str()) {
         return Err(ContractError::DenomInRewardStream { denom });
     }
 
@@ -1117,6 +1203,73 @@ fn sync_user_rewards(
             user_reward_info
                 .last_rewards_index
                 .push((global_reward.denom.clone(), global_reward.index));
+        }
+    }
+
+    // FIND-015 Pass 2: settle accrual from streams that have already been
+    // pruned from the live REWARDS list. Iterates FINISHED_REWARDS rather
+    // than the user's `last_rewards_index` so an entered user who never
+    // had a snapshot entry for the denom (e.g. they staked before the
+    // reward was added, then never re-synced before expiry) still gets the
+    // full owed credit via the two-tier default — matching the pre-fix
+    // semantics of the live-loop. Skips any denom that's still in the
+    // live list as defense in depth.
+    let live_denoms: std::collections::HashSet<String> =
+        global_rewards.iter().map(|r| r.denom.clone()).collect();
+    let finished_entries: Vec<(String, Decimal256)> = FINISHED_REWARDS
+        .range(storage, None, None, Order::Ascending)
+        .collect::<StdResult<Vec<_>>>()?;
+    for (denom, finished_index) in finished_entries {
+        if live_denoms.contains(&denom) {
+            continue;
+        }
+
+        let user_index = user_reward_info
+            .last_rewards_index
+            .iter()
+            .find(|(d, _)| d == &denom)
+            .map(|(_, idx)| *idx)
+            .unwrap_or_else(|| {
+                if is_entered_user {
+                    Decimal256::zero()
+                } else {
+                    finished_index
+                }
+            });
+
+        if finished_index > user_index && !user_shares.is_zero() {
+            let diff = finished_index - user_index;
+            let pending_amount_u256 = diff * Decimal256::from_ratio(user_shares, 1u64);
+            let pending_amount: Uint128 = pending_amount_u256.to_uint_floor().try_into()?;
+            if !pending_amount.is_zero() {
+                if let Some(c) = user_reward_info
+                    .pending_rewards
+                    .iter_mut()
+                    .find(|c| c.denom == denom)
+                {
+                    c.amount += pending_amount;
+                } else {
+                    user_reward_info
+                        .pending_rewards
+                        .push(coin(pending_amount.u128(), &denom));
+                }
+            }
+        }
+
+        // Snap the user's index to the finished value so subsequent syncs
+        // compute `diff = 0` for this denom and don't re-credit. Keeps the
+        // snapshot entry around (intentional — its presence at the finished
+        // value is what suppresses double-counting on next call).
+        if let Some(snap) = user_reward_info
+            .last_rewards_index
+            .iter_mut()
+            .find(|(d, _)| d == &denom)
+        {
+            snap.1 = finished_index;
+        } else {
+            user_reward_info
+                .last_rewards_index
+                .push((denom, finished_index));
         }
     }
 

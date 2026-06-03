@@ -34,6 +34,27 @@ pub const UNBONDING: Map<&Addr, Vec<UnbondingEntry>> = Map::new("unbonding");
 /// Global reward information for the staking pool.
 pub const REWARDS: Item<Vec<RewardInfo>> = Item::new("rewards");
 
+/// FIND-015: frozen final index per denom for reward streams that have
+/// fully elapsed AND been moved out of the active `REWARDS` list. Lets
+/// the `MAX_REWARD_DENOMS` cap apply to *concurrent active* streams
+/// instead of *lifetime* denoms.
+///
+/// Maintenance:
+///   - Written in `update_rewards` when an entry's `end_ts <= block_ts`
+///     (after accrual has been capped at `end_ts`).
+///   - Read in `sync_user_rewards` / `PendingRewards` query as a fallback
+///     for any denom in a user's `last_rewards_index` snapshot that is no
+///     longer in the live `REWARDS` list. Credits the user the
+///     `(finished_index - snapshot) * shares` they were owed.
+///   - Removed in `execute_add_reward` when the admin re-adds a previously
+///     finished denom — the new `RewardInfo` resumes from this index so
+///     the live-loop continues to credit old-stream accrual correctly.
+///
+/// An entry sitting in FINISHED_REWARDS is treated as still carrying
+/// liability: `execute_withdraw_excess_tokens` refuses to sweep its
+/// balance.
+pub const FINISHED_REWARDS: Map<&str, Decimal256> = Map::new("finished_rewards");
+
 /// Per-user reward tracking information.
 pub const USER_REWARDS: Map<&Addr, UserRewardInfo> = Map::new("user_rewards");
 
