@@ -1,24 +1,10 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "QueryMsg",
-  "description": "This structure describes the query messages available in the contract.",
+  "description": "Query messages exposed by the staking contract.",
   "oneOf": [
     {
-      "description": "State returns the current pool state including exchange rate",
-      "type": "object",
-      "required": [
-        "state"
-      ],
-      "properties": {
-        "state": {
-          "type": "object",
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
-    {
-      "description": "Config returns the contract configuration specified in a custom [`Config`] structure",
+      "description": "Returns the full contract configuration.",
       "type": "object",
       "required": [
         "config"
@@ -32,7 +18,43 @@
       "additionalProperties": false
     },
     {
-      "description": "Returns xORO total supply. Duplicates TotalSupplyAt { timestamp: None } logic but kept for backward compatibility.",
+      "description": "Returns the current pool state.",
+      "type": "object",
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Returns the stake balance held by `address`.",
+      "type": "object",
+      "required": [
+        "stake_of"
+      ],
+      "properties": {
+        "stake_of": {
+          "type": "object",
+          "required": [
+            "address"
+          ],
+          "properties": {
+            "address": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Returns the sum of all stake balances. Kept under the legacy `TotalShares` name for API stability; shares and ORO amounts are interchangeable.",
       "type": "object",
       "required": [
         "total_shares"
@@ -46,27 +68,13 @@
       "additionalProperties": false
     },
     {
-      "description": "Returns total ORO staked in the contract (excluding locked unbonding amounts).",
+      "description": "Returns all pending reward coins accrued for `address`.",
       "type": "object",
       "required": [
-        "total_deposit"
+        "pending_rewards"
       ],
       "properties": {
-        "total_deposit": {
-          "type": "object",
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
-    {
-      "description": "BalanceAt returns xORO balance of the given address at the given timestamp. Returns current balance if timestamp unset.",
-      "type": "object",
-      "required": [
-        "balance_at"
-      ],
-      "properties": {
-        "balance_at": {
+        "pending_rewards": {
           "type": "object",
           "required": [
             "address"
@@ -74,14 +82,6 @@
           "properties": {
             "address": {
               "type": "string"
-            },
-            "timestamp": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint64",
-              "minimum": 0.0
             }
           },
           "additionalProperties": false
@@ -90,45 +90,7 @@
       "additionalProperties": false
     },
     {
-      "description": "TotalSupplyAt returns xORO total token supply at the given timestamp. Returns current total supply if timestamp unset.",
-      "type": "object",
-      "required": [
-        "total_supply_at"
-      ],
-      "properties": {
-        "total_supply_at": {
-          "type": "object",
-          "properties": {
-            "timestamp": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint64",
-              "minimum": 0.0
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
-    {
-      "description": "Returns total ORO currently in unbonding period.",
-      "type": "object",
-      "required": [
-        "total_locked"
-      ],
-      "properties": {
-        "total_locked": {
-          "type": "object",
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
-    {
-      "description": "Returns all pending unbonding entries for the given address.",
+      "description": "Returns all pending unbonding entries for `address`.",
       "type": "object",
       "required": [
         "unbonding_entries"
@@ -164,29 +126,21 @@
       "additionalProperties": false
     },
     {
-      "description": "Returns all pending rewards for the given address.",
+      "description": "Returns the total ORO currently locked in unbonding entries.",
       "type": "object",
       "required": [
-        "pending_rewards"
+        "total_locked"
       ],
       "properties": {
-        "pending_rewards": {
+        "total_locked": {
           "type": "object",
-          "required": [
-            "address"
-          ],
-          "properties": {
-            "address": {
-              "type": "string"
-            }
-          },
           "additionalProperties": false
         }
       },
       "additionalProperties": false
     },
     {
-      "description": "Returns the addresses currently in the pause-authority set. The owner has implicit pause authority and is NOT included.",
+      "description": "Returns the addresses currently in the pause-authority set (excluding the owner, who has implicit authority).",
       "type": "object",
       "required": [
         "pause_authorities"

@@ -1,10 +1,10 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "ExecuteMsg",
-  "description": "This structure describes the execute messages available in the contract.",
+  "description": "Execute messages exposed by the staking contract.",
   "oneOf": [
     {
-      "description": "Deposits ORO in exchange for xORO The receiver is optional. If not set, the sender will receive the xORO.",
+      "description": "Deposit ORO via `info.funds` and credit the sender's stake 1:1.",
       "type": "object",
       "required": [
         "enter"
@@ -12,47 +12,13 @@
       "properties": {
         "enter": {
           "type": "object",
-          "properties": {
-            "receiver": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          },
           "additionalProperties": false
         }
       },
       "additionalProperties": false
     },
     {
-      "description": "Deposits ORO in exchange for xORO and passes **all resulting xORO** to defined contract along with an executable message.",
-      "type": "object",
-      "required": [
-        "enter_with_hook"
-      ],
-      "properties": {
-        "enter_with_hook": {
-          "type": "object",
-          "required": [
-            "contract_address",
-            "msg"
-          ],
-          "properties": {
-            "contract_address": {
-              "type": "string"
-            },
-            "msg": {
-              "$ref": "#/definitions/Binary"
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
-    {
-      "description": "Burns xORO and begins unbonding of the proportional ORO amount. The receiver is locked in at this point and stored in the unbonding entry. If not set, the sender will receive ORO on Claim.",
+      "description": "Begin unbonding `amount` ORO from the caller's stake; queues an entry for `recipient` claimable after `unbonding_period`.",
       "type": "object",
       "required": [
         "leave"
@@ -60,12 +26,16 @@
       "properties": {
         "leave": {
           "type": "object",
+          "required": [
+            "amount",
+            "recipient"
+          ],
           "properties": {
-            "receiver": {
-              "type": [
-                "string",
-                "null"
-              ]
+            "amount": {
+              "$ref": "#/definitions/Uint128"
+            },
+            "recipient": {
+              "type": "string"
             }
           },
           "additionalProperties": false
@@ -74,7 +44,7 @@
       "additionalProperties": false
     },
     {
-      "description": "Claims all matured unbonding entries for the sender. Funds go to the receiver set during Leave.",
+      "description": "Claim all matured unbonding entries for `info.sender`.",
       "type": "object",
       "required": [
         "claim"
@@ -88,7 +58,7 @@
       "additionalProperties": false
     },
     {
-      "description": "Adds reward tokens to the contract to be distributed to stakers. Admin only.",
+      "description": "Fund a per-denom reward stream that drips over `duration` seconds. Reward denom and amount come from `info.funds`; RPS is derived on-chain as `amount / duration` so the caller cannot pass a misleading rate. Owner only.",
       "type": "object",
       "required": [
         "add_reward"
@@ -101,7 +71,6 @@
           ],
           "properties": {
             "duration": {
-              "description": "Number of seconds over which rewards are distributed.",
               "type": "integer",
               "format": "uint64",
               "minimum": 0.0
@@ -113,115 +82,7 @@
       "additionalProperties": false
     },
     {
-      "description": "Updates the contract configuration. Only callable by the owner.",
-      "type": "object",
-      "required": [
-        "update_config"
-      ],
-      "properties": {
-        "update_config": {
-          "type": "object",
-          "properties": {
-            "unbonding_period": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint64",
-              "minimum": 0.0
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
-    {
-      "description": "Proposes a new owner. The proposed owner must call ClaimOwnership within expires_in seconds. Only callable by the current owner.",
-      "type": "object",
-      "required": [
-        "propose_new_owner"
-      ],
-      "properties": {
-        "propose_new_owner": {
-          "type": "object",
-          "required": [
-            "expires_in",
-            "owner"
-          ],
-          "properties": {
-            "expires_in": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0.0
-            },
-            "owner": {
-              "type": "string"
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
-    {
-      "description": "Removes the pending ownership proposal. Only callable by the current owner.",
-      "type": "object",
-      "required": [
-        "drop_ownership_proposal"
-      ],
-      "properties": {
-        "drop_ownership_proposal": {
-          "type": "object",
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
-    {
-      "description": "Claims a pending ownership proposal. Only callable by the proposed new owner.",
-      "type": "object",
-      "required": [
-        "claim_ownership"
-      ],
-      "properties": {
-        "claim_ownership": {
-          "type": "object",
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
-    {
-      "description": "Pauses the contract. Only callable by the owner.",
-      "type": "object",
-      "required": [
-        "pause"
-      ],
-      "properties": {
-        "pause": {
-          "type": "object",
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
-    {
-      "description": "Unpauses the contract. Only callable by the owner.",
-      "type": "object",
-      "required": [
-        "unpause"
-      ],
-      "properties": {
-        "unpause": {
-          "type": "object",
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
-    {
-      "description": "Emergency withdrawal of non-staked tokens accidentally sent to the contract. For ORO: only withdraws the excess above (effective_deposit + total_locked + reward_oro_reserve). For other denoms: withdraws the full balance. Only callable by the owner.",
+      "description": "Emergency withdrawal of non-ORO, non-reward-stream tokens accidentally sent to the contract. Owner only.",
       "type": "object",
       "required": [
         "withdraw_excess_tokens"
@@ -249,7 +110,69 @@
       "additionalProperties": false
     },
     {
-      "description": "Add addresses authorised to pause the contract (in addition to the owner). Owner only. Authorities can `Pause` but cannot `Unpause`, so a compromised authority key can never grief by toggling.",
+      "description": "Update mutable configuration fields. Owner only.\n\nOwnership changes are intentionally NOT exposed here — use the two-step `ProposeNewOwner` + `ClaimOwnership` flow so a fat-fingered hand-off can't strand the contract behind an unreachable address.",
+      "type": "object",
+      "required": [
+        "update_config"
+      ],
+      "properties": {
+        "update_config": {
+          "type": "object",
+          "properties": {
+            "minimum_stake_amount": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Uint128"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "unbonding_period": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0.0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Pause the contract. Owner or pause-authority.",
+      "type": "object",
+      "required": [
+        "pause"
+      ],
+      "properties": {
+        "pause": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Unpause the contract. Owner only.",
+      "type": "object",
+      "required": [
+        "unpause"
+      ],
+      "properties": {
+        "unpause": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Add pause-authority addresses. Authorities can `Pause` but cannot `Unpause`, so a compromised authority key cannot grief by toggling. Owner only.",
       "type": "object",
       "required": [
         "add_pause_authorities"
@@ -258,10 +181,10 @@
         "add_pause_authorities": {
           "type": "object",
           "required": [
-            "authorities"
+            "addresses"
           ],
           "properties": {
-            "authorities": {
+            "addresses": {
               "type": "array",
               "items": {
                 "type": "string"
@@ -283,10 +206,10 @@
         "remove_pause_authorities": {
           "type": "object",
           "required": [
-            "authorities"
+            "addresses"
           ],
           "properties": {
-            "authorities": {
+            "addresses": {
               "type": "array",
               "items": {
                 "type": "string"
@@ -297,11 +220,89 @@
         }
       },
       "additionalProperties": false
+    },
+    {
+      "description": "Sweep accumulated orphaned rewards (emissions accrued while no users were staked) to `recipient` or the owner. Owner only.",
+      "type": "object",
+      "required": [
+        "claim_orphaned_rewards"
+      ],
+      "properties": {
+        "claim_orphaned_rewards": {
+          "type": "object",
+          "properties": {
+            "recipient": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Propose a new owner; must call `ClaimOwnership` within `expires_in`. Owner only.",
+      "type": "object",
+      "required": [
+        "propose_new_owner"
+      ],
+      "properties": {
+        "propose_new_owner": {
+          "type": "object",
+          "required": [
+            "expires_in",
+            "owner"
+          ],
+          "properties": {
+            "expires_in": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0.0
+            },
+            "owner": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Remove the pending ownership proposal. Owner only.",
+      "type": "object",
+      "required": [
+        "drop_ownership_proposal"
+      ],
+      "properties": {
+        "drop_ownership_proposal": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Accept a pending ownership proposal. Proposed-owner only.",
+      "type": "object",
+      "required": [
+        "claim_ownership"
+      ],
+      "properties": {
+        "claim_ownership": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   ],
   "definitions": {
-    "Binary": {
-      "description": "Binary is a wrapper around Vec<u8> to add base64 de/serialization with serde. It also adds some helper methods to help encode inline.\n\nThis is only needed as serde-json-{core,wasm} has a horrible encoding for Vec<u8>. See also <https://github.com/CosmWasm/cosmwasm/blob/main/docs/MESSAGE_TYPES.md>.",
+    "Uint128": {
+      "description": "A thin wrapper around u128 that is using strings for JSON encoding/decoding, such that the full u128 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.\n\n# Examples\n\nUse `from` to create instances of this and `u128` to get the value out:\n\n``` # use cosmwasm_std::Uint128; let a = Uint128::from(123u128); assert_eq!(a.u128(), 123);\n\nlet b = Uint128::from(42u64); assert_eq!(b.u128(), 42);\n\nlet c = Uint128::from(70u32); assert_eq!(c.u128(), 70); ```",
       "type": "string"
     }
   }

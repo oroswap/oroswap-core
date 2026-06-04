@@ -1,180 +1,180 @@
-# Oroswap xORO Staking (Native)
+# Oroswap Staking
 
-Share-based ORO vault: users deposit ORO and receive a tokenfactory-denomi-
-nated share token (`xORO`, full denom `coin.<contract>.xoro`). The xORO:ORO
-exchange rate grows monotonically as the pool earns rewards, so all share-
-holders auto-compound without an explicit claim action. A separate admin-
-funded reward stream (`AddReward`) can pay out any denom (including ORO) on
-a linear schedule, settled alongside the principal on `Claim`.
+## Overview
 
-## Features
+Single-asset staking contract for ORO. Users deposit ORO and the contract
+records a per-address balance 1:1 (no share token, no exchange rate). Multi-
+denom rewards are distributed pro-rata using a per-share `global_index` /
+`user_index` accumulator (same pattern as the incentives contract). Exits
+go through a per-user unbonding queue and are released after a configurable
+delay.
 
-- **Native Token Staking** — fully native; `uzig` / tokenfactory ORO compatible.
-- **Auto-Compounding** — rewards that flow into the pool inflate every xORO share's redemption value simultaneously, no per-user claim needed for that leg.
-- **Multi-denom Reward Streams** — admin can run up to `MAX_REWARD_DENOMS = 5` simultaneous reward streams via `AddReward { duration }`. Each stream is linearly distributed pro-rata across xORO holders and paid out on `Claim`.
-- **Unbonding Period** — `Leave` queues an `UnbondingEntry`; principal + accrued rewards become claimable after the global `unbonding_period`. Per-user cap: `MAX_UNBONDING_ENTRIES = 10` concurrent entries.
-- **Pause / Unpause** — owner OR any delegated pause-authority can halt Enter / Leave / Claim instantly. **Only the owner can unpause** (compromise-resistant; mirrors the factory + wrapper pattern).
-- **Two-step Ownership Transfer** — standard `ProposeNewOwner` → `ClaimOwnership` (with `DropOwnershipProposal` cancellation).
-- **TokenFactory Integration** — automatically creates the `xoro` denom and manages mint/burn via Zigchain's factory module.
-- **Excess-Token Recovery** — owner can sweep non-ORO tokens accidentally bank-sent to the contract via `WithdrawExcessTokens`.
+## Architecture
 
----
+Storage (`src/state.rs`):
+
+- `STAKES: Map<&Addr, Uint128>` — per-user ORO stake balance. Only changes
+  via `Enter` / `Leave`.
+- `TOTAL_STAKES: Item<Uint128>` — sum of all `STAKES` entries; denominator
+  for reward distribution.
+- `REWARDS: Item<Vec<RewardInfo>>` — active reward streams
+  (`denom`, `rps`, `index`, `last_update_ts`, `end_ts`).
+- `FINISHED_REWARDS: Map<&str, Decimal256>` — frozen final `index` for
+  fully-elapsed streams pruned out of `REWARDS`. Lets the
+  `MAX_REWARD_DENOMS` cap apply to *concurrent active* streams only, while
+  still letting late syncers collect `(finished_index - snapshot) * stake`.
+- `USER_REWARDS: Map<&Addr, UserRewardInfo>` — per-user
+  `last_rewards_index` snapshot + `pending_rewards` bucket.
+- `UNBONDING: Map<&Addr, Vec<UnbondingEntry>>` — per-user queue of
+  `{ oro_amount, reward_coins, unlock_time, receiver }`.
+- `TOTAL_LOCKED: Item<u128>` — sum of ORO held across all unbonding entries.
+- `ORPHANED_REWARDS: Map<&str, Uint128>` — emissions accrued while
+  `TOTAL_STAKES == 0`; owner-recoverable via `ClaimOrphanedRewards`.
+- `CONFIG: Item<Config>` — `{ owner, oro_denom, unbonding_period,
+  minimum_stake_amount, paused }`.
+- `PAUSE_AUTHORITIES: Map<&Addr, ()>` — addresses (besides the owner)
+  allowed to pause.
+- `OWNERSHIP_PROPOSAL: Item<OwnershipProposal>` — pending two-step owner
+  transfer.
+
+Constants (`src/contract.rs`):
+
+- `MAX_UNBONDING_ENTRIES = 10` — per-user.
+- `MAX_REWARD_DENOMS = 5` — concurrent active streams.
+- `MIN_UNBONDING_PERIOD = 60`, `MAX_UNBONDING_PERIOD = 30 days`
+  (enforced in `UpdateConfig`).
+- `MAX_REWARD_DURATION = 365 days` (enforced in `AddReward`).
 
 ## InstantiateMsg
 
 ```json
 {
-  "deposit_token_denom": "coin.zig1.../oro",
-  "bootstrap_amount": "1000",
+  "owner": "zig1...",
+  "oro_denom": "uoro",
   "unbonding_period": 604800,
-  "xoro_decimals": 6,
-  "xoro_uri": "https://example.com/xoro.json"
+  "minimum_stake_amount": "1000000"
 }
 ```
 
-| Field | Type | Notes |
-|---|---|---|
-| `deposit_token_denom` | `String` | The ORO denom users will stake. Must have non-zero supply on chain at instantiate. |
-| `bootstrap_amount` | `Option<Uint128>` | Initial xORO minted to the contract to prevent first-deposit share-inflation attacks. Defaults to and must be ≥ `MINIMUM_STAKE_AMOUNT = 1_000`. Funds matching this amount must be sent with the instantiate tx. |
-| `unbonding_period` | `u64` | Seconds the user must wait between `Leave` and `Claim`. Global, owner-updatable. |
-| `xoro_decimals` | `Option<u32>` | Display decimals on the `xORO` tokenfactory metadata. Default 6. |
-| `xoro_uri` | `Option<String>` | Optional URI for xORO metadata. |
-
-The contract creates `coin.<contract_address>.xoro` via Zigchain's factory module, mints the bootstrap supply to itself, and (if `zigchain` feature is enabled) sets denom metadata. The owner is the instantiate sender.
+- `owner` is taken from the message (not `info.sender`) so factory-style
+  deployments can hand off directly to a multisig.
+- `oro_denom` is validated to have non-zero on-chain supply.
+- `minimum_stake_amount` must be `> 0`.
+- No funds are required at instantiate.
+- Pause authorities are NOT seeded here — the owner adds them post-deploy
+  via `AddPauseAuthorities`.
 
 ## ExecuteMsg
 
-### `Enter { receiver }`
-Deposit ORO and receive xORO at the current exchange rate. Send the ORO as funds with the transaction. `receiver` defaults to the sender if omitted.
+- `Enter {}` — deposit ORO via `info.funds` and credit `STAKES[sender] += amount`. Subject to `minimum_stake_amount`.
+  ```json
+  { "enter": {} }
+  ```
 
-```json
-{ "enter": { "receiver": "zig1..." } }
-```
+- `Leave { amount, recipient }` — debit `amount` from sender's stake and queue an `UnbondingEntry` for `recipient`. Accrued rewards at sync time are attached to the entry and paid at `Claim`. Full exits (`amount == stake`) bypass the minimum; partial exits must meet it.
+  ```json
+  { "leave": { "amount": "500000", "recipient": "zig1..." } }
+  ```
 
-Mint amount: `xoro_minted = oro_in × total_shares / effective_deposit`, where `effective_deposit = oro_balance − total_locked − reward_oro_reserve`.
+- `Claim {}` — release all matured unbonding entries for `info.sender`. Matured entries are grouped by `receiver` into one `BankMsg::Send` per unique destination (ORO + reward coins merged).
+  ```json
+  { "claim": {} }
+  ```
 
-### `EnterWithHook { contract_address, msg }`
-Like `Enter`, but the resulting xORO is forwarded **in full** to `contract_address` along with the supplied execute `msg`. Used for atomically depositing-into / re-depositing-from other protocols.
+- `AddReward { duration }` — register/top-up a reward stream. Denom and amount come from `info.funds` (single coin); `rps = amount / duration`. If the denom is already active, the remainder is rolled into a new stream of length `duration`. If re-adding a finished denom, the new stream resumes from its `FINISHED_REWARDS` index. Owner only.
+  ```json
+  { "add_reward": { "duration": 604800 } }
+  ```
 
-```json
-{
-  "enter_with_hook": {
-    "contract_address": "zig1someprotocol...",
-    "msg": "eyJzb21lX2FjdGlvbiI6e319"
-  }
-}
-```
+- `ClaimOrphanedRewards { recipient? }` — sweep `ORPHANED_REWARDS` to `recipient` (default: owner). Owner only. Errors if no orphaned rewards.
+  ```json
+  { "claim_orphaned_rewards": { "recipient": "zig1..." } }
+  ```
 
-### `Leave { receiver }`
-Burn xORO and queue an unbonding entry. Send xORO as funds with the tx. `receiver` is locked in at `Leave` time and is who will receive the funds on `Claim`. Defaults to the sender.
+- `UpdateConfig { unbonding_period?, minimum_stake_amount? }` — owner only. `unbonding_period` must be in `[60, 30 days]`; `minimum_stake_amount` must be `> 0`. Ownership transfer is intentionally not exposed here — use the propose/claim flow.
+  ```json
+  { "update_config": { "unbonding_period": 1209600, "minimum_stake_amount": "2000000" } }
+  ```
 
-```json
-{ "leave": { "receiver": "zig1..." } }
-```
+- `Pause {}` — owner or pause-authority.
+- `Unpause {}` — owner only.
+- `AddPauseAuthorities { addresses }` / `RemovePauseAuthorities { addresses }` — owner only.
+  ```json
+  { "add_pause_authorities": { "addresses": ["zig1..."] } }
+  ```
 
-Side effects: burns the xORO immediately, decrements `effective_deposit`, increments `total_locked`, snapshots any accrued reward-stream rewards into the entry's `reward_coins`. Capped at `MAX_UNBONDING_ENTRIES = 10` per user.
+- `WithdrawExcessTokens { denom, recipient? }` — sweep a non-ORO, non-reward-stream balance (live or finished) to `recipient` (default: owner). Owner only.
+  ```json
+  { "withdraw_excess_tokens": { "denom": "uatom" } }
+  ```
 
-### `Claim`
-Sweep all matured unbonding entries (those past `unlock_time`) for the sender. Sends ORO principal + matured reward-coin payouts to each entry's stored `receiver`.
-
-```json
-{ "claim": {} }
-```
-
-### `AddReward { duration }`
-Admin only. Open or top up a reward stream. Send the reward coin (any denom, including ORO) with the tx; the contract registers a linear distribution over `duration` seconds, pro-rata across xORO holders. Up to `MAX_REWARD_DENOMS = 5` distinct denoms simultaneously.
-
-```json
-{ "add_reward": { "duration": 86400 } }
-```
-
-When the reward coin **is** the ORO denom, the amount is held in `REWARD_ORO_RESERVE` so it doesn't artificially inflate `effective_deposit` (which would otherwise mis-credit it to existing stakers' share value before it's streamed out).
-
-### `Pause` / `Unpause`
-- `Pause` is callable by the owner OR any address in `PAUSE_AUTHORITIES` (see below).
-- `Unpause` is **owner only** — a compromised pause-authority key can grief by pausing but cannot toggle pause state back and forth.
-
-Halts (resumes) all `Enter`, `EnterWithHook`, `Leave`, and `Claim` calls. Reward streams continue to accrue in storage — they just can't be settled while paused.
-
-```json
-{ "pause": {} }
-{ "unpause": {} }
-```
-
-### `AddPauseAuthorities` / `RemovePauseAuthorities`
-Owner only. Manages the set of additional addresses authorised to pause the contract. Mirrors the factory + wrapper pattern. Authorities can `Pause` but cannot `Unpause`.
-
-```json
-{ "add_pause_authorities":    { "authorities": ["zig1ops...", "zig1bot..."] } }
-{ "remove_pause_authorities": { "authorities": ["zig1bot..."] } }
-```
-
-### `UpdateConfig { unbonding_period }`
-Owner only. Currently the only mutable config field. Other fields (denoms, decimals) are immutable for the contract's lifetime.
-
-```json
-{ "update_config": { "unbonding_period": 1209600 } }
-```
-
-### `WithdrawExcessTokens { denom, recipient }`
-Owner only. Sweeps the contract's full balance of a non-ORO `denom` to `recipient` (defaults to owner). Intended for mistakenly bank-sent tokens.
-
-**ORO is explicitly non-recoverable** — every ORO held by the contract is owed to stakers (effective deposit), unbonders (`total_locked`), or future reward claimants (`reward_oro_reserve`). Direct bank-sends of ORO auto-compound into existing xORO share value by design; the contract returns `OroNonRecoverable` rather than ship a footgun. (Audit N-1.)
-
-```json
-{ "withdraw_excess_tokens": { "denom": "stray/usdc", "recipient": "zig1..." } }
-```
-
-### Ownership transfer (two-step)
-```json
-{ "propose_new_owner": { "owner": "zig1new...", "expires_in": 86400 } }
-{ "claim_ownership": {} }
-{ "drop_ownership_proposal": {} }
-```
+- `ProposeNewOwner { owner, expires_in }` / `DropOwnershipProposal {}` / `ClaimOwnership {}` — two-step ownership handover (owner proposes, proposed address claims within `expires_in`).
 
 ## QueryMsg
 
-| Query | Returns | Notes |
-|---|---|---|
-| `State {}` | `StateResponse { total_shares, total_deposit, exchange_rate }` | Snapshot of pool health. `total_deposit` is `effective_deposit` (ORO backing the live xORO supply). |
-| `Config {}` | `Config { oro_denom, xoro_denom, bootstrap_amount, owner, unbonding_period, xoro_decimals, xoro_uri, paused }` | |
-| `TotalShares {}` | `Uint128` | Current xORO total supply (queries the bank module). |
-| `TotalDeposit {}` | `Uint128` | `effective_deposit` — ORO backing share value. |
-| `TotalLocked {}` | `Uint128` | ORO currently queued for unbonding. |
-| `BalanceAt { address, timestamp }` | `Uint128` | xORO balance of `address` at `timestamp` (current if omitted). For governance / off-chain snapshots. |
-| `TotalSupplyAt { timestamp }` | `Uint128` | xORO total supply at `timestamp`. |
-| `UnbondingEntries { address }` | `Vec<UnbondingEntry>` | All pending unbonding entries for `address`. |
-| `UnbondingPeriod {}` | `u64` | Global unbonding period in seconds. |
-| `PendingRewards { address }` | `Vec<Coin>` | Reward-stream payouts that would settle for `address` if `Leave` were called now. |
-| `PauseAuthorities {}` | `Vec<String>` | Addresses with delegated pause authority. Owner has implicit authority and is NOT included. |
+- `Config {} -> Config` — full config struct.
+- `State {} -> StateResponse { total_shares, total_deposit }` — under the 1:1 model both fields equal `TOTAL_STAKES`.
+- `StakeOf { address } -> Uint128` — caller's recorded stake.
+- `TotalShares {} -> Uint128` — alias for `TOTAL_STAKES` (legacy field name retained for API stability).
+- `PendingRewards { address } -> Vec<Coin>` — read-only mirror of `update_rewards` + `sync_user_rewards`; includes accrual from both live `REWARDS` and `FINISHED_REWARDS`.
+- `UnbondingEntries { address } -> Vec<UnbondingEntry>` — full pending queue.
+- `UnbondingPeriod {} -> u64` — current `config.unbonding_period` in seconds.
+- `TotalLocked {} -> Uint128` — sum of ORO across all unbonding entries.
+- `PauseAuthorities {} -> Vec<String>` — registered authorities (owner is NOT included; their authority is implicit).
 
-## Reward accounting nuances
+## Invariants
 
-### Auto-compound vs. side-rewards
-Two reward mechanics run side-by-side:
+- `STAKES[user]` only changes via `Enter` (gated by `must_pay`) or `Leave`
+  (gated by a typed amount). Rewards never touch `STAKES`.
+- `TOTAL_STAKES == sum(STAKES.values())` at all times.
+- Contract ORO bank balance `>= sum(STAKES) + TOTAL_LOCKED`. (Excess is
+  not credited to any user — direct bank-sends of ORO are stranded.)
+- For each reward denom: contract balance of that denom `>=` active stream
+  remainder `+ sum(USER_REWARDS.pending_rewards[denom])
+  + sum(UnbondingEntry.reward_coins[denom])
+  + ORPHANED_REWARDS[denom]`.
+- ORO is non-recoverable via `WithdrawExcessTokens` (`OroNonRecoverable`).
+- Any denom currently in `REWARDS` or `FINISHED_REWARDS` is non-recoverable
+  via `WithdrawExcessTokens` (`DenomInRewardStream`).
+- `last_update_ts` advances on every `update_rewards` pass — including the
+  `TOTAL_STAKES == 0` orphan branch — so the same window is never emitted
+  twice.
 
-1. **Auto-compound (ORO only)** — any ORO that flows into the pool (admin send, fee-converter output, fee accrual) raises `effective_deposit`. Existing xORO holders' shares immediately redeem for more ORO. No claim action.
-2. **Side-reward streams (`AddReward`)** — admin-initiated linear distributions of any denom over a fixed duration. Tracked per-stream in `REWARDS`, per-user accrual recorded in `USER_REWARDS`, settled on `Claim` via the matured `UnbondingEntry.reward_coins` field.
+## Lifecycle
 
-When the side-reward denom **is** ORO, the funded amount sits in `REWARD_ORO_RESERVE` and is excluded from `effective_deposit` until streamed out — preventing the same wei from rewarding both share-value-appreciation and side-stream-claimants.
+1. Owner deploys with `minimum_stake_amount = 1_000_000` (1 ORO at 6 decimals)
+   and `unbonding_period = 604_800` (7 days).
+2. Owner optionally calls `AddPauseAuthorities { addresses }`.
+3. Alice calls `Enter {}` with `N uoro` attached. `STAKES[alice] += N`,
+   `TOTAL_STAKES += N`.
+4. Owner calls `AddReward { duration: 60 }` with `60_000 uzig` attached.
+   A stream of `1000 uzig/s` is registered for 60 seconds.
+5. After accrual, Alice calls `Leave { amount, recipient: alice }`. Her
+   stake is debited; accrued rewards are snapshotted into a new
+   `UnbondingEntry { oro_amount: amount, reward_coins, unlock_time: now + 604800, receiver: alice }`,
+   and `TOTAL_LOCKED += amount`.
+6. After `unbonding_period` elapses, Alice calls `Claim {}`. Matured
+   entries are paid out, grouped by `receiver`, in one `BankMsg::Send`
+   per unique destination (ORO and reward coins merged).
 
-### Bootstrap-share reward dust (known limitation, audit I-1 / N-4)
-The instantiate path mints `bootstrap_amount` xORO **to the contract address itself** to defeat the first-deposit share-inflation attack. Those bootstrap shares are part of `total_shares` (the chain-queried supply that `update_rewards` divides by), but the contract has no user record to call `sync_user_rewards` against. The bootstrap shares' pro-rata cut of every side-reward stream therefore accrues into the global `index` and is never paid out.
+## Pause Model
 
-**Magnitude:** `dust_per_stream ≈ funded_amount × bootstrap_amount / total_shares_at_time_of_stream`. At the default `bootstrap_amount = 1_000` and any realistic post-launch `total_shares`, the dust per stream is negligible (sub-basis-point). It grows with both `bootstrap_amount` and the number of `AddReward` calls.
+- `Pause` is callable by the owner or any address in `PAUSE_AUTHORITIES`.
+- `Unpause` is callable by the owner only. Asymmetric by design: a
+  compromised pause-authority key can pause to grief but cannot toggle
+  the contract back open, so the failure mode is bounded.
+- While paused, the following are blocked: `Enter`, `Leave`, `Claim`,
+  `ClaimOrphanedRewards`. Administrative paths (`AddReward`,
+  `WithdrawExcessTokens`, `UpdateConfig`, pause-authority management,
+  ownership rotation) remain available so the owner can react.
 
-**Treatment:** explicitly documented and accepted, not fixed. The reward-eligible supply could be reduced to `total_shares − bootstrap_amount` in `update_rewards`, but doing so changes the accounting invariants that downstream queries (`TotalShares`, `TotalSupplyAt`) rely on and isn't worth the surface area at current operational scale.
+## Audit History
 
----
-
-## Migration
-
-`cw2` same-name guard. The `migrate` handler is idempotent: initialises `REWARD_ORO_RESERVE` and `TOTAL_LOCKED` if absent (older deployments), bumps the cw2 version, and leaves all other state untouched. `Config.paused` is `#[serde(default)]` so legacy bytes without that field deserialise as `false` on first `CONFIG.load()` after migrate. (Audit N-2.)
-
-## Constants
-
-| Constant | Value | Purpose |
-|---|---|---|
-| `MINIMUM_STAKE_AMOUNT` | 1_000 | Minimum bootstrap amount; prevents first-deposit share-inflation attack. |
-| `MAX_UNBONDING_ENTRIES` | 10 | Per-user concurrent unbonding entries; bounds storage for `Claim` iteration. |
-| `MAX_REWARD_DENOMS` | 5 | Cap on simultaneously-active side-reward streams. |
+- **FIND-006 (2026)** — closed by removing the transferable share token and
+  switching to an internal `STAKES` registry. The classic first-depositor /
+  share-inflation attack is structurally impossible here: there is no
+  share-conversion math, a donation of ORO is not credited to anyone's
+  stake, and `Enter` / `Leave` operate strictly 1:1.
+- **FIND-015** — closed by lazy-pruning fully-elapsed streams into
+  `FINISHED_REWARDS` so the `MAX_REWARD_DENOMS` cap counts only
+  concurrent active streams while preserving accrual for late syncers.

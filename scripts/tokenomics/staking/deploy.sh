@@ -22,14 +22,29 @@ fi
 # ─── Deployment ─────────────────────────────────────────────────────────────
 ADMIN_ADDR=$($BINARY keys show "$KEY_NAME" -a --keyring-backend "$KEYRING_BACKEND")
 
+# ─── Tunables ───────────────────────────────────────────────────────────────
+# Unbonding window in seconds (default: 7 days).
+UNBONDING_PERIOD=${UNBONDING_PERIOD:-604800}
+
+# Per-operation dust floor (Uint128 as a JSON string). Default 1 ORO at
+# 6 decimals. Enforced on every Enter and every partial Leave; full exits
+# bypass the floor so users can always unwind sub-minimum dust.
+MINIMUM_STAKE_AMOUNT=${MINIMUM_STAKE_AMOUNT:-1000000}    # 1 ORO at 6 decimals
+
+# The contract is a 1:1 ORO stake registry — no bootstrap principal, no
+# reward reserve. Instantiate is funds-less.
+
+# NOTE: Pause authorities are added post-deploy via the test.sh
+# `add_pause_authorities` helper (matches factory/incentives operator pattern).
+# `InstantiateMsg` does not accept a `pause_authorities` field.
+
 echo "🚀 Instantiating Staking Contract..."
 MSG=$(cat <<EOF
 {
-  "deposit_token_denom": "$ORO_DENOM",
-  "unbonding_period": 604800,
-  "bootstrap_amount": "1000",
-  "xoro_decimals": 6,
-  "xoro_uri": ""
+  "owner": "$ADMIN_ADDR",
+  "oro_denom": "$ORO_DENOM",
+  "unbonding_period": $UNBONDING_PERIOD,
+  "minimum_stake_amount": "$MINIMUM_STAKE_AMOUNT"
 }
 EOF
 )
@@ -40,7 +55,6 @@ $BINARY tx wasm instantiate "$OROSWAP_STAKING_CODE_ID" "$MSG" \
   --admin "$ADMIN_ADDR" \
   --from "$KEY_NAME" --keyring-backend "$KEYRING_BACKEND" \
   --node "$RPC_URL" --chain-id "$CHAIN_ID" \
-  --amount "1000$ORO_DENOM,2000uzig" \
   --gas-prices "$GAS_PRICES" --gas auto --gas-adjustment "$GAS_ADJUSTMENT" -y -o json | jq
 
 echo "⏳ Waiting for transaction..."
@@ -51,6 +65,7 @@ STAKING_ADDR=$($BINARY query wasm list-contract-by-code "$OROSWAP_STAKING_CODE_I
   --node "$RPC_URL" --output json | jq -r '.contracts[-1]')
 
 echo "✅ Staking Contract Address: $STAKING_ADDR"
+echo "ℹ️  1:1 stake registry: STAKES[user] = ORO staked, tracked in contract storage."
 
 echo "📝 Update your .env file with:"
 echo "export STAKING_CONTRACT=\"$STAKING_ADDR\""

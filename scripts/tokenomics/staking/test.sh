@@ -11,7 +11,7 @@ STAKING="${STAKING_CONTRACT:-}"
 ORO="${ORO_TOKEN:-}"
 
 if [[ -z "$STAKING" ]]; then
-    echo "❌ STAKING_CONTRACT is not set in devtnet_testing.env."
+    echo "❌ STAKING_CONTRACT is not set in devnet_testing.env."
     exit 1
 fi
 
@@ -28,69 +28,75 @@ execute() {
       --gas-prices "$GAS_PRICES" --gas auto --gas-adjustment "$GAS_ADJUSTMENT" $extra_args -y -o json | jq
 }
 
-# ─── Staking Operations ─────────────────────────────────────────────────────
-
-# Usage: enter <amount> [receiver]
-enter() {
-    local amount="$1"
-    local receiver="${2:-null}"
-    local receiver_json="null"
-    [[ "$receiver" != "null" ]] && receiver_json="\"$receiver\""
-
-    echo "📥 Staking $amount $ORO..."
-    execute "{\"enter\":{\"receiver\":$receiver_json}}" "--amount $amount$ORO"
+self_addr() {
+    $BINARY keys show "$KEY_NAME" -a --keyring-backend "$KEYRING_BACKEND"
 }
 
-# Usage: leave <amount_xoro> [receiver]
-leave() {
-    local amount="$1"
-    local receiver="${2:-null}"
-    local receiver_json="null"
-    [[ "$receiver" != "null" ]] && receiver_json="\"$receiver\""
+# ─── Staking Operations ─────────────────────────────────────────────────────
+#
+# Architecture note: this is a 1:1 ORO stake registry. STAKES[user] tracks
+# the exact ORO amount staked — there are no shares, no exchange rate, no
+# bootstrap principal. Use `query_stake_of` and `query_total_shares` to
+# inspect the per-user and total stake balances.
 
-    echo "📤 Initiating Unbonding: $amount xORO..."
-    execute "{\"leave\":{\"receiver\":$receiver_json}}" "--amount $amount$(query_config | jq -r '.data.xoro_denom')"
+# Usage: enter <amount>
+# ORO arrives via info.funds; the contract credits STAKES[info.sender] += amount
+# at 1:1. There is no on-chain receiver indirection.
+enter() {
+    local amount="$1"
+    echo "📥 Staking $amount $ORO..."
+    execute '{"enter":{}}' "--amount $amount$ORO"
+}
+
+# Usage: leave <amount> [recipient]
+# `amount` is a typed Uint128 of ORO stake to unbond (1:1) — NOT a bank-funds amount.
+# `recipient` defaults to the caller; it is the address that will receive the
+# ORO when claim() is invoked after the unbonding window.
+leave() {
+    if [[ $# -lt 1 ]]; then echo "❌ Usage: leave <amount> [recipient]"; exit 1; fi
+    local amount="$1"
+    local recipient="${2:-$(self_addr)}"
+
+    echo "📤 Initiating Unbonding: $amount ORO → $recipient..."
+    execute "{\"leave\":{\"amount\":\"$amount\",\"recipient\":\"$recipient\"}}" ""
 }
 
 # Usage: claim
 claim() {
     echo "💰 Claiming matured unbonding entries..."
-    execute "{\"claim\":{}}" ""
+    execute '{"claim":{}}' ""
 }
 
 # Usage: add_reward <amount> <denom> <duration_seconds>
+# Denom and rate are derived from info.funds and duration:
+#   denom = first coin in --amount
+#   rps   = amount / duration
 add_reward() {
+    if [[ $# -lt 3 ]]; then echo "❌ Usage: add_reward <amount> <denom> <duration>"; exit 1; fi
     local amount="$1"
     local denom="$2"
     local duration="$3"
 
-    echo "🎁 Adding Reward: $amount $denom for $duration seconds..."
-    execute "{\"add_reward\":{\"duration\":$duration}}" "--amount $amount$denom"
+    echo "🎁 Adding Reward: $amount $denom over ${duration}s (rps derived = $((amount / duration)))..."
+    execute "{\"add_reward\":{\"duration\":$duration}}" \
+        "--amount $amount$denom"
 }
 
-# Usage: update_config [new_unbonding_period]
+# Usage: update_config [period] [minimum]
+#   period  — new unbonding_period in seconds, or empty/null to skip.
+#   minimum — new minimum_stake_amount (Uint128 as base units), or empty to skip.
+# Ownership changes go via propose_new_owner / claim_ownership (two-step flow).
 update_config() {
     local period="${1:-null}"
+    local minimum="${2:-}"
 
-    echo "⚙️ Updating Config (Period: $period)..."
-    execute "{\"update_config\":{\"unbonding_period\":$period}}" ""
-}
-
-# Usage: enter_with_hook <amount> <contract_address> <base64_msg>
-# Forwards the resulting xORO (in full) to <contract_address> along with the
-# supplied executable msg in a single atomic call. Useful for composing into
-# other protocols that accept xORO.
-enter_with_hook() {
-    if [[ $# -lt 3 ]]; then
-        echo "❌ Usage: enter_with_hook <amount> <contract_address> <base64_msg>"
-        exit 1
+    local minimum_json="null"
+    if [[ -n "$minimum" && "$minimum" != "null" ]]; then
+        minimum_json="\"$minimum\""
     fi
-    local amount="$1"
-    local contract="$2"
-    local msg_b64="$3"
-    echo "📥➡️  Staking $amount $ORO and forwarding xORO to $contract..."
-    execute "{\"enter_with_hook\":{\"contract_address\":\"$contract\",\"msg\":\"$msg_b64\"}}" \
-        "--amount $amount$ORO"
+
+    echo "⚙️ Updating Config (Period: $period, Minimum: $minimum_json)..."
+    execute "{\"update_config\":{\"unbonding_period\":$period,\"minimum_stake_amount\":$minimum_json}}" ""
 }
 
 # ─── Pause / Pause-authority ────────────────────────────────────────────────
@@ -116,7 +122,7 @@ add_pause_authorities() {
     local json_addrs
     json_addrs=$(printf '"%s",' "$@" | sed 's/,$//')
     echo "➕ Adding pause authorities: $*"
-    execute "{\"add_pause_authorities\":{\"authorities\":[$json_addrs]}}" ""
+    execute "{\"add_pause_authorities\":{\"addresses\":[$json_addrs]}}" ""
 }
 
 # Usage: remove_pause_authorities <addr1> [addr2] ...
@@ -125,15 +131,17 @@ remove_pause_authorities() {
     local json_addrs
     json_addrs=$(printf '"%s",' "$@" | sed 's/,$//')
     echo "➖ Removing pause authorities: $*"
-    execute "{\"remove_pause_authorities\":{\"authorities\":[$json_addrs]}}" ""
+    execute "{\"remove_pause_authorities\":{\"addresses\":[$json_addrs]}}" ""
 }
 
 # ─── Excess-token recovery (audit N-1) ──────────────────────────────────────
 #
-# ORO is NON-RECOVERABLE: every wei held by the contract is owed to stakers,
-# unbonders, or the reward stream. Direct bank-sends of ORO auto-compound by
-# design. Calling withdraw_excess_tokens with the ORO denom returns the
-# typed `OroNonRecoverable` error.
+# ORO is NON-RECOVERABLE: it is the principal asset of the stake registry.
+# Every wei the contract holds must remain available to honour Enter/Leave/
+# Claim at 1:1. Direct bank-sends of ORO are NOT credited to anyone's stake
+# and cannot be swept either — they sit in the contract balance as inert
+# excess. Calling withdraw_excess_tokens with the ORO denom returns the
+# typed `OroNonRecoverable` error. Reward denoms are likewise guarded.
 #
 # Usage: withdraw_excess_tokens <denom> [recipient]
 withdraw_excess_tokens() {
@@ -167,6 +175,18 @@ claim_ownership() {
     execute '{"claim_ownership":{}}' ""
 }
 
+# Sweep orphaned reward tokens (emissions that elapsed while TOTAL_STAKES was
+# zero) to `recipient`, or to the contract owner when omitted. Owner only.
+#
+# Usage: claim_orphaned_rewards [recipient]
+claim_orphaned_rewards() {
+    local recipient="${1:-null}"
+    local recipient_json="null"
+    [[ "$recipient" != "null" ]] && recipient_json="\"$recipient\""
+    echo "🧹 Sweeping orphaned rewards (recipient=$recipient)..."
+    execute "{\"claim_orphaned_rewards\":{\"recipient\":$recipient_json}}" ""
+}
+
 # ─── Queries ────────────────────────────────────────────────────────────────
 
 query_config() {
@@ -174,18 +194,21 @@ query_config() {
     query '{"config":{}}'
 }
 
-query_total_deposit() {
-    echo "🔍 Querying Total Deposit (Effective Pool)..." >&2
-    query '{"total_deposit":{}}'
-}
-
 query_state() {
-    echo "🔍 Querying Pool State (Exchange Rate)..." >&2
+    echo "🔍 Querying Pool State (total ORO staked)..." >&2
     query '{"state":{}}'
 }
 
+# Per-user ORO stake balance from STAKES.
+query_stake_of() {
+    local addr="${1:-$(self_addr)}"
+    echo "🔍 Querying Stake (ORO) for $addr..." >&2
+    query "{\"stake_of\":{\"address\":\"$addr\"}}"
+}
+
+# Global stake total from TOTAL_STAKES.
 query_total_shares() {
-    echo "📊 Querying Total Shares..." >&2
+    echo "📊 Querying Total Staked ORO..." >&2
     query '{"total_shares":{}}'
 }
 
@@ -195,19 +218,13 @@ query_total_locked() {
 }
 
 query_unbonding() {
-    local addr="${1:-$($BINARY keys show "$KEY_NAME" -a --keyring-backend "$KEYRING_BACKEND")}"
+    local addr="${1:-$(self_addr)}"
     echo "📝 Querying Unbonding Entries for $addr..." >&2
     query "{\"unbonding_entries\":{\"address\":\"$addr\"}}"
 }
 
-query_balance_at() {
-    local addr="$1"
-    echo "🔍 Querying current xORO Balance for $addr..." >&2
-    query "{\"balance_at\":{\"address\":\"$addr\",\"timestamp\":null}}"
-}
-
 query_pending_rewards() {
-    local addr="${1:-$($BINARY keys show "$KEY_NAME" -a --keyring-backend "$KEYRING_BACKEND")}"
+    local addr="${1:-$(self_addr)}"
     echo "🎁 Querying Pending Rewards for $addr..." >&2
     query "{\"pending_rewards\":{\"address\":\"$addr\"}}"
 }
@@ -223,10 +240,11 @@ query_unbonding_period() {
 }
 
 status() {
-    local addr="${1:-$($BINARY keys show "$KEY_NAME" -a --keyring-backend "$KEYRING_BACKEND")}"
+    local addr="${1:-$(self_addr)}"
     echo "📋 Staking Status for $addr:"
     query_config
     query_state
+    query_stake_of "$addr"
     query_pending_rewards "$addr"
     query_unbonding "$addr"
 }
@@ -235,13 +253,12 @@ status() {
 if [[ $# -lt 1 ]]; then
   echo "Usage: $0 <command> [args...]"
   echo "Commands:"
-  echo "  enter <amount> [receiver]                                 # Stake ORO"
-  echo "  enter_with_hook <amount> <contract> <base64_msg>          # Stake + forward xORO with hook"
-  echo "  leave <amount_xoro> [receiver]                            # Start unbonding"
-  echo "  claim                                                     # Claim matured ORO + rewards"
-  echo "  add_reward <amt> <denom> <sec>                            # (Admin) Add reward stream"
-  echo "  withdraw_excess_tokens <denom> [recipient]                # (Admin) Sweep non-ORO tokens"
-  echo "  update_config [period]                                    # (Admin) Update unbonding period"
+  echo "  enter <amount>                                            # Stake ORO 1:1 (credits sender's STAKES entry)"
+  echo "  leave <amount> [recipient]                                # Debit stake → queue unbonding entry"
+  echo "  claim                                                     # Claim matured ORO + side-stream rewards"
+  echo "  add_reward <amt> <denom> <sec>                            # (Admin) Add reward stream (rps derived)"
+  echo "  withdraw_excess_tokens <denom> [recipient]                # (Admin) Sweep non-ORO/non-reward tokens"
+  echo "  update_config [period] [minimum]                          # (Admin) Update unbonding period and/or minimum stake amount"
   echo "  pause                                                     # Owner OR pause-authority"
   echo "  unpause                                                   # Owner ONLY"
   echo "  add_pause_authorities <addr1> [addr2] ...                 # (Admin) Grant pause authority"
@@ -249,14 +266,14 @@ if [[ $# -lt 1 ]]; then
   echo "  propose_new_owner <addr> <expires_in>                     # Two-step owner transfer"
   echo "  drop_ownership_proposal                                   # Drop pending proposal"
   echo "  claim_ownership                                           # Claim proposed ownership"
+  echo "  claim_orphaned_rewards [recipient]                        # (Admin) Sweep orphan-bucket emissions (no-staker windows)"
   echo "  query_config                                              # Get contract config"
-  echo "  query_total_deposit                                       # Total ORO in pool (active)"
-  echo "  query_state                                               # Total ORO, shares, exchange rate"
-  echo "  query_total_shares                                        # Total xORO supply"
+  echo "  query_state                                               # Pool: total staked ORO"
+  echo "  query_stake_of [address]                                  # Per-user ORO stake (STAKES map)"
+  echo "  query_total_shares                                        # Global total staked ORO (TOTAL_STAKES)"
   echo "  query_total_locked                                        # Total ORO in unbonding"
   echo "  query_unbonding [address]                                 # Get unbonding entries"
   echo "  query_unbonding_period                                    # Global unbonding seconds"
-  echo "  query_balance_at <address>                                # Current xORO balance"
   echo "  query_pending_rewards [address]                           # Pending side-stream rewards"
   echo "  query_pause_authorities                                   # Extra pause-authorised addrs"
   echo "  status [address]                                          # Show all relevant info for user"
@@ -265,7 +282,6 @@ fi
 
 case "$1" in
   enter)                    shift; enter "$@" ;;
-  enter_with_hook)          shift; enter_with_hook "$@" ;;
   leave)                    shift; leave "$@" ;;
   claim)                    shift; claim "$@" ;;
   add_reward)               shift; add_reward "$@" ;;
@@ -279,14 +295,14 @@ case "$1" in
   propose_new_owner)        shift; propose_new_owner "$@" ;;
   drop_ownership_proposal)  drop_ownership_proposal ;;
   claim_ownership)          claim_ownership ;;
+  claim_orphaned_rewards)   shift; claim_orphaned_rewards "$@" ;;
   query_config)             query_config ;;
-  query_total_deposit)      query_total_deposit ;;
   query_state)              query_state ;;
+  query_stake_of)           shift; query_stake_of "$@" ;;
   query_total_shares)       query_total_shares ;;
   query_total_locked)       query_total_locked ;;
   query_unbonding)          shift; query_unbonding "$@" ;;
   query_unbonding_period)   query_unbonding_period ;;
-  query_balance_at)         shift; query_balance_at "$@" ;;
   query_pending_rewards)    shift; query_pending_rewards "$@" ;;
   query_pause_authorities)  query_pause_authorities ;;
   *) echo "Unknown command: $1"; exit 1 ;;

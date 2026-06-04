@@ -1,9 +1,9 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    attr, coin, ensure, to_json_binary, Addr, BankMsg, Binary, Coin, CosmosMsg, Decimal,
+    attr, coin, ensure, to_json_binary, Addr, BankMsg, Binary, Coin, CosmosMsg,
     Decimal256, Deps, DepsMut, Env, MessageInfo, Order, Reply, Response, StdError, StdResult,
-    Storage, SubMsg, Uint128, WasmMsg,
+    Storage, Uint128,
 };
 use cw2::set_contract_version;
 use cw_utils::{must_pay, one_coin};
@@ -12,142 +12,77 @@ use oroswap::staking::{
     Config, ExecuteMsg, InstantiateMsg, QueryMsg, StateResponse, StakingResponse, UnbondingEntry,
 };
 use oroswap::common::{claim_ownership, drop_ownership_proposal, propose_new_owner};
-use oroswap::token_factory::{
-    tf_burn_msg, tf_create_denom_msg, tf_mint_msg,
-    MsgCreateDenomResponse,
-};
-#[cfg(feature = "zigchain")]
-use oroswap::token_factory::tf_set_denom_metadata_msg;
 
 use crate::error::ContractError;
 use crate::state::{
-    CONFIG, FINISHED_REWARDS, OWNERSHIP_PROPOSAL, PAUSE_AUTHORITIES, REWARD_ORO_RESERVE, REWARDS,
-    TOTAL_LOCKED, UNBONDING, USER_REWARDS, RewardInfo, UserRewardInfo,
+    CONFIG, FINISHED_REWARDS, ORPHANED_REWARDS, OWNERSHIP_PROPOSAL, PAUSE_AUTHORITIES, REWARDS,
+    STAKES, TOTAL_LOCKED, TOTAL_STAKES, UNBONDING, USER_REWARDS, RewardInfo, UserRewardInfo,
 };
 
-/// Contract name that is used for migration.
+/// Contract name used for migration.
 pub const CONTRACT_NAME: &str = env!("CARGO_PKG_NAME");
-/// Contract version that is used for migration.
+/// Contract version used for migration.
 pub const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// xORO information
-const TOKEN_SYMBOL: &str = "xoro";
-
-/// A `reply` call code ID used for sub-messages.
-enum ReplyIds {
-    InstantiateDenom = 1,
-}
-
-impl TryFrom<u64> for ReplyIds {
-    type Error = ContractError;
-
-    fn try_from(value: u64) -> Result<Self, Self::Error> {
-        match value {
-            1 => Ok(ReplyIds::InstantiateDenom),
-            _ => Err(ContractError::FailedToParseReply {}),
-        }
-    }
-}
-
-/// Minimum initial xoro share
-pub(crate) const MINIMUM_STAKE_AMOUNT: Uint128 = Uint128::new(1_000);
-
-/// Maximum number of unbonding entries per user
+/// Maximum number of unbonding entries per user.
 pub const MAX_UNBONDING_ENTRIES: usize = 10;
 
-/// Maximum number of distinct reward denoms
+/// Maximum number of distinct active reward denoms.
 pub const MAX_REWARD_DENOMS: usize = 5;
 
-/// Creates a new contract with the specified parameters in the [`InstantiateMsg`].
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
     deps: DepsMut,
-    env: Env,
-    info: MessageInfo,
+    _env: Env,
+    _info: MessageInfo,
     msg: InstantiateMsg,
-) -> StdResult<Response> {
+) -> Result<Response, ContractError> {
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
-    // Validate that deposit_token_denom exists on chain
-    let supply = deps.querier.query_supply(&msg.deposit_token_denom)?.amount;
+    // Reject a zero-supply denom up front so we don't ship a contract bricked on first Enter.
+    let supply = deps.querier.query_supply(&msg.oro_denom)?.amount;
     ensure!(
         !supply.is_zero(),
-        StdError::generic_err(
-            "deposit_token_denom has 0 supply which is likely sign of misconfiguration"
-        )
+        ContractError::Std(StdError::generic_err(
+            "oro_denom has 0 supply which is likely sign of misconfiguration"
+        ))
     );
 
-    // Validate addresses
-    let owner = deps.api.addr_validate(
-        &info.sender.to_string(), // owner defaults to instantiator; can be updated via UpdateConfig
-    )?;
+    // Owner is taken from the message (not info.sender) so factory-style
+    // deployments can hand the contract directly to a multisig.
+    let owner = deps.api.addr_validate(&msg.owner)?;
 
-    // Set bootstrap amount (default to MINIMUM_STAKE_AMOUNT if not provided)
-    let bootstrap_amount = msg.bootstrap_amount.unwrap_or(MINIMUM_STAKE_AMOUNT);
-
-    if let Some(provided_amount) = msg.bootstrap_amount {
-        if provided_amount < MINIMUM_STAKE_AMOUNT {
-            return Err(StdError::generic_err(format!(
-                "Bootstrap amount must be at least {}",
-                MINIMUM_STAKE_AMOUNT
-            )));
-        }
+    if msg.minimum_stake_amount.is_zero() {
+        return Err(ContractError::MinimumStakeAmountIsZero);
     }
-
-    // Check if bootstrap funds are provided
-    let provided_funds = info
-        .funds
-        .iter()
-        .find(|c| c.denom == msg.deposit_token_denom)
-        .map(|c| c.amount)
-        .unwrap_or_default();
-
-    if provided_funds != bootstrap_amount {
-        return Err(StdError::generic_err(format!(
-            "Expected bootstrap amount: {}, provided: {}",
-            bootstrap_amount, provided_funds
-        )));
-    }
-    let deposit_token_denom = msg.deposit_token_denom.clone();
 
     CONFIG.save(
         deps.storage,
         &Config {
-            oro_denom: deposit_token_denom.clone(),
-            xoro_denom: "".to_string(), // placeholder, set in reply
-            bootstrap_amount,
-            owner: owner.to_string(),
+            oro_denom: msg.oro_denom.clone(),
+            owner: owner.clone(),
             unbonding_period: msg.unbonding_period,
-            xoro_decimals: msg.xoro_decimals.unwrap_or(6),
-            xoro_uri: msg.xoro_uri,
+            minimum_stake_amount: msg.minimum_stake_amount,
             paused: false,
         },
     )?;
 
-    // Initialize total locked to zero
     TOTAL_LOCKED.save(deps.storage, &0u128)?;
-    // Initialize ORO reward reserve to zero
-    REWARD_ORO_RESERVE.save(deps.storage, &Uint128::zero())?;
+    TOTAL_STAKES.save(deps.storage, &Uint128::zero())?;
 
-    // Store tracker config for queries if needed
-    // (We'll just keep the token_factory_addr for reference in tracker_config query if we keep it, but let's skip state entry for now)
+    // Pause authorities are NOT seeded at instantiate; the owner adds them
+    // post-instantiate via `ExecuteMsg::AddPauseAuthorities` (matches the
+    // factory / incentives operator pattern). Owner retains implicit
+    // pause authority and is intentionally not stored in PAUSE_AUTHORITIES.
 
-    let create_denom_msg = SubMsg::reply_on_success(
-        tf_create_denom_msg(env.contract.address.to_string(), TOKEN_SYMBOL),
-        ReplyIds::InstantiateDenom as u64,
-    );
-
-    Ok(Response::new()
-        .add_submessage(create_denom_msg)
-        .add_attributes(vec![
-            attr("action", "instantiate"),
-            attr("contract", CONTRACT_NAME),
-            attr("deposit_token_denom", deposit_token_denom),
-            attr("unbonding_period", msg.unbonding_period.to_string()),
-        ]))
+    Ok(Response::new().add_attributes(vec![
+        attr("action", "instantiate"),
+        attr("contract", CONTRACT_NAME),
+        attr("oro_denom", msg.oro_denom),
+        attr("unbonding_period", msg.unbonding_period.to_string()),
+    ]))
 }
 
-/// Exposes execute functions available in the contract.
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn execute(
     deps: DepsMut,
@@ -156,64 +91,31 @@ pub fn execute(
     msg: ExecuteMsg,
 ) -> Result<Response, ContractError> {
     match msg {
-        ExecuteMsg::Enter { receiver } => {
-            let recipient = receiver.unwrap_or_else(|| info.sender.to_string());
+        ExecuteMsg::Enter {} => execute_enter(deps, env, info),
+        ExecuteMsg::Leave { amount, recipient } => {
             deps.api.addr_validate(&recipient)?;
-            execute_enter(deps, env, info).map(|(resp, minted_coins)| {
-                resp.add_message(BankMsg::Send {
-                    to_address: recipient.clone(),
-                    amount: vec![minted_coins],
-                })
-                .add_attributes([("action", "enter"), ("recipient", recipient.as_str())])
-            })
+            execute_leave(deps, env, info, amount, recipient)
         }
-        ExecuteMsg::EnterWithHook {
-            contract_address,
-            msg,
-        } => {
-            // FIND-010: validate the caller-supplied destination BEFORE running
-            // execute_enter so a malformed address fails fast with a clear
-            // StdError instead of completing the mint and then reverting at
-            // sub-message dispatch. Mirrors the validation `Enter { receiver }`
-            // does on its recipient.
-            deps.api.addr_validate(&contract_address)?;
-            execute_enter(deps, env, info).map(|(resp, minted_coins)| {
-                resp.add_message(WasmMsg::Execute {
-                    contract_addr: contract_address.clone(),
-                    msg,
-                    funds: vec![minted_coins],
-                })
-                .add_attributes([
-                    ("action", "enter_with_hook"),
-                    ("next_contract", &contract_address),
-                ])
-            })
-        }
-        ExecuteMsg::Leave { receiver } => {
-            let recipient = receiver.unwrap_or_else(|| info.sender.to_string());
-            deps.api.addr_validate(&recipient)?;
-            execute_leave(deps, env, info, recipient)
-        }
-        ExecuteMsg::Claim {} => {
-            execute_claim(deps, env, info)
-        }
-        ExecuteMsg::UpdateConfig { unbonding_period } => {
-            execute_update_config(deps, info, unbonding_period)
-        }
+        ExecuteMsg::Claim {} => execute_claim(deps, env, info),
+        ExecuteMsg::AddReward { duration } => execute_add_reward(deps, env, info, duration),
+        ExecuteMsg::UpdateConfig {
+            unbonding_period,
+            minimum_stake_amount,
+        } => execute_update_config(deps, info, unbonding_period, minimum_stake_amount),
         ExecuteMsg::ProposeNewOwner { owner, expires_in } => {
             let config = CONFIG.load(deps.storage)?;
-            propose_new_owner(deps, info, env, owner, expires_in, Addr::unchecked(&config.owner), OWNERSHIP_PROPOSAL)
+            propose_new_owner(deps, info, env, owner, expires_in, config.owner, OWNERSHIP_PROPOSAL)
                 .map_err(Into::into)
         }
         ExecuteMsg::DropOwnershipProposal {} => {
             let config = CONFIG.load(deps.storage)?;
-            drop_ownership_proposal(deps, info, Addr::unchecked(&config.owner), OWNERSHIP_PROPOSAL)
+            drop_ownership_proposal(deps, info, config.owner, OWNERSHIP_PROPOSAL)
                 .map_err(Into::into)
         }
         ExecuteMsg::ClaimOwnership {} => {
             claim_ownership(deps, info, env, OWNERSHIP_PROPOSAL, |deps, new_owner| {
                 CONFIG.update::<_, StdError>(deps.storage, |mut v| {
-                    v.owner = new_owner.to_string();
+                    v.owner = new_owner;
                     Ok(v)
                 })?;
                 Ok(())
@@ -222,231 +124,138 @@ pub fn execute(
         }
         ExecuteMsg::Pause {} => execute_pause(deps, info),
         ExecuteMsg::Unpause {} => execute_unpause(deps, info),
-        ExecuteMsg::AddReward { duration } => execute_add_reward(deps, env, info, duration),
         ExecuteMsg::WithdrawExcessTokens { denom, recipient } => {
             execute_withdraw_excess_tokens(deps, env, info, denom, recipient)
         }
-        ExecuteMsg::AddPauseAuthorities { authorities } => {
-            execute_add_pause_authorities(deps, info, authorities)
+        ExecuteMsg::AddPauseAuthorities { addresses } => {
+            execute_add_pause_authorities(deps, info, addresses)
         }
-        ExecuteMsg::RemovePauseAuthorities { authorities } => {
-            execute_remove_pause_authorities(deps, info, authorities)
+        ExecuteMsg::RemovePauseAuthorities { addresses } => {
+            execute_remove_pause_authorities(deps, info, addresses)
+        }
+        ExecuteMsg::ClaimOrphanedRewards { recipient } => {
+            execute_claim_orphaned_rewards(deps, env, info, recipient)
         }
     }
 }
 
-/// The entry point to the contract for processing replies from submessages.
+/// No sub-messages are dispatched, so any reply is an unknown id.
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractError> {
-    match ReplyIds::try_from(msg.id)? {
-        ReplyIds::InstantiateDenom => {
-            if let cosmwasm_std::SubMsgResult::Ok(cosmwasm_std::SubMsgResponse {
-                data: Some(b), ..
-            }) = msg.result
-            {
-                #[cfg(not(any(feature = "zigchain")))]
-                let MsgCreateDenomResponse { new_token_denom } = b.try_into()?;
-                #[cfg(feature = "zigchain")]
-                let MsgCreateDenomResponse { denom: new_token_denom, .. } = b.try_into()?;
-
-                // FIND-013: protobuf decoding can succeed while leaving the
-                // denom string empty (mismatched feature flags, future schema
-                // drift). Refuse to persist an unusable xoro_denom — every
-                // subsequent Enter/Leave/Claim would fail on the empty denom.
-                if new_token_denom.is_empty() {
-                    return Err(ContractError::FailedToParseReply {});
-                }
-
-                CONFIG.update::<_, StdError>(deps.storage, |mut config| {
-                    config.xoro_denom = new_token_denom.clone();
-                    Ok(config)
-                })?;
-
-                let config = CONFIG.load(deps.storage)?;
-
-                #[cfg(feature = "zigchain")]
-                let set_metadata_msg: Option<CosmosMsg> = Some(tf_set_denom_metadata_msg(
-                    env.contract.address.clone(),
-                    new_token_denom.clone(),
-                    TOKEN_SYMBOL.to_string(),
-                    config.xoro_decimals,
-                    config.xoro_uri.clone(),
-                ));
-                #[cfg(not(feature = "zigchain"))]
-                let set_metadata_msg: Option<CosmosMsg> = None;
-
-                // Bootstrap the pool by minting xORO tokens equal to bootstrap amount
-                // Mint to contract itself first, then the ratio is initialized
-                let bootstrap_coins = coin(config.bootstrap_amount.u128(), &new_token_denom);
-                let bootstrap_mint_msgs = tf_mint_msg(
-                    env.contract.address.clone(),
-                    bootstrap_coins,
-                    env.contract.address.clone(),
-                );
-
-                let mut resp = Response::new()
-                    .add_messages(bootstrap_mint_msgs)
-                    .add_attributes([
-                        attr("xoro_denom", new_token_denom),
-                        attr("bootstrap_amount", config.bootstrap_amount.to_string()),
-                        attr("pool_bootstrapped", "true".to_string()),
-                    ]);
-                if let Some(m) = set_metadata_msg {
-                    resp = resp.add_message(m);
-                }
-                Ok(resp)
-            } else {
-                Err(ContractError::FailedToParseReply {})
-            }
-        }
-    }
+pub fn reply(_deps: DepsMut, _env: Env, _msg: Reply) -> Result<Response, ContractError> {
+    Err(ContractError::FailedToParseReply {})
 }
 
-/// Returns the effective ORO balance for ratio calculations:
-/// `effective = total_balance - total_locked - reward_oro_reserve`.
-/// This prevents unbonding ORO AND ORO rewards from diluting the staker pool.
-fn effective_deposit(
-    total_balance: Uint128,
-    total_locked: u128,
-    reward_oro_reserve: Uint128,
-) -> Result<Uint128, ContractError> {
-    total_balance
-        .checked_sub(Uint128::new(total_locked))
-        .and_then(|b| b.checked_sub(reward_oro_reserve))
-        .map_err(|_| {
-            ContractError::Std(StdError::generic_err(
-                "total_locked + reward_reserve exceeds oro_balance; state is inconsistent",
-            ))
-        })
-}
-
-/// Enter stakes TokenFactory ORO for xORO.
 fn execute_enter(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-) -> Result<(Response, Coin), ContractError> {
+) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
     check_paused(&config)?;
 
-    // Ensure the correct denom is sent
     let amount = must_pay(&info, &config.oro_denom)?;
 
-    let total_locked = TOTAL_LOCKED.load(deps.storage)?;
-    let reward_oro_reserve = REWARD_ORO_RESERVE.load(deps.storage)?;
-
-    // Compute effective deposit (excluding user's incoming deposit, which is already in balance)
-    let raw_balance = deps
-        .querier
-        .query_balance(&env.contract.address, &config.oro_denom)?
-        .amount;
-
-    // Incoming amount has already landed in contract; subtract it to get pre-deposit balance
-    let pre_deposit_balance = raw_balance
-        .checked_sub(amount)
-        .map_err(|e| ContractError::Std(e.into()))?;
-    let effective = effective_deposit(pre_deposit_balance, total_locked, reward_oro_reserve)?;
-
-    let total_shares = deps.querier.query_supply(&config.xoro_denom)?.amount;
-    let global_rewards = update_rewards(deps.storage, &env, total_shares)?;
-    // Accrue any rewards earned since the user's last interaction, using their current
-    // xORO balance as weight. For a first-time Enter this is zero, so no accrual occurs
-    // naturally — no special casing needed.
-    let user_xoro_balance = deps
-        .querier
-        .query_balance(&info.sender, &config.xoro_denom)?
-        .amount;
-    sync_user_rewards(deps.storage, &info.sender, &global_rewards, user_xoro_balance, false)?;
-
-    let mint_amount = if total_shares.is_zero() || effective.is_zero() {
-        amount
-    } else {
-        amount.multiply_ratio(total_shares, effective)
-    };
-
-    if mint_amount.is_zero() {
-        return Err(ContractError::StakeAmountTooSmall {});
-    }
-
-    let minted_coins = coin(mint_amount.u128(), config.xoro_denom.clone());
-
-    let messages = tf_mint_msg(
-        env.contract.address.clone(),
-        minted_coins.clone(),
-        env.contract.address.clone(),
+    ensure!(
+        amount >= config.minimum_stake_amount,
+        ContractError::AmountBelowMinimum {
+            minimum: config.minimum_stake_amount,
+            provided: amount,
+        }
     );
 
-    let messages: Vec<CosmosMsg> = messages;
+    let total_stakes = TOTAL_STAKES.load(deps.storage)?;
+
+    // Sync rewards against the sender's CURRENT stake balance BEFORE mutating
+    // it — otherwise this Enter's amount would back-credit prior accrual.
+    let user_stakes = STAKES
+        .may_load(deps.storage, &info.sender)?
+        .unwrap_or_default();
+    let global_rewards = update_rewards(deps.storage, &env, total_stakes)?;
+    sync_user_rewards(deps.storage, &info.sender, &global_rewards, user_stakes, false)?;
+
+    STAKES.update(deps.storage, &info.sender, |s| -> StdResult<_> {
+        Ok(s.unwrap_or_default().checked_add(amount)?)
+    })?;
+    TOTAL_STAKES.update(deps.storage, |t| -> StdResult<_> {
+        Ok(t.checked_add(amount)?)
+    })?;
 
     let staking_response = to_json_binary(&StakingResponse {
         oro_amount: amount,
-        xoro_amount: mint_amount,
+        share_amount: amount,
     })?;
 
-    Ok((
-        Response::new()
-            .add_messages(messages)
-            .set_data(staking_response)
-            .add_attributes([attr("oro_amount", amount), attr("xoro_amount", mint_amount)]),
-        minted_coins,
-    ))
+    Ok(Response::new()
+        .set_data(staking_response)
+        .add_attributes([
+            attr("action", "enter"),
+            attr("sender", &info.sender),
+            attr("oro_amount", amount),
+            attr("share_amount", amount),
+        ]))
 }
 
-/// Leave begins the unbonding process: burns xORO immediately, locks ORO for the unbonding period.
 fn execute_leave(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
+    amount: Uint128,
     recipient: String,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
     check_paused(&config)?;
 
-    let xoro_amount = must_pay(&info, &config.xoro_denom)?;
+    if amount.is_zero() {
+        return Err(ContractError::StakeAmountTooSmall {});
+    }
 
-    let total_locked = TOTAL_LOCKED.load(deps.storage)?;
-    let reward_oro_reserve = REWARD_ORO_RESERVE.load(deps.storage)?;
+    let user_stakes = STAKES
+        .may_load(deps.storage, &info.sender)?
+        .unwrap_or_default();
 
-    let total_balance = deps
-        .querier
-        .query_balance(&env.contract.address, &config.oro_denom)?
-        .amount;
+    ensure!(
+        amount <= user_stakes,
+        ContractError::InsufficientStake {
+            available: user_stakes,
+            requested: amount,
+        }
+    );
 
-    let effective = effective_deposit(total_balance, total_locked, reward_oro_reserve)?;
-    let total_shares = deps.querier.query_supply(&config.xoro_denom)?.amount;
+    // Full exits (amount == user_stakes) always bypass the minimum: if the
+    // owner raised the floor after a user staked, they must still be able to
+    // exit, and we never strand sub-minimum dust. No "dust remaining" check.
+    let is_full_exit = amount == user_stakes;
+    ensure!(
+        is_full_exit || amount >= config.minimum_stake_amount,
+        ContractError::AmountBelowMinimum {
+            minimum: config.minimum_stake_amount,
+            provided: amount,
+        }
+    );
 
-    let global_rewards = update_rewards(deps.storage, &env, total_shares)?;
-    // Use the user's full pre-leave xORO balance as the reward weight.
-    // The xORO being burned has already been transferred to the contract, so the
-    // sender's current balance is their remaining shares — add back xoro_amount to
-    // get the total shares they held for the accrual period.
-    let user_remaining = deps
-        .querier
-        .query_balance(&info.sender, &config.xoro_denom)?
-        .amount;
-    let user_total_shares = user_remaining + xoro_amount;
+    let total_stakes = TOTAL_STAKES.load(deps.storage)?;
+
+    // Settle accrual against the FULL pre-debit stake. `clear_pending = true`
+    // empties the pending bucket so a subsequent Leave-before-Claim cannot
+    // pay the same accrual twice.
+    let global_rewards = update_rewards(deps.storage, &env, total_stakes)?;
     let accrued_rewards = sync_user_rewards(
         deps.storage,
         &info.sender,
         &global_rewards,
-        user_total_shares,
+        user_stakes,
         true,
     )?;
 
-    // Calculate the ORO return amount from the current effective pool.
-    let return_amount = xoro_amount.multiply_ratio(effective, total_shares);
+    let return_amount = amount;
 
-    if return_amount.is_zero() {
-        return Err(ContractError::StakeAmountTooSmall {});
-    }
+    STAKES.update(deps.storage, &info.sender, |s| -> StdResult<_> {
+        Ok(s.unwrap_or_default().checked_sub(amount)?)
+    })?;
+    TOTAL_STAKES.update(deps.storage, |t| -> StdResult<_> {
+        Ok(t.checked_sub(amount)?)
+    })?;
 
-    // Burn the xORO immediately
-    let burn_msg = tf_burn_msg(
-        env.contract.address.clone(),
-        coin(xoro_amount.u128(), &config.xoro_denom),
-    );
-
-    // Add unbonding entry for the user
     let unlock_time = env.block.time.seconds() + config.unbonding_period;
     let entry = UnbondingEntry {
         oro_amount: return_amount,
@@ -456,9 +265,8 @@ fn execute_leave(
     };
 
     let sender = info.sender.clone();
-    // Length check lives outside the `.update` closure so we can surface the
-    // typed `TooManyUnbondingEntries` variant rather than a stringly-typed
-    // `StdError`. The closure body itself is infallible after this guard.
+    // Length check outside the .update closure so the typed
+    // TooManyUnbondingEntries error escapes instead of a stringly StdError.
     let mut entries = UNBONDING
         .may_load(deps.storage, &sender)?
         .unwrap_or_default();
@@ -470,30 +278,28 @@ fn execute_leave(
     entries.push(entry);
     UNBONDING.save(deps.storage, &sender, &entries)?;
 
-    // Increase TOTAL_LOCKED
     TOTAL_LOCKED.update(deps.storage, |locked| -> StdResult<u128> {
         Ok(locked + return_amount.u128())
     })?;
 
     let staking_response = to_json_binary(&StakingResponse {
         oro_amount: return_amount,
-        xoro_amount: xoro_amount,
+        share_amount: amount,
     })?;
 
     Ok(Response::new()
-        .add_message(burn_msg)
         .set_data(staking_response)
         .add_attributes([
             attr("action", "leave"),
             attr("sender", &sender),
             attr("recipient", &recipient),
-            attr("xoro_amount", xoro_amount),
+            attr("share_amount", amount),
             attr("oro_locked", return_amount),
             attr("unlock_time", unlock_time.to_string()),
         ]))
 }
 
-/// Claim releases all matured unbonding entries to the recipient.
+/// Release all matured unbonding entries to the receivers recorded at Leave time.
 fn execute_claim(
     deps: DepsMut,
     env: Env,
@@ -517,20 +323,19 @@ fn execute_claim(
         )));
     }
 
-    // Update state: keep only pending entries
     if pending.is_empty() {
         UNBONDING.remove(deps.storage, &sender);
     } else {
         UNBONDING.save(deps.storage, &sender, &pending)?;
     }
 
-    // Reduce TOTAL_LOCKED
     let total_claim: Uint128 = matured.iter().map(|e| e.oro_amount).sum();
     TOTAL_LOCKED.update(deps.storage, |locked| -> StdResult<u128> {
         Ok(locked.saturating_sub(total_claim.u128()))
     })?;
 
-    // Group matured entries by receiver and build one BankMsg per unique receiver
+    // Group matured entries by receiver: one BankMsg per unique destination
+    // with merged ORO + reward coins.
     let mut by_receiver: Vec<(String, Vec<cosmwasm_std::Coin>)> = vec![];
     for entry in matured.iter() {
         let pos = by_receiver.iter().position(|(r, _)| r == &entry.receiver);
@@ -541,13 +346,11 @@ fn execute_claim(
                 &mut by_receiver.last_mut().unwrap().1
             }
         };
-        // Merge ORO principal
         if let Some(c) = coins.iter_mut().find(|c| c.denom == config.oro_denom) {
             c.amount += entry.oro_amount;
         } else {
             coins.push(coin(entry.oro_amount.u128(), &config.oro_denom));
         }
-        // Merge reward coins
         for rc in entry.reward_coins.iter() {
             if let Some(c) = coins.iter_mut().find(|c| c.denom == rc.denom) {
                 c.amount += rc.amount;
@@ -557,24 +360,9 @@ fn execute_claim(
         }
     }
 
-    // Reduce REWARD_ORO_RESERVE for any ORO rewards being paid out
-    let oro_rewards: Uint128 = matured
-        .iter()
-        .flat_map(|e| e.reward_coins.iter())
-        .filter(|c| c.denom == config.oro_denom)
-        .map(|c| c.amount)
-        .sum();
-    if !oro_rewards.is_zero() {
-        REWARD_ORO_RESERVE.update(deps.storage, |r| -> StdResult<Uint128> {
-            Ok(r.saturating_sub(oro_rewards))
-        })?;
-    }
-
     let messages: Vec<CosmosMsg> = by_receiver
         .into_iter()
-        .map(|(to_address, amount)| {
-            CosmosMsg::from(BankMsg::Send { to_address, amount })
-        })
+        .map(|(to_address, amount)| CosmosMsg::from(BankMsg::Send { to_address, amount }))
         .collect();
 
     Ok(Response::new()
@@ -587,22 +375,23 @@ fn execute_claim(
         ]))
 }
 
-
-/// Updates the contract configuration. Owner only.
+/// Update mutable config fields. Owner-only; ownership rotation goes through
+/// the two-step `ProposeNewOwner` + `ClaimOwnership` flow.
 fn execute_update_config(
     deps: DepsMut,
     info: MessageInfo,
     unbonding_period: Option<u64>,
+    minimum_stake_amount: Option<Uint128>,
 ) -> Result<Response, ContractError> {
     let mut config = CONFIG.load(deps.storage)?;
 
-    if info.sender.to_string() != config.owner {
+    if info.sender != config.owner {
         return Err(ContractError::Unauthorized {});
     }
 
     if let Some(period) = unbonding_period {
-        const MIN_UNBONDING_PERIOD: u64 = 60; // 1 minute minimum
-        const MAX_UNBONDING_PERIOD: u64 = 30 * 24 * 60 * 60; // 30 days
+        const MIN_UNBONDING_PERIOD: u64 = 60;
+        const MAX_UNBONDING_PERIOD: u64 = 30 * 24 * 60 * 60;
         if period < MIN_UNBONDING_PERIOD || period > MAX_UNBONDING_PERIOD {
             return Err(ContractError::Std(StdError::generic_err(format!(
                 "unbonding_period must be between {MIN_UNBONDING_PERIOD} and {MAX_UNBONDING_PERIOD} seconds"
@@ -611,13 +400,19 @@ fn execute_update_config(
         config.unbonding_period = period;
     }
 
+    if let Some(min) = minimum_stake_amount {
+        if min.is_zero() {
+            return Err(ContractError::MinimumStakeAmountIsZero);
+        }
+        config.minimum_stake_amount = min;
+    }
+
     CONFIG.save(deps.storage, &config)?;
 
     Ok(Response::new().add_attribute("action", "update_config"))
 }
 
-/// Pauses the contract. Callable by the owner OR any address registered in
-/// `PAUSE_AUTHORITIES`. The owner has implicit pause authority.
+/// Pause the contract. Callable by the owner or any pause-authority.
 fn execute_pause(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
     check_pause_authority(deps.storage, &info.sender)?;
     let mut config = CONFIG.load(deps.storage)?;
@@ -630,12 +425,11 @@ fn execute_pause(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractE
     ]))
 }
 
-/// Unpauses the contract. **Owner only** — keeping unpause to the owner
-/// means a compromised pause-authority key can pause-and-grief but cannot
-/// flip pause state back and forth.
+/// Unpause the contract. Owner-only — keeps a compromised pause-authority
+/// from being able to toggle pause state to grief.
 fn execute_unpause(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
     let mut config = CONFIG.load(deps.storage)?;
-    if info.sender.to_string() != config.owner {
+    if info.sender != config.owner {
         return Err(ContractError::NoUnpauseAuthority {});
     }
 
@@ -645,14 +439,13 @@ fn execute_unpause(deps: DepsMut, info: MessageInfo) -> Result<Response, Contrac
     Ok(Response::new().add_attribute("action", "unpause"))
 }
 
-/// Pause-authority check: passes if `sender` is the owner OR a registered
-/// pause authority.
+/// Passes if `sender` is the owner or a registered pause authority.
 fn check_pause_authority(
     storage: &dyn Storage,
     sender: &Addr,
 ) -> Result<(), ContractError> {
     let config = CONFIG.load(storage)?;
-    if sender.to_string() == config.owner {
+    if sender == &config.owner {
         return Ok(());
     }
     if PAUSE_AUTHORITIES.has(storage, sender) {
@@ -668,7 +461,7 @@ fn execute_add_pause_authorities(
     authorities: Vec<String>,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
-    if info.sender.to_string() != config.owner {
+    if info.sender != config.owner {
         return Err(ContractError::Unauthorized {});
     }
 
@@ -697,7 +490,7 @@ fn execute_remove_pause_authorities(
     authorities: Vec<String>,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
-    if info.sender.to_string() != config.owner {
+    if info.sender != config.owner {
         return Err(ContractError::Unauthorized {});
     }
 
@@ -719,7 +512,6 @@ fn execute_remove_pause_authorities(
     ]))
 }
 
-/// Checks if the contract is paused.
 fn check_paused(config: &Config) -> Result<(), ContractError> {
     if config.paused {
         return Err(ContractError::ContractPaused {});
@@ -727,73 +519,24 @@ fn check_paused(config: &Config) -> Result<(), ContractError> {
     Ok(())
 }
 
-/// Exposes all the queries available in the contract.
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
         QueryMsg::State {} => {
-            let config = CONFIG.load(deps.storage)?;
-            let total_shares = deps.querier.query_supply(&config.xoro_denom)?.amount;
-            let total_balance = deps
-                .querier
-                .query_balance(&env.contract.address, &config.oro_denom)?
-                .amount;
-            let total_locked = TOTAL_LOCKED.load(deps.storage)?;
-            let reward_oro_reserve = REWARD_ORO_RESERVE.load(deps.storage)?;
-            let effective = total_balance
-                .saturating_sub(Uint128::new(total_locked))
-                .saturating_sub(reward_oro_reserve);
-
-            let exchange_rate = if total_shares.is_zero() || effective.is_zero() {
-                Decimal::one()
-            } else {
-                Decimal::from_ratio(effective, total_shares)
-            };
-
+            let total_stakes = TOTAL_STAKES.load(deps.storage)?;
+            // 1:1 model: total_deposit == total_shares == TOTAL_STAKES.
             to_json_binary(&StateResponse {
-                total_shares,
-                total_deposit: effective,
-                exchange_rate,
+                total_shares: total_stakes,
+                total_deposit: total_stakes,
             })
         }
         QueryMsg::Config {} => to_json_binary(&CONFIG.load(deps.storage)?),
-        QueryMsg::TotalShares {} => {
-            let config = CONFIG.load(deps.storage)?;
-            let total_supply = deps.querier.query_supply(config.xoro_denom)?.amount;
-            to_json_binary(&total_supply)
-        }
-        QueryMsg::TotalDeposit {} => {
-            let config = CONFIG.load(deps.storage)?;
-            let total_balance = deps
-                .querier
-                .query_balance(env.contract.address, config.oro_denom)?
-                .amount;
-            let total_locked = TOTAL_LOCKED.load(deps.storage)?;
-            let reward_oro_reserve = REWARD_ORO_RESERVE.load(deps.storage)?;
-            // Effective deposit subtracts locked unbonding amounts and reward reserve
-            let effective = total_balance
-                .saturating_sub(Uint128::new(total_locked))
-                .saturating_sub(reward_oro_reserve);
-            to_json_binary(&effective)
-        }
-        QueryMsg::BalanceAt { address, timestamp } => {
-            if timestamp.is_some() {
-                return Err(StdError::generic_err("Historical queries are disabled"));
-            }
-            let config = CONFIG.load(deps.storage)?;
-            let amount = deps.querier
-                .query_balance(&address, config.xoro_denom)?
-                .amount;
+        QueryMsg::StakeOf { address } => {
+            let addr = deps.api.addr_validate(&address)?;
+            let amount = STAKES.may_load(deps.storage, &addr)?.unwrap_or_default();
             to_json_binary(&amount)
         }
-        QueryMsg::TotalSupplyAt { timestamp } => {
-            if timestamp.is_some() {
-                return Err(StdError::generic_err("Historical queries are disabled"));
-            }
-            let config = CONFIG.load(deps.storage)?;
-            let amount = deps.querier.query_supply(config.xoro_denom)?.amount;
-            to_json_binary(&amount)
-        }
+        QueryMsg::TotalShares {} => to_json_binary(&TOTAL_STAKES.load(deps.storage)?),
         QueryMsg::TotalLocked {} => {
             let total_locked = TOTAL_LOCKED.load(deps.storage)?;
             to_json_binary(&Uint128::new(total_locked))
@@ -811,66 +554,59 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         }
         QueryMsg::PendingRewards { address } => {
             let addr = deps.api.addr_validate(&address)?;
-            let config = CONFIG.load(deps.storage)?;
-            let total_shares = deps.querier.query_supply(&config.xoro_denom)?.amount;
-            
+            let total_stakes = TOTAL_STAKES.load(deps.storage)?;
+
             let mut rewards = REWARDS.may_load(deps.storage)?.unwrap_or_default();
             let current_ts = env.block.time.seconds();
 
-            // Calculate updated global indexes (read-only)
+            // Read-only mirror of update_rewards so the query reflects the
+            // accrual the next mutation would commit.
             for reward in rewards.iter_mut() {
                 let last_ts = reward.last_update_ts;
                 if last_ts < current_ts {
                     let applicable_end_ts = current_ts.min(reward.end_ts);
-                    if applicable_end_ts > last_ts && !total_shares.is_zero() {
+                    if applicable_end_ts > last_ts && !total_stakes.is_zero() {
                         let time_passed = applicable_end_ts - last_ts;
-                        let total_reward = reward.rps * Decimal256::from_ratio(time_passed, 1u64);
-                        reward.index += total_reward / Decimal256::from_ratio(total_shares, 1u64);
+                        let total_reward =
+                            reward.rps * Decimal256::from_ratio(time_passed, 1u64);
+                        reward.index +=
+                            total_reward / Decimal256::from_ratio(total_stakes, 1u64);
                     }
                 }
             }
 
-            let existing_entry = USER_REWARDS.may_load(deps.storage, &addr)?;
-            let is_entered_user = existing_entry.is_some();
-
-            let user_reward_info = existing_entry
+            let user_reward_info = USER_REWARDS
+                .may_load(deps.storage, &addr)?
                 .unwrap_or_else(|| UserRewardInfo {
                     last_rewards_index: vec![],
                     pending_rewards: vec![],
                 });
 
             let mut pending = user_reward_info.pending_rewards.clone();
-            // Use the user's actual xORO balance as their weight for the query projection.
-            // Also note the config could have been loaded earlier, we skip reloading if possible, but keep it simple here.
-            let config = CONFIG.load(deps.storage)?;
-            let user_xoro_balance = deps.querier.query_balance(&addr, &config.xoro_denom)?.amount;
+            let user_shares = STAKES.may_load(deps.storage, &addr)?.unwrap_or_default();
 
-            // Pass 1: credit accrual from currently-active reward streams.
-            // Track live denoms so Pass 2 can skip them.
+            // Pass 1: accrual from currently-active streams.
             let live_denoms: std::collections::HashSet<String> =
                 rewards.iter().map(|r| r.denom.clone()).collect();
             for global_reward in &rewards {
-                // Consistent with sync_user_rewards: two-tier default logic
                 let user_index = user_reward_info
                     .last_rewards_index
                     .iter()
                     .find(|(denom, _)| denom == &global_reward.denom)
                     .map(|(_, index)| *index)
-                    .unwrap_or_else(|| {
-                        if is_entered_user {
-                            Decimal256::zero()
-                        } else {
-                            global_reward.index
-                        }
-                    });
+                    .unwrap_or(Decimal256::zero());
 
-                if global_reward.index > user_index && !user_xoro_balance.is_zero() {
+                if global_reward.index > user_index && !user_shares.is_zero() {
                     let diff = global_reward.index - user_index;
-                    let pending_amount_u256 = diff * Decimal256::from_ratio(user_xoro_balance, 1u64);
-                    let pending_amount: Uint128 = pending_amount_u256.to_uint_floor().try_into()?;
+                    let pending_amount_u256 =
+                        diff * Decimal256::from_ratio(user_shares, 1u64);
+                    let pending_amount: Uint128 =
+                        pending_amount_u256.to_uint_floor().try_into()?;
 
                     if !pending_amount.is_zero() {
-                        if let Some(c) = pending.iter_mut().find(|c| c.denom == global_reward.denom) {
+                        if let Some(c) =
+                            pending.iter_mut().find(|c| c.denom == global_reward.denom)
+                        {
                             c.amount += pending_amount;
                         } else {
                             pending.push(coin(pending_amount.u128(), &global_reward.denom));
@@ -879,12 +615,8 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
                 }
             }
 
-            // FIND-015 Pass 2: include rewards from streams that have already
-            // been pruned to FINISHED_REWARDS. Mirrors `sync_user_rewards` —
-            // iterates FINISHED_REWARDS (not the user's snapshot) so entered
-            // users with no snapshot for a finished denom still get the
-            // owed credit via the two-tier default. Read-only: this is the
-            // PendingRewards query, no mutation.
+            // FIND-015 Pass 2: read-only mirror — include rewards from streams
+            // pruned into FINISHED_REWARDS.
             for entry in FINISHED_REWARDS.range(deps.storage, None, None, Order::Ascending) {
                 let (denom, finished_index) = entry?;
                 if live_denoms.contains(&denom) {
@@ -896,18 +628,12 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
                     .iter()
                     .find(|(d, _)| d == &denom)
                     .map(|(_, idx)| *idx)
-                    .unwrap_or_else(|| {
-                        if is_entered_user {
-                            Decimal256::zero()
-                        } else {
-                            finished_index
-                        }
-                    });
+                    .unwrap_or(Decimal256::zero());
 
-                if finished_index > user_index && !user_xoro_balance.is_zero() {
+                if finished_index > user_index && !user_shares.is_zero() {
                     let diff = finished_index - user_index;
                     let pending_amount_u256 =
-                        diff * Decimal256::from_ratio(user_xoro_balance, 1u64);
+                        diff * Decimal256::from_ratio(user_shares, 1u64);
                     let pending_amount: Uint128 =
                         pending_amount_u256.to_uint_floor().try_into()?;
                     if !pending_amount.is_zero() {
@@ -938,7 +664,7 @@ pub fn execute_add_reward(
     duration: u64,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
-    if info.sender.to_string() != config.owner {
+    if info.sender != config.owner {
         return Err(ContractError::Unauthorized {});
     }
 
@@ -946,28 +672,23 @@ pub fn execute_add_reward(
         return Err(ContractError::InvalidDuration {});
     }
 
-    const MAX_REWARD_DURATION: u64 = 365 * 24 * 60 * 60; // 365 days
+    const MAX_REWARD_DURATION: u64 = 365 * 24 * 60 * 60;
     if duration > MAX_REWARD_DURATION {
         return Err(ContractError::InvalidDuration {});
     }
 
     let reward_coin = one_coin(&info)?;
-    let total_shares = deps.querier.query_supply(&config.xoro_denom)?.amount;
-    
-    let mut global_rewards = update_rewards(deps.storage, &env, total_shares)?;
+    let total_stakes = TOTAL_STAKES.load(deps.storage)?;
+
+    let mut global_rewards = update_rewards(deps.storage, &env, total_stakes)?;
 
     let current_ts = env.block.time.seconds();
     let end_ts = current_ts + duration;
 
-    // If the reward token is ORO, track it in REWARD_ORO_RESERVE so it doesn't
-    // inflate the ORO:xORO exchange rate.
-    if reward_coin.denom == config.oro_denom {
-        REWARD_ORO_RESERVE.update(deps.storage, |r| -> StdResult<Uint128> {
-            Ok(r + reward_coin.amount)
-        })?;
-    }
-
-    if let Some(reward) = global_rewards.iter_mut().find(|r| r.denom == reward_coin.denom) {
+    if let Some(reward) = global_rewards
+        .iter_mut()
+        .find(|r| r.denom == reward_coin.denom)
+    {
         let remaining_time = reward.end_ts.saturating_sub(current_ts);
         let remaining_amount = reward.rps * Decimal256::from_ratio(remaining_time, 1u64);
         let new_total_amount = remaining_amount + Decimal256::from_ratio(reward_coin.amount, 1u64);
@@ -975,19 +696,17 @@ pub fn execute_add_reward(
         reward.rps = new_total_amount / Decimal256::from_ratio(duration, 1u64);
         reward.end_ts = end_ts;
     } else {
-        // Cap check runs against the POST-PRUNE active list (FIND-015): if a
-        // previous stream just expired, update_rewards has already moved it
-        // out of `global_rewards` into FINISHED_REWARDS, freeing this slot.
+        // FIND-015: cap is checked against the POST-PRUNE active list so a
+        // just-expired stream frees its slot.
         if global_rewards.len() >= MAX_REWARD_DENOMS {
-            return Err(ContractError::TooManyRewardDenoms { max: MAX_REWARD_DENOMS });
+            return Err(ContractError::TooManyRewardDenoms {
+                max: MAX_REWARD_DENOMS,
+            });
         }
-        // FIND-015: if this denom previously had a finished stream, resume
-        // the new RewardInfo at the OLD final index — not zero. Otherwise a
-        // user whose `last_rewards_index` still holds the old finished
-        // index would see `global_reward.index < user_index` on next sync
-        // and miss credit for the prior stream's accrual. Removing the
-        // FINISHED_REWARDS entry simultaneously avoids double-counting via
-        // the Pass-2 fallback in sync_user_rewards.
+        // FIND-015: resume from the prior finished index (not zero) so users
+        // whose snapshot still holds it don't see `global < user` and miss
+        // the prior stream's accrual. Also drop the FINISHED_REWARDS entry to
+        // avoid double-counting via the Pass-2 fallback in sync_user_rewards.
         let starting_index = FINISHED_REWARDS
             .may_load(deps.storage, reward_coin.denom.as_str())?
             .unwrap_or(Decimal256::zero());
@@ -1013,13 +732,26 @@ pub fn execute_add_reward(
     ]))
 }
 
-fn update_rewards(storage: &mut dyn Storage, env: &Env, total_shares: Uint128) -> StdResult<Vec<RewardInfo>> {
+fn update_rewards(
+    storage: &mut dyn Storage,
+    env: &Env,
+    total_shares: Uint128,
+) -> StdResult<Vec<RewardInfo>> {
     let mut rewards = REWARDS.may_load(storage)?.unwrap_or_default();
     let current_ts = env.block.time.seconds();
 
-    // Pass 1: accrue each active stream up to min(now, end_ts). The cap at
-    // `end_ts` means an entry's index is FINAL once we've passed end_ts —
-    // subsequent calls won't change it.
+    // Pass 1: accrue each active stream up to min(now, end_ts). Once past
+    // end_ts, the index is final and never changes again.
+    //
+    // When `total_shares == 0` the emission cannot be distributed via the
+    // index (divide-by-zero / unclaimable), so it is parked in
+    // ORPHANED_REWARDS instead. `last_update_ts` MUST advance in BOTH
+    // branches or the same window would be re-emitted to whichever staker
+    // enters next, breaking the solvency invariant.
+    //
+    // Rounding: orphan accrual is floored to Uint128. With N concurrent
+    // reward denoms up to (N - 1) wei may be lost per orphan event; the
+    // dust stays in contract balance and never under/over-credits a staker.
     for reward in rewards.iter_mut() {
         let last_ts = reward.last_update_ts;
         if last_ts >= current_ts {
@@ -1027,22 +759,39 @@ fn update_rewards(storage: &mut dyn Storage, env: &Env, total_shares: Uint128) -
         }
 
         let applicable_end_ts = current_ts.min(reward.end_ts);
-        if applicable_end_ts > last_ts && !total_shares.is_zero() {
-            let time_passed = applicable_end_ts - last_ts;
-            let total_reward = reward.rps * Decimal256::from_ratio(time_passed, 1u64);
+        if applicable_end_ts <= last_ts {
+            // Stream ended before last_ts — still advance last_update_ts so
+            // we don't revisit on subsequent calls.
+            reward.last_update_ts = current_ts;
+            continue;
+        }
+
+        let time_passed = applicable_end_ts - last_ts;
+        let total_reward = reward.rps * Decimal256::from_ratio(time_passed, 1u64);
+
+        if total_shares.is_zero() {
+            let orphan_floor: Uint128 = total_reward.to_uint_floor().try_into()?;
+            if !orphan_floor.is_zero() {
+                ORPHANED_REWARDS.update(
+                    storage,
+                    reward.denom.as_str(),
+                    |existing| -> StdResult<_> {
+                        Ok(existing.unwrap_or_default().checked_add(orphan_floor)?)
+                    },
+                )?;
+            }
+        } else {
             let index_diff = total_reward / Decimal256::from_ratio(total_shares, 1u64);
             reward.index += index_diff;
         }
-        reward.last_update_ts = current_ts;
+
+        reward.last_update_ts = applicable_end_ts;
     }
 
-    // Pass 2 (FIND-015): lazy-prune entries whose stream has fully elapsed.
-    // Move the final index into FINISHED_REWARDS and drop from the active
-    // list. `sync_user_rewards` (and the PendingRewards query) check
-    // FINISHED_REWARDS as a fallback so users who hadn't synced before the
-    // prune still get credited the `(final_index - snapshot) * shares` they
-    // were owed. This makes the MAX_REWARD_DENOMS cap apply to concurrent
-    // active streams instead of lifetime denoms.
+    // Pass 2 (FIND-015): lazy-prune fully-elapsed streams into
+    // FINISHED_REWARDS so sync_user_rewards / PendingRewards can still credit
+    // the `(final_index - snapshot) * shares` owed to users who hadn't synced
+    // before the prune.
     let mut still_active = Vec::with_capacity(rewards.len());
     for reward in rewards.into_iter() {
         if current_ts >= reward.end_ts {
@@ -1055,16 +804,12 @@ fn update_rewards(storage: &mut dyn Storage, env: &Env, total_shares: Uint128) -
     REWARDS.save(storage, &still_active)?;
     Ok(still_active)
 }
-/// Recover non-ORO tokens accidentally sent to the contract. Owner only.
-///
-/// **ORO is explicitly non-recoverable**: every ORO held by the contract is
-/// already accounted for as either (a) effective deposit backing xORO shares,
-/// (b) unbonding-queue principal, or (c) reward-reserve principal. By the
-/// design of `effective_deposit` (which reads live balance minus locked and
-/// reserve), any direct bank-send of ORO auto-compounds into existing xORO
-/// share value — a documented protocol mechanism. Trying to "recover" such
-/// ORO would silently dilute stakers, so we refuse the call up front rather
-/// than ship a no-op that pretends to work. (Audit N-1.)
+
+/// Recover non-ORO, non-reward-stream tokens accidentally sent to the contract.
+/// Owner only. ORO is non-recoverable because every wei must remain available
+/// to honour Enter/Leave/Claim at the 1:1 invariant; reward-stream denoms
+/// (live or finished) are non-recoverable because they back accrued-but-
+/// unclaimed liabilities in USER_REWARDS and pending UnbondingEntry.reward_coins.
 fn execute_withdraw_excess_tokens(
     deps: DepsMut,
     env: Env,
@@ -1073,33 +818,14 @@ fn execute_withdraw_excess_tokens(
     recipient: Option<String>,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
-    if info.sender.to_string() != config.owner {
+    if info.sender != config.owner {
         return Err(ContractError::Unauthorized {});
     }
 
-    // ORO is non-recoverable (every wei is share-backed or reward-reserved).
     if denom == config.oro_denom {
         return Err(ContractError::OroNonRecoverable {});
     }
 
-    // xORO is non-recoverable. The contract holds `bootstrap_amount` xORO at
-    // its own address as the permanent first-deposit-attack guard. If the
-    // owner could sweep it, they could then `Leave` on those shares and
-    // drain the proportional ORO from the pool — defeating the very
-    // inflation guarantee the bootstrap exists to provide.
-    if denom == config.xoro_denom {
-        return Err(ContractError::XoroNonRecoverable {});
-    }
-
-    // Reward-stream denoms are also off-limits. Once a denom has been used
-    // via `AddReward`, the contract owes accrued-but-unclaimed amounts to
-    // stakers (in `USER_REWARDS`) and to pending `UnbondingEntry.reward_coins`
-    // payouts. Two storage maps could indicate liability:
-    //   - `REWARDS`: a currently-active stream.
-    //   - `FINISHED_REWARDS` (FIND-015): a stream that has expired and been
-    //     pruned, but whose frozen final index is still drawn from by users
-    //     who haven't synced past `end_ts` yet.
-    // A full-balance sweep of either would brick those users' Claim calls.
     let rewards = REWARDS.may_load(deps.storage)?.unwrap_or_default();
     if rewards.iter().any(|r| r.denom == denom) {
         return Err(ContractError::DenomInRewardStream { denom });
@@ -1108,7 +834,7 @@ fn execute_withdraw_excess_tokens(
         return Err(ContractError::DenomInRewardStream { denom });
     }
 
-    let to = recipient.unwrap_or_else(|| config.owner.clone());
+    let to = recipient.unwrap_or_else(|| config.owner.to_string());
     deps.api.addr_validate(&to)?;
 
     let balance = deps
@@ -1136,7 +862,74 @@ fn execute_withdraw_excess_tokens(
         ]))
 }
 
+/// Sweep all orphaned reward tokens (emissions accrued while
+/// `TOTAL_STAKES == 0`) to `recipient` or the owner. Owner only.
+fn execute_claim_orphaned_rewards(
+    deps: DepsMut,
+    _env: Env,
+    info: MessageInfo,
+    recipient: Option<String>,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    check_paused(&config)?;
 
+    if info.sender != config.owner {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    let to_addr = match recipient {
+        Some(raw) => deps.api.addr_validate(&raw)?,
+        None => config.owner.clone(),
+    };
+
+    // Filter zero rows defensively against any future migration leaving a
+    // legacy zero entry — we never want to emit a zero-coin in BankMsg.
+    let entries: Vec<(String, Uint128)> = ORPHANED_REWARDS
+        .range(deps.storage, None, None, Order::Ascending)
+        .collect::<StdResult<Vec<_>>>()?;
+
+    if entries.is_empty() {
+        return Err(ContractError::NoOrphanedRewards);
+    }
+
+    let mut coins_out: Vec<Coin> = Vec::with_capacity(entries.len());
+    for (denom, amount) in entries.iter() {
+        if !amount.is_zero() {
+            coins_out.push(coin(amount.u128(), denom));
+        }
+    }
+    if coins_out.is_empty() {
+        return Err(ContractError::NoOrphanedRewards);
+    }
+
+    // Clear keys AFTER the empty check so the error path doesn't partially wipe.
+    for (denom, _) in entries.iter() {
+        ORPHANED_REWARDS.remove(deps.storage, denom.as_str());
+    }
+
+    // BankMsg::Send requires denom-sorted coins. ORPHANED_REWARDS is iterated
+    // in ascending key order and we preserve that order here.
+    let send_msg: CosmosMsg = BankMsg::Send {
+        to_address: to_addr.to_string(),
+        amount: coins_out.clone(),
+    }
+    .into();
+
+    let amounts_attr = coins_out
+        .iter()
+        .map(|c| format!("{}:{}", c.denom, c.amount))
+        .collect::<Vec<_>>()
+        .join(",");
+
+    Ok(Response::new().add_message(send_msg).add_attributes([
+        attr("action", "claim_orphaned_rewards"),
+        attr("recipient", to_addr.to_string()),
+        attr("amounts", amounts_attr),
+    ]))
+}
+
+/// Accrue rewards earned since the user's last interaction. A user with no
+/// snapshot for a denom starts from `Decimal256::zero()`.
 fn sync_user_rewards(
     storage: &mut dyn Storage,
     user: &Addr,
@@ -1144,34 +937,20 @@ fn sync_user_rewards(
     user_shares: Uint128,
     clear_pending: bool,
 ) -> StdResult<Vec<Coin>> {
-    let existing_entry = USER_REWARDS.may_load(storage, user)?;
-    // A user who has called Enter at least once will have an entry.
-    // A user who received xORO via transfer and never called Enter will have None.
-    let is_entered_user = existing_entry.is_some();
-
-    let mut user_reward_info = existing_entry.unwrap_or_else(|| UserRewardInfo {
-        last_rewards_index: vec![],
-        pending_rewards: vec![],
-    });
+    let mut user_reward_info = USER_REWARDS
+        .may_load(storage, user)?
+        .unwrap_or_else(|| UserRewardInfo {
+            last_rewards_index: vec![],
+            pending_rewards: vec![],
+        });
 
     for global_reward in global_rewards {
-        // Two-tier default logic:
-        // - Entered users: unknown new reward denoms default to 0
-        //   → they earn from the moment the reward was added (correct, they were already staking)
-        // - Non-entered users (transferred xORO): default to CURRENT global index
-        //   → they earn nothing retroactively (prevents abuse)
         let user_index = user_reward_info
             .last_rewards_index
             .iter()
             .find(|(denom, _)| denom == &global_reward.denom)
             .map(|(_, index)| *index)
-            .unwrap_or_else(|| {
-                if is_entered_user {
-                    Decimal256::zero()     // existing staker earns from reward start
-                } else {
-                    global_reward.index   // newcomer (transferred xORO) earns nothing retroactive
-                }
-            });
+            .unwrap_or(Decimal256::zero());
 
         if global_reward.index > user_index && !user_shares.is_zero() {
             let diff = global_reward.index - user_index;
@@ -1206,14 +985,10 @@ fn sync_user_rewards(
         }
     }
 
-    // FIND-015 Pass 2: settle accrual from streams that have already been
-    // pruned from the live REWARDS list. Iterates FINISHED_REWARDS rather
-    // than the user's `last_rewards_index` so an entered user who never
-    // had a snapshot entry for the denom (e.g. they staked before the
-    // reward was added, then never re-synced before expiry) still gets the
-    // full owed credit via the two-tier default — matching the pre-fix
-    // semantics of the live-loop. Skips any denom that's still in the
-    // live list as defense in depth.
+    // FIND-015 Pass 2: settle accrual from streams pruned out of REWARDS.
+    // Iterates FINISHED_REWARDS (not the user's snapshot) so a user who
+    // staked before the reward was added and never re-synced before expiry
+    // still gets credited. Skips any denom still in the live list.
     let live_denoms: std::collections::HashSet<String> =
         global_rewards.iter().map(|r| r.denom.clone()).collect();
     let finished_entries: Vec<(String, Decimal256)> = FINISHED_REWARDS
@@ -1229,13 +1004,7 @@ fn sync_user_rewards(
             .iter()
             .find(|(d, _)| d == &denom)
             .map(|(_, idx)| *idx)
-            .unwrap_or_else(|| {
-                if is_entered_user {
-                    Decimal256::zero()
-                } else {
-                    finished_index
-                }
-            });
+            .unwrap_or(Decimal256::zero());
 
         if finished_index > user_index && !user_shares.is_zero() {
             let diff = finished_index - user_index;
@@ -1256,10 +1025,8 @@ fn sync_user_rewards(
             }
         }
 
-        // Snap the user's index to the finished value so subsequent syncs
-        // compute `diff = 0` for this denom and don't re-credit. Keeps the
-        // snapshot entry around (intentional — its presence at the finished
-        // value is what suppresses double-counting on next call).
+        // Snap user index to the finished value so subsequent syncs compute
+        // `diff = 0` and don't re-credit.
         if let Some(snap) = user_reward_info
             .last_rewards_index
             .iter_mut()

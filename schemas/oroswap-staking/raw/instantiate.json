@@ -1,49 +1,36 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "InstantiateMsg",
-  "description": "This structure describes the parameters used for creating a contract.",
+  "description": "Parameters used to instantiate the staking contract.\n\nPause authorities are intentionally NOT part of instantiate; the owner adds them post-instantiation via [`ExecuteMsg::AddPauseAuthorities`], matching the factory / incentives operator-flow pattern.",
   "type": "object",
   "required": [
-    "deposit_token_denom",
+    "minimum_stake_amount",
+    "oro_denom",
+    "owner",
     "unbonding_period"
   ],
   "properties": {
-    "bootstrap_amount": {
-      "description": "Bootstrap amount to initialize the pool (optional, defaults to MINIMUM_STAKE_AMOUNT)",
-      "anyOf": [
+    "minimum_stake_amount": {
+      "description": "Minimum ORO amount per Enter or partial Leave; full exits bypass this. Must be > 0.",
+      "allOf": [
         {
           "$ref": "#/definitions/Uint128"
-        },
-        {
-          "type": "null"
         }
       ]
     },
-    "deposit_token_denom": {
-      "description": "The ORO token contract address",
+    "oro_denom": {
+      "description": "The ORO token denom that users stake.",
+      "type": "string"
+    },
+    "owner": {
+      "description": "Contract owner (admin authority).",
       "type": "string"
     },
     "unbonding_period": {
-      "description": "Unbonding period in seconds (e.g. 7 days = 604800)",
+      "description": "Unbonding period in seconds.",
       "type": "integer",
       "format": "uint64",
       "minimum": 0.0
-    },
-    "xoro_decimals": {
-      "description": "xORO decimals (optional, default: 6)",
-      "type": [
-        "integer",
-        "null"
-      ],
-      "format": "uint32",
-      "minimum": 0.0
-    },
-    "xoro_uri": {
-      "description": "xORO metadata URI (optional)",
-      "type": [
-        "string",
-        "null"
-      ]
     }
   },
   "additionalProperties": false,

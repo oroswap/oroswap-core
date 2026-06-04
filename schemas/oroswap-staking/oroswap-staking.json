@@ -5,49 +5,36 @@
   "instantiate": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "title": "InstantiateMsg",
-    "description": "This structure describes the parameters used for creating a contract.",
+    "description": "Parameters used to instantiate the staking contract.\n\nPause authorities are intentionally NOT part of instantiate; the owner adds them post-instantiation via [`ExecuteMsg::AddPauseAuthorities`], matching the factory / incentives operator-flow pattern.",
     "type": "object",
     "required": [
-      "deposit_token_denom",
+      "minimum_stake_amount",
+      "oro_denom",
+      "owner",
       "unbonding_period"
     ],
     "properties": {
-      "bootstrap_amount": {
-        "description": "Bootstrap amount to initialize the pool (optional, defaults to MINIMUM_STAKE_AMOUNT)",
-        "anyOf": [
+      "minimum_stake_amount": {
+        "description": "Minimum ORO amount per Enter or partial Leave; full exits bypass this. Must be > 0.",
+        "allOf": [
           {
             "$ref": "#/definitions/Uint128"
-          },
-          {
-            "type": "null"
           }
         ]
       },
-      "deposit_token_denom": {
-        "description": "The ORO token contract address",
+      "oro_denom": {
+        "description": "The ORO token denom that users stake.",
+        "type": "string"
+      },
+      "owner": {
+        "description": "Contract owner (admin authority).",
         "type": "string"
       },
       "unbonding_period": {
-        "description": "Unbonding period in seconds (e.g. 7 days = 604800)",
+        "description": "Unbonding period in seconds.",
         "type": "integer",
         "format": "uint64",
         "minimum": 0.0
-      },
-      "xoro_decimals": {
-        "description": "xORO decimals (optional, default: 6)",
-        "type": [
-          "integer",
-          "null"
-        ],
-        "format": "uint32",
-        "minimum": 0.0
-      },
-      "xoro_uri": {
-        "description": "xORO metadata URI (optional)",
-        "type": [
-          "string",
-          "null"
-        ]
       }
     },
     "additionalProperties": false,
@@ -61,10 +48,10 @@
   "execute": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "title": "ExecuteMsg",
-    "description": "This structure describes the execute messages available in the contract.",
+    "description": "Execute messages exposed by the staking contract.",
     "oneOf": [
       {
-        "description": "Deposits ORO in exchange for xORO The receiver is optional. If not set, the sender will receive the xORO.",
+        "description": "Deposit ORO via `info.funds` and credit the sender's stake 1:1.",
         "type": "object",
         "required": [
           "enter"
@@ -72,47 +59,13 @@
         "properties": {
           "enter": {
             "type": "object",
-            "properties": {
-              "receiver": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            },
             "additionalProperties": false
           }
         },
         "additionalProperties": false
       },
       {
-        "description": "Deposits ORO in exchange for xORO and passes **all resulting xORO** to defined contract along with an executable message.",
-        "type": "object",
-        "required": [
-          "enter_with_hook"
-        ],
-        "properties": {
-          "enter_with_hook": {
-            "type": "object",
-            "required": [
-              "contract_address",
-              "msg"
-            ],
-            "properties": {
-              "contract_address": {
-                "type": "string"
-              },
-              "msg": {
-                "$ref": "#/definitions/Binary"
-              }
-            },
-            "additionalProperties": false
-          }
-        },
-        "additionalProperties": false
-      },
-      {
-        "description": "Burns xORO and begins unbonding of the proportional ORO amount. The receiver is locked in at this point and stored in the unbonding entry. If not set, the sender will receive ORO on Claim.",
+        "description": "Begin unbonding `amount` ORO from the caller's stake; queues an entry for `recipient` claimable after `unbonding_period`.",
         "type": "object",
         "required": [
           "leave"
@@ -120,12 +73,16 @@
         "properties": {
           "leave": {
             "type": "object",
+            "required": [
+              "amount",
+              "recipient"
+            ],
             "properties": {
-              "receiver": {
-                "type": [
-                  "string",
-                  "null"
-                ]
+              "amount": {
+                "$ref": "#/definitions/Uint128"
+              },
+              "recipient": {
+                "type": "string"
               }
             },
             "additionalProperties": false
@@ -134,7 +91,7 @@
         "additionalProperties": false
       },
       {
-        "description": "Claims all matured unbonding entries for the sender. Funds go to the receiver set during Leave.",
+        "description": "Claim all matured unbonding entries for `info.sender`.",
         "type": "object",
         "required": [
           "claim"
@@ -148,7 +105,7 @@
         "additionalProperties": false
       },
       {
-        "description": "Adds reward tokens to the contract to be distributed to stakers. Admin only.",
+        "description": "Fund a per-denom reward stream that drips over `duration` seconds. Reward denom and amount come from `info.funds`; RPS is derived on-chain as `amount / duration` so the caller cannot pass a misleading rate. Owner only.",
         "type": "object",
         "required": [
           "add_reward"
@@ -161,7 +118,6 @@
             ],
             "properties": {
               "duration": {
-                "description": "Number of seconds over which rewards are distributed.",
                 "type": "integer",
                 "format": "uint64",
                 "minimum": 0.0
@@ -173,115 +129,7 @@
         "additionalProperties": false
       },
       {
-        "description": "Updates the contract configuration. Only callable by the owner.",
-        "type": "object",
-        "required": [
-          "update_config"
-        ],
-        "properties": {
-          "update_config": {
-            "type": "object",
-            "properties": {
-              "unbonding_period": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "format": "uint64",
-                "minimum": 0.0
-              }
-            },
-            "additionalProperties": false
-          }
-        },
-        "additionalProperties": false
-      },
-      {
-        "description": "Proposes a new owner. The proposed owner must call ClaimOwnership within expires_in seconds. Only callable by the current owner.",
-        "type": "object",
-        "required": [
-          "propose_new_owner"
-        ],
-        "properties": {
-          "propose_new_owner": {
-            "type": "object",
-            "required": [
-              "expires_in",
-              "owner"
-            ],
-            "properties": {
-              "expires_in": {
-                "type": "integer",
-                "format": "uint64",
-                "minimum": 0.0
-              },
-              "owner": {
-                "type": "string"
-              }
-            },
-            "additionalProperties": false
-          }
-        },
-        "additionalProperties": false
-      },
-      {
-        "description": "Removes the pending ownership proposal. Only callable by the current owner.",
-        "type": "object",
-        "required": [
-          "drop_ownership_proposal"
-        ],
-        "properties": {
-          "drop_ownership_proposal": {
-            "type": "object",
-            "additionalProperties": false
-          }
-        },
-        "additionalProperties": false
-      },
-      {
-        "description": "Claims a pending ownership proposal. Only callable by the proposed new owner.",
-        "type": "object",
-        "required": [
-          "claim_ownership"
-        ],
-        "properties": {
-          "claim_ownership": {
-            "type": "object",
-            "additionalProperties": false
-          }
-        },
-        "additionalProperties": false
-      },
-      {
-        "description": "Pauses the contract. Only callable by the owner.",
-        "type": "object",
-        "required": [
-          "pause"
-        ],
-        "properties": {
-          "pause": {
-            "type": "object",
-            "additionalProperties": false
-          }
-        },
-        "additionalProperties": false
-      },
-      {
-        "description": "Unpauses the contract. Only callable by the owner.",
-        "type": "object",
-        "required": [
-          "unpause"
-        ],
-        "properties": {
-          "unpause": {
-            "type": "object",
-            "additionalProperties": false
-          }
-        },
-        "additionalProperties": false
-      },
-      {
-        "description": "Emergency withdrawal of non-staked tokens accidentally sent to the contract. For ORO: only withdraws the excess above (effective_deposit + total_locked + reward_oro_reserve). For other denoms: withdraws the full balance. Only callable by the owner.",
+        "description": "Emergency withdrawal of non-ORO, non-reward-stream tokens accidentally sent to the contract. Owner only.",
         "type": "object",
         "required": [
           "withdraw_excess_tokens"
@@ -309,7 +157,69 @@
         "additionalProperties": false
       },
       {
-        "description": "Add addresses authorised to pause the contract (in addition to the owner). Owner only. Authorities can `Pause` but cannot `Unpause`, so a compromised authority key can never grief by toggling.",
+        "description": "Update mutable configuration fields. Owner only.\n\nOwnership changes are intentionally NOT exposed here — use the two-step `ProposeNewOwner` + `ClaimOwnership` flow so a fat-fingered hand-off can't strand the contract behind an unreachable address.",
+        "type": "object",
+        "required": [
+          "update_config"
+        ],
+        "properties": {
+          "update_config": {
+            "type": "object",
+            "properties": {
+              "minimum_stake_amount": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/Uint128"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "unbonding_period": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "uint64",
+                "minimum": 0.0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Pause the contract. Owner or pause-authority.",
+        "type": "object",
+        "required": [
+          "pause"
+        ],
+        "properties": {
+          "pause": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Unpause the contract. Owner only.",
+        "type": "object",
+        "required": [
+          "unpause"
+        ],
+        "properties": {
+          "unpause": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Add pause-authority addresses. Authorities can `Pause` but cannot `Unpause`, so a compromised authority key cannot grief by toggling. Owner only.",
         "type": "object",
         "required": [
           "add_pause_authorities"
@@ -318,10 +228,10 @@
           "add_pause_authorities": {
             "type": "object",
             "required": [
-              "authorities"
+              "addresses"
             ],
             "properties": {
-              "authorities": {
+              "addresses": {
                 "type": "array",
                 "items": {
                   "type": "string"
@@ -343,10 +253,10 @@
           "remove_pause_authorities": {
             "type": "object",
             "required": [
-              "authorities"
+              "addresses"
             ],
             "properties": {
-              "authorities": {
+              "addresses": {
                 "type": "array",
                 "items": {
                   "type": "string"
@@ -357,28 +267,65 @@
           }
         },
         "additionalProperties": false
-      }
-    ],
-    "definitions": {
-      "Binary": {
-        "description": "Binary is a wrapper around Vec<u8> to add base64 de/serialization with serde. It also adds some helper methods to help encode inline.\n\nThis is only needed as serde-json-{core,wasm} has a horrible encoding for Vec<u8>. See also <https://github.com/CosmWasm/cosmwasm/blob/main/docs/MESSAGE_TYPES.md>.",
-        "type": "string"
-      }
-    }
-  },
-  "query": {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "title": "QueryMsg",
-    "description": "This structure describes the query messages available in the contract.",
-    "oneOf": [
+      },
       {
-        "description": "State returns the current pool state including exchange rate",
+        "description": "Sweep accumulated orphaned rewards (emissions accrued while no users were staked) to `recipient` or the owner. Owner only.",
         "type": "object",
         "required": [
-          "state"
+          "claim_orphaned_rewards"
         ],
         "properties": {
-          "state": {
+          "claim_orphaned_rewards": {
+            "type": "object",
+            "properties": {
+              "recipient": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Propose a new owner; must call `ClaimOwnership` within `expires_in`. Owner only.",
+        "type": "object",
+        "required": [
+          "propose_new_owner"
+        ],
+        "properties": {
+          "propose_new_owner": {
+            "type": "object",
+            "required": [
+              "expires_in",
+              "owner"
+            ],
+            "properties": {
+              "expires_in": {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 0.0
+              },
+              "owner": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Remove the pending ownership proposal. Owner only.",
+        "type": "object",
+        "required": [
+          "drop_ownership_proposal"
+        ],
+        "properties": {
+          "drop_ownership_proposal": {
             "type": "object",
             "additionalProperties": false
           }
@@ -386,7 +333,34 @@
         "additionalProperties": false
       },
       {
-        "description": "Config returns the contract configuration specified in a custom [`Config`] structure",
+        "description": "Accept a pending ownership proposal. Proposed-owner only.",
+        "type": "object",
+        "required": [
+          "claim_ownership"
+        ],
+        "properties": {
+          "claim_ownership": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    ],
+    "definitions": {
+      "Uint128": {
+        "description": "A thin wrapper around u128 that is using strings for JSON encoding/decoding, such that the full u128 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.\n\n# Examples\n\nUse `from` to create instances of this and `u128` to get the value out:\n\n``` # use cosmwasm_std::Uint128; let a = Uint128::from(123u128); assert_eq!(a.u128(), 123);\n\nlet b = Uint128::from(42u64); assert_eq!(b.u128(), 42);\n\nlet c = Uint128::from(70u32); assert_eq!(c.u128(), 70); ```",
+        "type": "string"
+      }
+    }
+  },
+  "query": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "QueryMsg",
+    "description": "Query messages exposed by the staking contract.",
+    "oneOf": [
+      {
+        "description": "Returns the full contract configuration.",
         "type": "object",
         "required": [
           "config"
@@ -400,7 +374,43 @@
         "additionalProperties": false
       },
       {
-        "description": "Returns xORO total supply. Duplicates TotalSupplyAt { timestamp: None } logic but kept for backward compatibility.",
+        "description": "Returns the current pool state.",
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Returns the stake balance held by `address`.",
+        "type": "object",
+        "required": [
+          "stake_of"
+        ],
+        "properties": {
+          "stake_of": {
+            "type": "object",
+            "required": [
+              "address"
+            ],
+            "properties": {
+              "address": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Returns the sum of all stake balances. Kept under the legacy `TotalShares` name for API stability; shares and ORO amounts are interchangeable.",
         "type": "object",
         "required": [
           "total_shares"
@@ -414,27 +424,13 @@
         "additionalProperties": false
       },
       {
-        "description": "Returns total ORO staked in the contract (excluding locked unbonding amounts).",
+        "description": "Returns all pending reward coins accrued for `address`.",
         "type": "object",
         "required": [
-          "total_deposit"
+          "pending_rewards"
         ],
         "properties": {
-          "total_deposit": {
-            "type": "object",
-            "additionalProperties": false
-          }
-        },
-        "additionalProperties": false
-      },
-      {
-        "description": "BalanceAt returns xORO balance of the given address at the given timestamp. Returns current balance if timestamp unset.",
-        "type": "object",
-        "required": [
-          "balance_at"
-        ],
-        "properties": {
-          "balance_at": {
+          "pending_rewards": {
             "type": "object",
             "required": [
               "address"
@@ -442,14 +438,6 @@
             "properties": {
               "address": {
                 "type": "string"
-              },
-              "timestamp": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "format": "uint64",
-                "minimum": 0.0
               }
             },
             "additionalProperties": false
@@ -458,45 +446,7 @@
         "additionalProperties": false
       },
       {
-        "description": "TotalSupplyAt returns xORO total token supply at the given timestamp. Returns current total supply if timestamp unset.",
-        "type": "object",
-        "required": [
-          "total_supply_at"
-        ],
-        "properties": {
-          "total_supply_at": {
-            "type": "object",
-            "properties": {
-              "timestamp": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "format": "uint64",
-                "minimum": 0.0
-              }
-            },
-            "additionalProperties": false
-          }
-        },
-        "additionalProperties": false
-      },
-      {
-        "description": "Returns total ORO currently in unbonding period.",
-        "type": "object",
-        "required": [
-          "total_locked"
-        ],
-        "properties": {
-          "total_locked": {
-            "type": "object",
-            "additionalProperties": false
-          }
-        },
-        "additionalProperties": false
-      },
-      {
-        "description": "Returns all pending unbonding entries for the given address.",
+        "description": "Returns all pending unbonding entries for `address`.",
         "type": "object",
         "required": [
           "unbonding_entries"
@@ -532,29 +482,21 @@
         "additionalProperties": false
       },
       {
-        "description": "Returns all pending rewards for the given address.",
+        "description": "Returns the total ORO currently locked in unbonding entries.",
         "type": "object",
         "required": [
-          "pending_rewards"
+          "total_locked"
         ],
         "properties": {
-          "pending_rewards": {
+          "total_locked": {
             "type": "object",
-            "required": [
-              "address"
-            ],
-            "properties": {
-              "address": {
-                "type": "string"
-              }
-            },
             "additionalProperties": false
           }
         },
         "additionalProperties": false
       },
       {
-        "description": "Returns the addresses currently in the pause-authority set. The owner has implicit pause authority and is NOT included.",
+        "description": "Returns the addresses currently in the pause-authority set (excluding the owner, who has implicit authority).",
         "type": "object",
         "required": [
           "pause_authorities"
@@ -578,28 +520,20 @@
   },
   "sudo": null,
   "responses": {
-    "balance_at": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "Uint128",
-      "description": "A thin wrapper around u128 that is using strings for JSON encoding/decoding, such that the full u128 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.\n\n# Examples\n\nUse `from` to create instances of this and `u128` to get the value out:\n\n``` # use cosmwasm_std::Uint128; let a = Uint128::from(123u128); assert_eq!(a.u128(), 123);\n\nlet b = Uint128::from(42u64); assert_eq!(b.u128(), 42);\n\nlet c = Uint128::from(70u32); assert_eq!(c.u128(), 70); ```",
-      "type": "string"
-    },
     "config": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "Config",
-      "description": "This structure stores the main parameters for the staking contract.",
+      "description": "Main parameters stored on-chain for the staking contract.",
       "type": "object",
       "required": [
-        "bootstrap_amount",
         "oro_denom",
         "owner",
-        "unbonding_period",
-        "xoro_decimals",
-        "xoro_denom"
+        "unbonding_period"
       ],
       "properties": {
-        "bootstrap_amount": {
-          "description": "The bootstrap amount for pool initialization",
+        "minimum_stake_amount": {
+          "description": "Minimum ORO amount per Enter or partial Leave; full exits bypass this. Must be > 0.\n\n`#[serde(default)]` makes legacy on-chain bytes (pre-field) deserialise as `Uint128::zero()`; the `migrate` handler then rewrites a non-zero default. New instantiations reject zero up front.",
+          "default": "0",
           "allOf": [
             {
               "$ref": "#/definitions/Uint128"
@@ -607,44 +541,35 @@
           ]
         },
         "oro_denom": {
-          "description": "The ORO token denom",
+          "description": "The ORO token denom users stake.",
           "type": "string"
         },
         "owner": {
-          "description": "Contract owner",
-          "type": "string"
+          "description": "Contract owner (admin authority).",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Addr"
+            }
+          ]
         },
         "paused": {
-          "description": "Whether the contract is paused.\n\n`#[serde(default)]` is load-bearing: any legacy on-chain bytes serialised before `paused` was added (pre-2.2.0) deserialise as `false`, so a `CONFIG.load()` after `migrate` from such a version succeeds without the migrate handler having to rewrite Config. The matching default-on-deserialisation behaviour is what makes the migration path lazy and safe. (Audit N-2.)",
+          "description": "Whether the contract is paused.\n\n`#[serde(default)]` is load-bearing: legacy bytes serialised before `paused` existed (pre-2.2.0) deserialise as `false`, so `CONFIG.load()` after `migrate` from such a version succeeds without the migrate handler having to rewrite Config. (Audit N-2.)",
           "default": false,
           "type": "boolean"
         },
         "unbonding_period": {
-          "description": "Unbonding period in seconds",
+          "description": "Unbonding period in seconds.",
           "type": "integer",
           "format": "uint64",
           "minimum": 0.0
-        },
-        "xoro_decimals": {
-          "description": "xORO decimals",
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0.0
-        },
-        "xoro_denom": {
-          "description": "The xORO token denom (coin.<contract_addr>.xORO)",
-          "type": "string"
-        },
-        "xoro_uri": {
-          "description": "xORO metadata URI",
-          "type": [
-            "string",
-            "null"
-          ]
         }
       },
       "additionalProperties": false,
       "definitions": {
+        "Addr": {
+          "description": "A human readable address.\n\nIn Cosmos, this is typically bech32 encoded. But for multi-chain smart contracts no assumptions should be made other than being UTF-8 encoded and of reasonable length.\n\nThis type represents a validated address. It can be created in the following ways 1. Use `Addr::unchecked(input)` 2. Use `let checked: Addr = deps.api.addr_validate(input)?` 3. Use `let checked: Addr = deps.api.addr_humanize(canonical_addr)?` 4. Deserialize from JSON. This must only be done from JSON that was validated before such as a contract's state. `Addr` must not be used in messages sent by the user because this would result in unvalidated instances.\n\nThis type is immutable. If you really need to mutate it (Really? Are you sure?), create a mutable copy using `let mut mutable = Addr::to_string()` and operate on that `String` instance.",
+          "type": "string"
+        },
         "Uint128": {
           "description": "A thin wrapper around u128 that is using strings for JSON encoding/decoding, such that the full u128 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.\n\n# Examples\n\nUse `from` to create instances of this and `u128` to get the value out:\n\n``` # use cosmwasm_std::Uint128; let a = Uint128::from(123u128); assert_eq!(a.u128(), 123);\n\nlet b = Uint128::from(42u64); assert_eq!(b.u128(), 42);\n\nlet c = Uint128::from(70u32); assert_eq!(c.u128(), 70); ```",
           "type": "string"
@@ -688,43 +613,46 @@
         }
       }
     },
+    "stake_of": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Uint128",
+      "description": "A thin wrapper around u128 that is using strings for JSON encoding/decoding, such that the full u128 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.\n\n# Examples\n\nUse `from` to create instances of this and `u128` to get the value out:\n\n``` # use cosmwasm_std::Uint128; let a = Uint128::from(123u128); assert_eq!(a.u128(), 123);\n\nlet b = Uint128::from(42u64); assert_eq!(b.u128(), 42);\n\nlet c = Uint128::from(70u32); assert_eq!(c.u128(), 70); ```",
+      "type": "string"
+    },
     "state": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "StateResponse",
+      "description": "Pool state snapshot returned by [`QueryMsg::State`].",
       "type": "object",
       "required": [
-        "exchange_rate",
         "total_deposit",
         "total_shares"
       ],
       "properties": {
-        "exchange_rate": {
-          "$ref": "#/definitions/Decimal"
-        },
         "total_deposit": {
-          "$ref": "#/definitions/Uint128"
+          "description": "Total ORO principal backing live stakers (excluding unbonding).",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Uint128"
+            }
+          ]
         },
         "total_shares": {
-          "$ref": "#/definitions/Uint128"
+          "description": "Sum of all stake balances. Equal to `total_deposit` under the 1:1 model; both fields preserve backwards-compatible JSON shape.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Uint128"
+            }
+          ]
         }
       },
       "additionalProperties": false,
       "definitions": {
-        "Decimal": {
-          "description": "A fixed-point decimal value with 18 fractional digits, i.e. Decimal(1_000_000_000_000_000_000) == 1.0\n\nThe greatest possible value that can be represented is 340282366920938463463.374607431768211455 (which is (2^128 - 1) / 10^18)",
-          "type": "string"
-        },
         "Uint128": {
           "description": "A thin wrapper around u128 that is using strings for JSON encoding/decoding, such that the full u128 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.\n\n# Examples\n\nUse `from` to create instances of this and `u128` to get the value out:\n\n``` # use cosmwasm_std::Uint128; let a = Uint128::from(123u128); assert_eq!(a.u128(), 123);\n\nlet b = Uint128::from(42u64); assert_eq!(b.u128(), 42);\n\nlet c = Uint128::from(70u32); assert_eq!(c.u128(), 70); ```",
           "type": "string"
         }
       }
-    },
-    "total_deposit": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "Uint128",
-      "description": "A thin wrapper around u128 that is using strings for JSON encoding/decoding, such that the full u128 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.\n\n# Examples\n\nUse `from` to create instances of this and `u128` to get the value out:\n\n``` # use cosmwasm_std::Uint128; let a = Uint128::from(123u128); assert_eq!(a.u128(), 123);\n\nlet b = Uint128::from(42u64); assert_eq!(b.u128(), 42);\n\nlet c = Uint128::from(70u32); assert_eq!(c.u128(), 70); ```",
-      "type": "string"
     },
     "total_locked": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -733,12 +661,6 @@
       "type": "string"
     },
     "total_shares": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "Uint128",
-      "description": "A thin wrapper around u128 that is using strings for JSON encoding/decoding, such that the full u128 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.\n\n# Examples\n\nUse `from` to create instances of this and `u128` to get the value out:\n\n``` # use cosmwasm_std::Uint128; let a = Uint128::from(123u128); assert_eq!(a.u128(), 123);\n\nlet b = Uint128::from(42u64); assert_eq!(b.u128(), 42);\n\nlet c = Uint128::from(70u32); assert_eq!(c.u128(), 70); ```",
-      "type": "string"
-    },
-    "total_supply_at": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "Uint128",
       "description": "A thin wrapper around u128 that is using strings for JSON encoding/decoding, such that the full u128 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.\n\n# Examples\n\nUse `from` to create instances of this and `u128` to get the value out:\n\n``` # use cosmwasm_std::Uint128; let a = Uint128::from(123u128); assert_eq!(a.u128(), 123);\n\nlet b = Uint128::from(42u64); assert_eq!(b.u128(), 42);\n\nlet c = Uint128::from(70u32); assert_eq!(c.u128(), 70); ```",
@@ -781,7 +703,7 @@
           ],
           "properties": {
             "oro_amount": {
-              "description": "The fixed ORO amount to be returned, calculated at the time of Leave.",
+              "description": "ORO amount to be returned, fixed at Leave time.",
               "allOf": [
                 {
                   "$ref": "#/definitions/Uint128"
@@ -789,11 +711,11 @@
               ]
             },
             "receiver": {
-              "description": "The address that will receive the funds when Claim is called.",
+              "description": "Address that will receive the funds when Claim is called.",
               "type": "string"
             },
             "reward_coins": {
-              "description": "Accrued reward tokens to be returned alongside ORO.",
+              "description": "Accrued reward coins to be returned alongside ORO.",
               "default": [],
               "type": "array",
               "items": {
@@ -801,7 +723,7 @@
               }
             },
             "unlock_time": {
-              "description": "Unix timestamp (in seconds) after which ORO can be claimed.",
+              "description": "Unix timestamp (seconds) after which ORO can be claimed.",
               "type": "integer",
               "format": "uint64",
               "minimum": 0.0

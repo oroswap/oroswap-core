@@ -1,11 +1,20 @@
 #![allow(dead_code)]
 
+//! Test harness for the 1:1 ORO stake-registry staking contract.
+//!
+//! Architecture invariants this harness assumes:
+//!   * Instantiate takes NO funds and NO bootstrap parameter — `STAKES` and
+//!     `TOTAL_STAKES` start at zero and grow only via `Enter`.
+//!   * `Leave` carries a typed `amount` + `recipient` instead of funds.
+//!   * `query_stake_of` / `query_total_shares` hit `QueryMsg::StakeOf` and
+//!     `QueryMsg::TotalShares`.
+//!   * `mint_coin` is preserved — it fabricates arbitrary bank denoms via
+//!     cw-multi-test's bank module for testing reward streams.
+
 use anyhow::Result as AnyResult;
-use cosmwasm_schema::serde::Serialize;
 use cosmwasm_std::testing::MockApi;
 use cosmwasm_std::{
-    coins, to_json_binary, Addr, Coin, Empty, GovMsg, IbcMsg, IbcQuery,
-    MemoryStorage, StdResult, Uint128,
+    coins, Addr, Coin, Empty, GovMsg, IbcMsg, IbcQuery, MemoryStorage, StdResult, Uint128,
 };
 use cw_multi_test::{
     App, AppResponse, BankKeeper, BasicAppBuilder, Contract, ContractWrapper, DistributionKeeper,
@@ -27,7 +36,6 @@ fn staking_contract() -> Box<dyn Contract<Empty>> {
     )
 }
 
-
 pub type CustomizedApp = App<
     BankKeeper,
     MockApi,
@@ -45,13 +53,24 @@ pub struct Helper {
     pub app: CustomizedApp,
     pub owner: Addr,
     pub staking: Addr,
-    pub xoro_denom: String,
 }
 
 pub const ORO_DENOM: &str = "coin.assembly.oro";
 
+/// Default unbonding period: 7 days. Same as production.
+pub const UNBONDING_PERIOD: u64 = 7 * 24 * 60 * 60;
+
 impl Helper {
+    /// Default constructor: instantiates with `minimum_stake_amount = 1`
+    /// (the smallest non-zero floor permitted by the contract). The 1-unit
+    /// floor preserves the legacy behaviour of pre-floor tests that stake
+    /// arbitrary small integer amounts.
     pub fn new(owner: &Addr) -> AnyResult<Self> {
+        Self::new_with_minimum(owner, Uint128::new(1))
+    }
+
+    /// Variant that lets a test exercise a specific `minimum_stake_amount`.
+    pub fn new_with_minimum(owner: &Addr, minimum_stake_amount: Uint128) -> AnyResult<Self> {
         let mut app = BasicAppBuilder::new()
             .with_stargate(StargateKeeper::default())
             .build(|router, _, storage| {
@@ -64,33 +83,65 @@ impl Helper {
         let staking_code_id = app.store_code(staking_contract());
 
         let msg = InstantiateMsg {
-            deposit_token_denom: ORO_DENOM.to_string(),
-            bootstrap_amount: None, // Use default MINIMUM_STAKE_AMOUNT
-            unbonding_period: 7 * 24 * 60 * 60, // 7 days
-            xoro_decimals: Some(6),
-            xoro_uri: Some("https://example.com/metadata.json".to_string()),
+            owner: owner.to_string(),
+            oro_denom: ORO_DENOM.to_string(),
+            unbonding_period: UNBONDING_PERIOD,
+            minimum_stake_amount,
         };
         let staking = app
             .instantiate_contract(
                 staking_code_id,
                 owner.clone(),
                 &msg,
-                &coins(1000, ORO_DENOM), // Bootstrap amount
+                &[],
                 String::from("Oroswap Staking"),
                 Some(owner.to_string()),
             )
-            .unwrap();
-
-        let Config { xoro_denom, .. } = app
-            .wrap()
-            .query_wasm_smart(&staking, &QueryMsg::Config {})
             .unwrap();
 
         Ok(Self {
             app,
             owner: owner.clone(),
             staking,
-            xoro_denom,
+        })
+    }
+
+    /// Returns the result of instantiating with the supplied `minimum_stake_amount`
+    /// without unwrapping, so tests can assert on rejection paths.
+    pub fn try_new_with_minimum(
+        owner: &Addr,
+        minimum_stake_amount: Uint128,
+    ) -> AnyResult<Self> {
+        let mut app = BasicAppBuilder::new()
+            .with_stargate(StargateKeeper::default())
+            .build(|router, _, storage| {
+                router
+                    .bank
+                    .init_balance(storage, owner, coins(u128::MAX, ORO_DENOM))
+                    .unwrap()
+            });
+
+        let staking_code_id = app.store_code(staking_contract());
+
+        let msg = InstantiateMsg {
+            owner: owner.to_string(),
+            oro_denom: ORO_DENOM.to_string(),
+            unbonding_period: UNBONDING_PERIOD,
+            minimum_stake_amount,
+        };
+        let staking = app.instantiate_contract(
+            staking_code_id,
+            owner.clone(),
+            &msg,
+            &[],
+            String::from("Oroswap Staking"),
+            Some(owner.to_string()),
+        )?;
+
+        Ok(Self {
+            app,
+            owner: owner.clone(),
+            staking,
         })
     }
 
@@ -108,35 +159,41 @@ impl Helper {
         self.app.execute_contract(
             sender.clone(),
             self.staking.clone(),
-            &ExecuteMsg::Enter { receiver: None },
+            &ExecuteMsg::Enter {},
             &coins(amount, ORO_DENOM),
         )
     }
 
-    pub fn stake_with_hook<T: Serialize + ?Sized>(
-        &mut self,
-        sender: &Addr,
-        amount: u128,
-        contract_address: String,
-        msg: &T,
-    ) -> AnyResult<AppResponse> {
-        self.app.execute_contract(
-            sender.clone(),
-            self.staking.clone(),
-            &ExecuteMsg::EnterWithHook {
-                contract_address,
-                msg: to_json_binary(msg)?,
-            },
-            &coins(amount, ORO_DENOM),
-        )
-    }
-
+    /// Leave a typed `amount` of ORO stake to `recipient` (defaults to sender
+    /// if `None`). Note: `Leave` carries no `info.funds`.
     pub fn unstake(&mut self, sender: &Addr, amount: u128) -> AnyResult<AppResponse> {
         self.app.execute_contract(
             sender.clone(),
             self.staking.clone(),
-            &ExecuteMsg::Leave { receiver: None },
-            &coins(amount, &self.xoro_denom),
+            &ExecuteMsg::Leave {
+                amount: Uint128::new(amount),
+                recipient: sender.to_string(),
+            },
+            &[],
+        )
+    }
+
+    /// Same as `unstake` but lets the caller direct the matured ORO to a
+    /// different recipient when `Claim` is eventually called.
+    pub fn unstake_to(
+        &mut self,
+        sender: &Addr,
+        amount: u128,
+        recipient: &Addr,
+    ) -> AnyResult<AppResponse> {
+        self.app.execute_contract(
+            sender.clone(),
+            self.staking.clone(),
+            &ExecuteMsg::Leave {
+                amount: Uint128::new(amount),
+                recipient: recipient.to_string(),
+            },
+            &[],
         )
     }
 
@@ -167,6 +224,9 @@ impl Helper {
         )
     }
 
+    /// AddReward in the simplified interface: the message body now carries
+    /// only `duration`. The reward denom and total amount come from
+    /// `info.funds`; the contract derives RPS as `amount / duration`.
     pub fn add_reward(
         &mut self,
         sender: &Addr,
@@ -181,15 +241,35 @@ impl Helper {
         )
     }
 
-    pub fn add_pause_authorities(
+    /// Invokes `UpdateConfig` with optional new `unbonding_period` and/or
+    /// `minimum_stake_amount`. Mirrors the JSON-level message shape so tests
+    /// can exercise either field independently.
+    pub fn update_config(
         &mut self,
         sender: &Addr,
-        authorities: Vec<String>,
+        unbonding_period: Option<u64>,
+        minimum_stake_amount: Option<Uint128>,
     ) -> AnyResult<AppResponse> {
         self.app.execute_contract(
             sender.clone(),
             self.staking.clone(),
-            &ExecuteMsg::AddPauseAuthorities { authorities },
+            &ExecuteMsg::UpdateConfig {
+                unbonding_period,
+                minimum_stake_amount,
+            },
+            &[],
+        )
+    }
+
+    pub fn add_pause_authorities(
+        &mut self,
+        sender: &Addr,
+        addresses: Vec<String>,
+    ) -> AnyResult<AppResponse> {
+        self.app.execute_contract(
+            sender.clone(),
+            self.staking.clone(),
+            &ExecuteMsg::AddPauseAuthorities { addresses },
             &[],
         )
     }
@@ -197,12 +277,12 @@ impl Helper {
     pub fn remove_pause_authorities(
         &mut self,
         sender: &Addr,
-        authorities: Vec<String>,
+        addresses: Vec<String>,
     ) -> AnyResult<AppResponse> {
         self.app.execute_contract(
             sender.clone(),
             self.staking.clone(),
-            &ExecuteMsg::RemovePauseAuthorities { authorities },
+            &ExecuteMsg::RemovePauseAuthorities { addresses },
             &[],
         )
     }
@@ -230,13 +310,59 @@ impl Helper {
         )
     }
 
+    /// Sweep orphaned rewards (emissions that elapsed while no users were
+    /// staked) to `recipient` — defaults to the contract owner if `None`.
+    /// Returns the raw `AnyResult` so error-path tests can assert on
+    /// `Unauthorized` / `NoOrphanedRewards`.
+    pub fn claim_orphaned_rewards(
+        &mut self,
+        sender: &Addr,
+        recipient: Option<&Addr>,
+    ) -> AnyResult<AppResponse> {
+        self.app.execute_contract(
+            sender.clone(),
+            self.staking.clone(),
+            &ExecuteMsg::ClaimOrphanedRewards {
+                recipient: recipient.map(|a| a.to_string()),
+            },
+            &[],
+        )
+    }
+
+    /// Direct read of `ORPHANED_REWARDS[denom]` via raw contract storage.
+    /// Returns `Uint128::zero()` when no entry exists. Used by orphan-path
+    /// tests to assert bucket contents without going through a query
+    /// handler (the contract intentionally does NOT expose a query for this —
+    /// the bucket is owner-recovery state, not user-facing).
+    pub fn query_orphaned_rewards(&self, denom: &str) -> Uint128 {
+        // Key layout for `Map<&str, Uint128>` with namespace "orphaned_rewards":
+        //   length-prefixed("orphaned_rewards") || denom_bytes
+        // where length-prefix = big-endian u16 length of namespace bytes.
+        let ns = b"orphaned_rewards";
+        let mut key = Vec::with_capacity(2 + ns.len() + denom.len());
+        key.extend_from_slice(&(ns.len() as u16).to_be_bytes());
+        key.extend_from_slice(ns);
+        key.extend_from_slice(denom.as_bytes());
+
+        let raw = self
+            .app
+            .wrap()
+            .query_wasm_raw(&self.staking, key)
+            .unwrap();
+        match raw {
+            Some(b) => cosmwasm_std::from_json(&b).unwrap(),
+            None => Uint128::zero(),
+        }
+    }
+
     pub fn bank_send(
         &mut self,
         sender: &Addr,
         recipient: &Addr,
         amount: Vec<Coin>,
     ) -> AnyResult<AppResponse> {
-        self.app.send_tokens(sender.clone(), recipient.clone(), &amount)
+        self.app
+            .send_tokens(sender.clone(), recipient.clone(), &amount)
     }
 
     pub fn query_pending_rewards(&self, address: &Addr) -> StdResult<Vec<Coin>> {
@@ -255,24 +381,29 @@ impl Helper {
             .map(|c| c.amount)
     }
 
-    pub fn query_xoro_balance_at(
-        &self,
-        sender: &Addr,
-        timestamp: Option<u64>,
-    ) -> StdResult<Uint128> {
+    /// Per-user stake balance via `QueryMsg::StakeOf { address }`.
+    pub fn query_stake_of(&self, sender: &Addr) -> StdResult<Uint128> {
         self.app.wrap().query_wasm_smart(
             &self.staking,
-            &QueryMsg::BalanceAt {
+            &QueryMsg::StakeOf {
                 address: sender.to_string(),
-                timestamp,
             },
         )
     }
 
-    pub fn query_xoro_supply_at(&self, timestamp: Option<u64>) -> StdResult<Uint128> {
+    /// Total stake supply (sum over `STAKES`) via `QueryMsg::TotalShares {}`.
+    /// The legacy name is retained for backwards-compatible JSON shape; the
+    /// returned value is equal to total staked ORO under the 1:1 model.
+    pub fn query_total_shares(&self) -> StdResult<Uint128> {
         self.app
             .wrap()
-            .query_wasm_smart(&self.staking, &QueryMsg::TotalSupplyAt { timestamp })
+            .query_wasm_smart(&self.staking, &QueryMsg::TotalShares {})
+    }
+
+    pub fn query_config(&self) -> StdResult<Config> {
+        self.app
+            .wrap()
+            .query_wasm_smart(&self.staking, &QueryMsg::Config {})
     }
 
     pub fn query_total_locked(&self) -> StdResult<Uint128> {
@@ -281,8 +412,11 @@ impl Helper {
             .query_wasm_smart(&self.staking, &QueryMsg::TotalLocked {})
     }
 
+    /// Mints `coin` to `to` via cw-multi-test's bank module. Used to fabricate
+    /// reward-denom coins (e.g. fake USDC) for AddReward — does *not* go
+    /// through any tokenfactory mock, so it is safe under the internal-stake
+    /// architecture.
     pub fn mint_coin(&mut self, to: &Addr, coin: Coin) {
-        // .init_balance() erases previous balance thus I use such hack and create intermediate "denom admin"
         let denom_admin = Addr::unchecked(format!("{}_admin", &coin.denom));
         self.app
             .init_modules(|router, _, storage| {

@@ -35,7 +35,7 @@
       ],
       "properties": {
         "oro_amount": {
-          "description": "The fixed ORO amount to be returned, calculated at the time of Leave.",
+          "description": "ORO amount to be returned, fixed at Leave time.",
           "allOf": [
             {
               "$ref": "#/definitions/Uint128"
@@ -43,11 +43,11 @@
           ]
         },
         "receiver": {
-          "description": "The address that will receive the funds when Claim is called.",
+          "description": "Address that will receive the funds when Claim is called.",
           "type": "string"
         },
         "reward_coins": {
-          "description": "Accrued reward tokens to be returned alongside ORO.",
+          "description": "Accrued reward coins to be returned alongside ORO.",
           "default": [],
           "type": "array",
           "items": {
@@ -55,7 +55,7 @@
           }
         },
         "unlock_time": {
-          "description": "Unix timestamp (in seconds) after which ORO can be claimed.",
+          "description": "Unix timestamp (seconds) after which ORO can be claimed.",
           "type": "integer",
           "format": "uint64",
           "minimum": 0.0
