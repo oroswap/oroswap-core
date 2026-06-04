@@ -31,6 +31,7 @@
             "required": [
               "apy_bonus_bps",
               "eligibility",
+              "expiry_time",
               "initial_claim_percent",
               "is_native",
               "start_time",
@@ -61,10 +62,8 @@
                 }
               },
               "expiry_time": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
+                "description": "Required. Self-flagged follow-up to FIND-008/FIND-001 audit cycle: previously optional, but `None` had no admin escape — leftover tokens locked permanently. Now mandatory and validated to be strictly greater than `vesting_end_time` so `WithdrawFunds` always has a deterministic reclaim window.",
+                "type": "integer",
                 "format": "uint64",
                 "minimum": 0.0
               },
@@ -335,6 +334,84 @@
           }
         },
         "additionalProperties": false
+      },
+      {
+        "description": "Admin-only. Push `start_time`, `vesting_start_time`, and/or `vesting_end_time` forward before the airdrop begins. Each supplied field must be **strictly greater** than the currently stored value (forward-only — no shortening of the launch window or vesting). All existing invariants are re-checked against the resulting state: - `now < airdrop.start_time` (admin can only update pre-launch). - At least one field must be `Some`. - `new_start_time >= now` (no past). - `new_start_time <= new_vesting_start_time < new_vesting_end_time`. - `airdrop.expiry_time > new_vesting_end_time` (extend expiry first via `UpdateExpiry` if needed). Unsupplied fields fall back to the currently stored value.",
+        "type": "object",
+        "required": [
+          "update_times"
+        ],
+        "properties": {
+          "update_times": {
+            "type": "object",
+            "required": [
+              "airdrop_id"
+            ],
+            "properties": {
+              "airdrop_id": {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 0.0
+              },
+              "start_time": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "uint64",
+                "minimum": 0.0
+              },
+              "vesting_end_time": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "uint64",
+                "minimum": 0.0
+              },
+              "vesting_start_time": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "uint64",
+                "minimum": 0.0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Admin-only. Extend `expiry_time` further into the future. The new value must be strictly greater than the currently stored expiry (forward-only — admin cannot bring the reclaim window forward and short-change unclaimed users). Permitted at any phase BEFORE the current expiry has passed: - `now < airdrop.expiry_time` (can't extend a passed expiry). - `expiry_time > airdrop.expiry_time` (forward-only). - `expiry_time > airdrop.vesting_end_time` (invariant preserved).",
+        "type": "object",
+        "required": [
+          "update_expiry"
+        ],
+        "properties": {
+          "update_expiry": {
+            "type": "object",
+            "required": [
+              "airdrop_id",
+              "expiry_time"
+            ],
+            "properties": {
+              "airdrop_id": {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 0.0
+              },
+              "expiry_time": {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 0.0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
       }
     ],
     "definitions": {
@@ -464,6 +541,7 @@
       "type": "object",
       "required": [
         "apy_bonus_bps",
+        "expiry_time",
         "id",
         "initial_claim_percent",
         "is_active",
@@ -480,10 +558,7 @@
           "minimum": 0.0
         },
         "expiry_time": {
-          "type": [
-            "integer",
-            "null"
-          ],
+          "type": "integer",
           "format": "uint64",
           "minimum": 0.0
         },
@@ -597,7 +672,7 @@
           "type": "boolean"
         },
         "max_outstanding": {
-          "description": "Worst-case outstanding: assumes every unclaimed user claims at or after `vesting_end_time` and receives the full APY bonus.",
+          "description": "Worst-case outstanding: assumes every unclaimed user claims at or after `vesting_end_time` and receives the full APY bonus. The bonus base is the remaining (unclaimed) vesting portion only.",
           "allOf": [
             {
               "$ref": "#/definitions/Uint128"
@@ -605,7 +680,7 @@
           ]
         },
         "outstanding": {
-          "description": "`total_eligibility - total_claimed`. Note: forfeited mid-vesting portions reduce *paid* but not *eligibility*, so this is the pessimistic \"still-to-pay if everyone claims at vesting end\" bound, before APY bonus.",
+          "description": "Σ `amount_eligible` for users who have NOT yet claimed. Pessimistic \"still-to-pay if every remaining user claims at vesting end\" bound, before the APY bonus. Forfeited mid-vesting portions are excluded — once a user claims, their entire eligibility is settled.",
           "allOf": [
             {
               "$ref": "#/definitions/Uint128"

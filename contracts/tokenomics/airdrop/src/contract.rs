@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use cosmwasm_std::{
-    entry_point, to_json_binary, Binary, CosmosMsg, Deps, DepsMut, Env, MessageInfo, Order, Response,
-    StdResult, Uint128, WasmMsg, StdError,
+    attr, entry_point, to_json_binary, Binary, CosmosMsg, Deps, DepsMut, Env, MessageInfo, Order,
+    Response, StdError, StdResult, Uint128, WasmMsg,
 };
 use cw2::set_contract_version;
 use cw20::Cw20ExecuteMsg;
@@ -114,6 +114,23 @@ pub fn execute(
         }
         ExecuteMsg::UpdateEligibility { airdrop_id, eligibility } => execute_update_eligibility(deps, env, info, airdrop_id, eligibility),
         ExecuteMsg::UpdateApyBonus { airdrop_id, apy_bonus_bps } => execute_update_apy_bonus(deps, env, info, airdrop_id, apy_bonus_bps),
+        ExecuteMsg::UpdateTimes {
+            airdrop_id,
+            start_time,
+            vesting_start_time,
+            vesting_end_time,
+        } => execute_update_times(
+            deps,
+            env,
+            info,
+            airdrop_id,
+            start_time,
+            vesting_start_time,
+            vesting_end_time,
+        ),
+        ExecuteMsg::UpdateExpiry { airdrop_id, expiry_time } => {
+            execute_update_expiry(deps, env, info, airdrop_id, expiry_time)
+        }
     }
 }
 
@@ -129,7 +146,7 @@ pub fn execute_add_airdrop(
     initial_claim_percent: u64,
     apy_bonus_bps: u64,
     eligibility: Vec<(String, Uint128)>,
-    expiry_time: Option<u64>,
+    expiry_time: u64,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
     if info.sender != config.admin {
@@ -157,10 +174,11 @@ pub fn execute_add_airdrop(
         return Err(ContractError::StartTimeInPast {});
     }
 
-    if let Some(expiry) = expiry_time {
-        if expiry <= vesting_end_time {
-            return Err(ContractError::InvalidExpiry {});
-        }
+    // expiry_time is required (self-flagged audit follow-up) and must leave
+    // a real reclaim window after vesting finishes. Without this, an admin
+    // could create an airdrop that traps leftover tokens forever.
+    if expiry_time <= vesting_end_time {
+        return Err(ContractError::InvalidExpiry {});
     }
 
     if eligibility.len() > MAX_ELIGIBILITY_BATCH {
@@ -271,10 +289,8 @@ pub fn execute_claim(
         return Err(ContractError::AirdropInactive {});
     }
 
-    if let Some(expiry) = airdrop.expiry_time {
-        if current_time >= expiry {
-            return Err(ContractError::AirdropExpired {});
-        }
+    if current_time >= airdrop.expiry_time {
+        return Err(ContractError::AirdropExpired {});
     }
 
     // Single claim check
@@ -479,12 +495,11 @@ pub fn execute_withdraw_funds(
         if airdrop.is_active {
             return Err(ContractError::WithdrawalBlocked { airdrop_id: id });
         }
-        match airdrop.expiry_time {
-            None => return Err(ContractError::WithdrawalBlockedNoExpiry { airdrop_id: id }),
-            Some(exp) if now < exp => {
-                return Err(ContractError::WithdrawalBlocked { airdrop_id: id });
-            }
-            Some(_) => { /* expired & inactive — does not block */ }
+        // expiry_time is required at AddAirdrop time (audit follow-up), so
+        // there's always a deterministic reclaim window: once the airdrop
+        // is inactive AND now >= expiry_time, withdraw is allowed.
+        if now < airdrop.expiry_time {
+            return Err(ContractError::WithdrawalBlocked { airdrop_id: id });
         }
     }
 
@@ -671,6 +686,169 @@ pub fn execute_update_apy_bonus(
         .add_attribute("new_apy_bonus_bps", apy_bonus_bps.to_string()))
 }
 
+/// Push `start_time`, `vesting_start_time`, and/or `vesting_end_time`
+/// further into the future BEFORE the airdrop has begun. Each field is
+/// optional; supplied values must be strictly greater than the currently
+/// stored value (forward-only). Unsupplied fields keep their current
+/// value. All cross-field invariants enforced by `execute_add_airdrop`
+/// are re-checked against the resulting state — including the
+/// `expiry_time > new_vesting_end_time` invariant (admin must extend
+/// expiry first via `UpdateExpiry` if the new vesting end would cross it).
+pub fn execute_update_times(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    airdrop_id: u64,
+    start_time: Option<u64>,
+    vesting_start_time: Option<u64>,
+    vesting_end_time: Option<u64>,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.admin {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    if start_time.is_none() && vesting_start_time.is_none() && vesting_end_time.is_none() {
+        return Err(ContractError::NoTimeFieldsProvided {});
+    }
+
+    let mut airdrop = AIRDROPS
+        .may_load(deps.storage, airdrop_id)?
+        .ok_or(ContractError::AirdropNotFound {})?;
+
+    let now = env.block.time.seconds();
+
+    // Phase gate: admin can only retime an airdrop that hasn't started yet.
+    if now >= airdrop.start_time {
+        return Err(ContractError::AirdropAlreadyStarted {});
+    }
+
+    // Forward-only checks per supplied field, then bake the resulting state.
+    if let Some(new_start) = start_time {
+        if new_start <= airdrop.start_time {
+            return Err(ContractError::NonForwardUpdate {
+                field: "start_time".to_string(),
+                old: airdrop.start_time,
+                new: new_start,
+            });
+        }
+    }
+    if let Some(new_vs) = vesting_start_time {
+        if new_vs <= airdrop.vesting_start_time {
+            return Err(ContractError::NonForwardUpdate {
+                field: "vesting_start_time".to_string(),
+                old: airdrop.vesting_start_time,
+                new: new_vs,
+            });
+        }
+    }
+    if let Some(new_ve) = vesting_end_time {
+        if new_ve <= airdrop.vesting_end_time {
+            return Err(ContractError::NonForwardUpdate {
+                field: "vesting_end_time".to_string(),
+                old: airdrop.vesting_end_time,
+                new: new_ve,
+            });
+        }
+    }
+
+    let new_start = start_time.unwrap_or(airdrop.start_time);
+    let new_vs = vesting_start_time.unwrap_or(airdrop.vesting_start_time);
+    let new_ve = vesting_end_time.unwrap_or(airdrop.vesting_end_time);
+
+    // Re-check the same invariants execute_add_airdrop enforces.
+    if new_start < now {
+        return Err(ContractError::StartTimeInPast {});
+    }
+    if new_vs < new_start || new_vs >= new_ve {
+        return Err(ContractError::InvalidVestingWindow {});
+    }
+    if airdrop.expiry_time <= new_ve {
+        // Admin must extend expiry first; we don't auto-extend here because
+        // pushing expiry forward is itself a forward-only admin action with
+        // its own gate.
+        return Err(ContractError::InvalidExpiry {});
+    }
+
+    let old_start = airdrop.start_time;
+    let old_vs = airdrop.vesting_start_time;
+    let old_ve = airdrop.vesting_end_time;
+    airdrop.start_time = new_start;
+    airdrop.vesting_start_time = new_vs;
+    airdrop.vesting_end_time = new_ve;
+    AIRDROPS.save(deps.storage, airdrop_id, &airdrop)?;
+
+    Ok(Response::new().add_attributes([
+        attr_str("action", "update_times"),
+        attr_str("airdrop_id", airdrop_id.to_string()),
+        attr_str("old_start_time", old_start.to_string()),
+        attr_str("new_start_time", new_start.to_string()),
+        attr_str("old_vesting_start_time", old_vs.to_string()),
+        attr_str("new_vesting_start_time", new_vs.to_string()),
+        attr_str("old_vesting_end_time", old_ve.to_string()),
+        attr_str("new_vesting_end_time", new_ve.to_string()),
+    ]))
+}
+
+/// Extend `expiry_time` further into the future. Forward-only and only
+/// permitted before the current expiry has passed. Safe to call at any
+/// pre-expiry phase (pre-start, mid-vesting, post-vesting-end) because
+/// extending expiry only gives unclaimed users more time, never less.
+pub fn execute_update_expiry(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    airdrop_id: u64,
+    expiry_time: u64,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.admin {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    let mut airdrop = AIRDROPS
+        .may_load(deps.storage, airdrop_id)?
+        .ok_or(ContractError::AirdropNotFound {})?;
+
+    let now = env.block.time.seconds();
+
+    // Phase gate: can't extend a reclaim window that has already closed.
+    if now >= airdrop.expiry_time {
+        return Err(ContractError::AirdropExpired {});
+    }
+
+    // Forward-only.
+    if expiry_time <= airdrop.expiry_time {
+        return Err(ContractError::NonForwardUpdate {
+            field: "expiry_time".to_string(),
+            old: airdrop.expiry_time,
+            new: expiry_time,
+        });
+    }
+
+    // Invariant preserved.
+    if expiry_time <= airdrop.vesting_end_time {
+        return Err(ContractError::InvalidExpiry {});
+    }
+
+    let old_expiry = airdrop.expiry_time;
+    airdrop.expiry_time = expiry_time;
+    AIRDROPS.save(deps.storage, airdrop_id, &airdrop)?;
+
+    Ok(Response::new().add_attributes([
+        attr_str("action", "update_expiry"),
+        attr_str("airdrop_id", airdrop_id.to_string()),
+        attr_str("old_expiry_time", old_expiry.to_string()),
+        attr_str("new_expiry_time", expiry_time.to_string()),
+    ]))
+}
+
+/// Helper: build a cosmwasm Attribute with String values without
+/// repeating the `attr` macro's coercion at every call site.
+fn attr_str(key: &str, value: impl Into<String>) -> cosmwasm_std::Attribute {
+    attr(key, value.into())
+}
+
 #[entry_point]
 pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
@@ -761,17 +939,15 @@ fn query_user_airdrop_status(deps: Deps, env: Env, id: u64, address: String) -> 
         });
     }
 
-    if let Some(expiry) = airdrop.expiry_time {
-        if current_time >= expiry {
-            return Ok(UserAirdropStatusResponse {
-                total_allocation,
-                current_claimable: Uint128::zero(),
-                is_claimed: false,
-                amount_claimed: Uint128::zero(),
-                claim_time: None,
-                vesting_status: "expired".to_string(),
-            });
-        }
+    if current_time >= airdrop.expiry_time {
+        return Ok(UserAirdropStatusResponse {
+            total_allocation,
+            current_claimable: Uint128::zero(),
+            is_claimed: false,
+            amount_claimed: Uint128::zero(),
+            claim_time: None,
+            vesting_status: "expired".to_string(),
+        });
     }
 
     // Initial portion (e.g. 40%)

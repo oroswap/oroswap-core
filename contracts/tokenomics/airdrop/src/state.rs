@@ -20,7 +20,11 @@ pub struct AirdropInfo {
     pub is_active: bool,
     /// true = native/IBC denom, false = CW20 contract.
     pub is_native: bool,
-    pub expiry_time: Option<u64>,
+    /// Required at creation; validated to be strictly greater than
+    /// `vesting_end_time` in `execute_add_airdrop`. Guarantees a finite
+    /// reclaim window for `execute_withdraw_funds` so leftover tokens are
+    /// never permanently stranded.
+    pub expiry_time: u64,
 }
 
 #[cw_serde]

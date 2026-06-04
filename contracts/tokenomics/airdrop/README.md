@@ -19,8 +19,10 @@ or after `vesting_end_time`. Supports native / IBC denoms and CW20 tokens.
 - **Single-settlement claim.** `Claim` is one-shot — the user receives
   initial + currently-vested + (cliff bonus if past end). After that the
   rest of their allocation is forfeit. (Documented UX choice.)
-- **Optional `expiry_time`.** After expiry, claims are blocked. Admin can
-  reclaim the leftover via `WithdrawFunds` (see below).
+- **Mandatory `expiry_time`.** Required on `AddAirdrop` and validated to be
+  strictly greater than `vesting_end_time`. After expiry, claims are blocked
+  and the admin can reclaim leftover tokens via `WithdrawFunds`. Because
+  expiry is mandatory, tokens are never permanently stranded.
 - **Native + CW20 support.** Set `is_native: bool` per airdrop. CW20
   deposits use `TransferFrom` (recipient must call `IncreaseAllowance` on
   the CW20 first).
@@ -32,7 +34,7 @@ or after `vesting_end_time`. Supports native / IBC denoms and CW20 tokens.
 
 | Role | Powers |
 |---|---|
-| `admin` (in `Config`) | Add/toggle airdrops, update eligibility (before start), update APY bonus (free pre-start, increase-only mid-vesting, locked post-vesting), deposit/withdraw funds, transfer ownership |
+| `admin` (in `Config`) | Add/toggle airdrops, update eligibility (before start), update APY bonus (free pre-start, increase-only mid-vesting, locked post-vesting), update timing (pre-start, forward-only), extend expiry (any phase before expiry), deposit/withdraw funds, transfer ownership |
 | Anyone | Claim their own allocation; read queries |
 
 Admin can be rotated via the standard two-step
@@ -64,7 +66,7 @@ Admin only. Creates an airdrop and enrols the first batch (≤ 200 entries).
 
 Validation: `start_time ≥ now`, `start_time ≤ vesting_start_time < vesting_end_time`,
 `initial_claim_percent ≤ 100`, `apy_bonus_bps ≤ 10_000`,
-`expiry_time > vesting_end_time` (if set), `eligibility.len() ≤ 200`.
+`expiry_time > vesting_end_time`, `eligibility.len() ≤ 200`.
 
 Duplicate addresses in the same `eligibility` batch are deduped in-memory
 with last-wins semantics — the running `Solvency.total_eligibility`
@@ -119,6 +121,70 @@ Possible errors:
 - `ApyUpdateUnderfunded { required, available }` — increase not backed by
   current contract balance.
 
+### `UpdateTimes`
+Admin only, **before `start_time`** (pre-start only). Pushes one or more of
+the three timing fields forward. All supplied fields must strictly exceed
+their current stored values (forward-only). At least one field must be
+supplied, and all timing invariants are re-checked after the update.
+
+```json
+{
+  "update_times": {
+    "airdrop_id": 1,
+    "start_time": 1710100000,
+    "vesting_start_time": 1710100000,
+    "vesting_end_time": 1712000000
+  }
+}
+```
+
+All three fields (`start_time`, `vesting_start_time`, `vesting_end_time`) are
+optional — supply only the ones you want to change. The omitted fields keep
+their current values and still participate in the invariant re-check.
+
+Invariants re-checked after update:
+- `start_time ≥ now` (the season must not have started yet)
+- `start_time ≤ vesting_start_time < vesting_end_time`
+- `expiry_time > vesting_end_time`
+
+Tip: if you need to push `vesting_end_time` past the current `expiry_time`,
+call `UpdateExpiry` first to extend the expiry, then call `UpdateTimes`.
+
+Possible errors:
+- `Unauthorized` — non-admin caller.
+- `AirdropAlreadyStarted {}` — `now ≥ start_time`; timing is locked once the
+  season opens.
+- `NoTimeFieldsProvided {}` — all three optional fields were omitted.
+- `NonForwardUpdate { field, old, new }` — a supplied value does not strictly
+  exceed the current stored value.
+- `StartTimeInPast {}` — updated `start_time` is already in the past.
+- `InvalidTimeRange {}` — invariants `start ≤ vesting_start < vesting_end` or
+  `expiry > vesting_end` violated after the proposed changes.
+
+### `UpdateExpiry`
+Admin only. Extends the expiry deadline for an airdrop. The new value must
+strictly exceed the current `expiry_time` (forward-only). Can be called at
+**any phase** — pre-start, mid-vesting, or post-vesting-end — as long as
+`now < current expiry_time` (i.e. the expiry window has not already closed).
+
+```json
+{ "update_expiry": { "airdrop_id": 1, "expiry_time": 1725000000 } }
+```
+
+Use this before calling `UpdateTimes` if you need to push `vesting_end_time`
+beyond the current `expiry_time`, since the invariant `expiry > vesting_end`
+must always hold.
+
+Possible errors:
+- `Unauthorized` — non-admin caller.
+- `AirdropExpired {}` — `now ≥ current expiry_time`; once expired the window
+  cannot be reopened.
+- `NonForwardUpdate { field, old, new }` — the new expiry is not strictly
+  greater than the current one.
+- `InvalidTimeRange {}` — the new expiry would violate `expiry > vesting_end`
+  (should not occur in normal usage since extending expiry only makes the gap
+  larger).
+
 ### `Claim`
 User only. **One-shot settlement** — pays out everything the user is
 entitled to right now and marks the airdrop claimed:
@@ -163,16 +229,17 @@ Admin only — **restricted**. Refuses to drain a token while any airdrop
 using that token is:
 
 1. still `is_active`, OR
-2. has no `expiry_time` configured, OR
-3. has not yet reached its `expiry_time`.
+2. has not yet reached its `expiry_time`.
 
 The admin must first `ToggleAirdrop { active: false }` AND wait until
 `now ≥ expiry_time` before they can recover leftover funds. Tokens not
-referenced by any airdrop can be withdrawn freely.
+referenced by any airdrop can be withdrawn freely. Because `expiry_time`
+is **required** on `AddAirdrop` and validated to be strictly greater than
+`vesting_end_time`, every airdrop has a deterministic reclaim window —
+leftover tokens are never permanently stranded.
 
-Returns `WithdrawalBlocked { airdrop_id }` or `WithdrawalBlockedNoExpiry { airdrop_id }`
-with the conflicting airdrop's id, so the operator knows which one to
-deactivate.
+Returns `WithdrawalBlocked { airdrop_id }` with the conflicting airdrop's
+id, so the operator knows which one to deactivate.
 
 ### Ownership transfer
 

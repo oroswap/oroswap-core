@@ -4,6 +4,7 @@
   "type": "object",
   "required": [
     "apy_bonus_bps",
+    "expiry_time",
     "id",
     "initial_claim_percent",
     "is_active",
@@ -20,10 +21,7 @@
       "minimum": 0.0
     },
     "expiry_time": {
-      "type": [
-        "integer",
-        "null"
-      ],
+      "type": "integer",
       "format": "uint64",
       "minimum": 0.0
     },

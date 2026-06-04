@@ -55,9 +55,6 @@ pub enum ContractError {
     #[error("Withdrawal blocked: airdrop {airdrop_id} is still active or has not reached its expiry. Toggle it off and wait until expiry_time before withdrawing.")]
     WithdrawalBlocked { airdrop_id: u64 },
 
-    #[error("Withdrawal blocked: airdrop {airdrop_id} uses this token and has no expiry_time configured (cannot be reclaimed).")]
-    WithdrawalBlockedNoExpiry { airdrop_id: u64 },
-
     #[error("APY decrease not allowed once the airdrop has started: old {old} bps, attempted {new} bps")]
     ApyDecreaseNotAllowed { old: u64, new: u64 },
 
@@ -69,4 +66,10 @@ pub enum ContractError {
 
     #[error("Nothing to claim yet: initial portion is zero and no vesting has unlocked. Wait until at least one portion is available.")]
     NothingToClaim {},
+
+    #[error("Forward-only update violated for `{field}`: old={old}, new={new}. New value must be strictly greater than the currently stored value.")]
+    NonForwardUpdate { field: String, old: u64, new: u64 },
+
+    #[error("UpdateTimes requires at least one of start_time / vesting_start_time / vesting_end_time to be provided.")]
+    NoTimeFieldsProvided {},
 }

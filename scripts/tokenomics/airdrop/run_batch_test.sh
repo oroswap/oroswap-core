@@ -7,11 +7,12 @@ TOKEN="coin.zig12jzwc0a3pyv4dze0t252qkwf77t4vs5rqfn3zc.oro"
 START=$(($(date +%s) + 45))
 V_START=$(($(date +%s) + 345))
 V_END=$(($(date +%s) + 7200))
+EXPIRY=$(($(date +%s) + 14400))   # 4 h — must be > V_END
 INITIAL_CLAIM=40
 APY=100
 
 echo "1) Creating empty airdrop..."
-./test.sh add_airdrop "$TOKEN" "$START" "$V_START" "$V_END" "$INITIAL_CLAIM" "$APY" "[]" > /dev/null
+./test.sh add_airdrop "$TOKEN" "$START" "$V_START" "$V_END" "$INITIAL_CLAIM" "$APY" "[]" "$EXPIRY" > /dev/null
 sleep 6
 
 echo "Getting Latest ID..."

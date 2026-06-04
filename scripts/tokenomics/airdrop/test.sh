@@ -27,15 +27,15 @@ execute() {
 
 # ─── Airdrop Operations ─────────────────────────────────────────────────────
 
-# Usage: add_airdrop <token_address> <start_time> <v_start> <v_end> <initial_percent> <apy_bps> <eligibility_json> [expiry]
+# Usage: add_airdrop <token_address> <start_time> <v_start> <v_end> <initial_percent> <apy_bps> <eligibility_json> <expiry>
 # Contract limits:
 #   initial_claim_percent <= 100
 #   apy_bonus_bps <= 10_000 (100%)
 #   eligibility JSON: <= 200 entries per call (use update_eligibility for more)
 #   start_time >= now; vesting_start_time in [start_time, vesting_end_time)
-#   expiry_time (if set) > vesting_end_time
+#   expiry_time > vesting_end_time
 add_airdrop() {
-    if [[ $# -lt 7 ]]; then echo "❌ Usage: add_airdrop <token> <start> <v_start> <v_end> <initial_claim_percent> <apy_bps> <eligibility_json> [expiry]"; exit 1; fi
+    if [[ $# -lt 8 ]]; then echo "❌ Usage: add_airdrop <token> <start> <v_start> <v_end> <initial_claim_percent> <apy_bps> <eligibility_json> <expiry>"; exit 1; fi
     local token="$1"
     local start="$2"
     local v_start="$3"
@@ -43,7 +43,7 @@ add_airdrop() {
     local initial_percent="$5"
     local apy="$6"
     local eligibility="$7"
-    local expiry="${8:-null}"
+    local expiry="$8"
 
     echo "🆕 Adding new airdrop for $token..."
     local is_native="false"
@@ -89,7 +89,7 @@ deposit_funds() {
 
 # Usage: withdraw_funds <token_address> <amount>
 # NOTE: blocked while ANY airdrop using this token is still active OR has
-# no expiry_time configured OR has not yet reached its expiry. To unblock
+# not yet reached its expiry. To unblock
 # you must:
 #   1. test.sh toggle_airdrop <id> false
 #   2. wait until block time >= the airdrop's expiry_time
@@ -194,7 +194,7 @@ if [[ $# -lt 1 ]]; then
   echo "  toggle_airdrop <id> <active (true/false)>             # Enable/Disable claims"
   echo "  deposit_funds <token> <amount>                        # Deposit tokens"
   echo "  withdraw_funds <token> <amount>                       # Withdraw tokens"
-  echo "  add_airdrop <token> <start> <v_start> <v_end> <%> <apy> <json> [expiry] # Add airdrop"
+  echo "  add_airdrop <token> <start> <v_start> <v_end> <%> <apy> <json> <expiry>  # Add airdrop (expiry mandatory)"
   echo "  update_eligibility <id> <json>                        # Batch add/update eligibility"
   echo "  propose_new_owner <new_admin> <expires_in>            # Propose new admin address"
   echo "  drop_ownership_proposal                               # Drop pending ownership proposal"

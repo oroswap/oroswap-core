@@ -49,7 +49,7 @@ fn test_single_claim_timeline() {
             ("user2".to_string(), Uint128::new(1000)),
             ("user3".to_string(), Uint128::new(1000)),
         ],
-        expiry_time: None,
+        expiry_time: 9_999_999_999u64,
     };
     execute(deps.as_mut(), env.clone(), mock_info("admin", &[]), msg).unwrap();
 
@@ -119,7 +119,7 @@ fn test_multi_season() {
         initial_claim_percent: 100, // 100% immediate for simplicity
         apy_bonus_bps: 0,
         eligibility: vec![("user".to_string(), Uint128::new(500))],
-        expiry_time: None,
+        expiry_time: 9_999_999_999u64,
     };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
@@ -133,7 +133,7 @@ fn test_multi_season() {
         initial_claim_percent: 50,
         apy_bonus_bps: 0,
         eligibility: vec![("user".to_string(), Uint128::new(1000))],
-        expiry_time: None,
+        expiry_time: 9_999_999_999u64,
     };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
@@ -169,7 +169,7 @@ fn test_admin_toggle() {
         initial_claim_percent: 100,
         apy_bonus_bps: 0,
         eligibility: vec![("user".to_string(), Uint128::new(1000))],
-        expiry_time: None,
+        expiry_time: 9_999_999_999u64,
     };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
@@ -217,7 +217,7 @@ fn test_user_airdrop_status_query() {
         eligibility: vec![
             ("user1".to_string(), Uint128::new(1000)),
         ],
-        expiry_time: None,
+        expiry_time: 9_999_999_999u64,
     };
     execute(deps.as_mut(), env.clone(), mock_info("admin", &[]), msg).unwrap();
 
@@ -307,7 +307,7 @@ fn test_ibc_and_cw20_handling() {
         initial_claim_percent: 100,
         apy_bonus_bps: 0,
         eligibility: vec![("user1".to_string(), Uint128::new(1000))],
-        expiry_time: None,
+        expiry_time: 9_999_999_999u64,
     };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
@@ -330,7 +330,7 @@ fn test_ibc_and_cw20_handling() {
         initial_claim_percent: 100,
         apy_bonus_bps: 0,
         eligibility: vec![("user2".to_string(), Uint128::new(1000))],
-        expiry_time: None,
+        expiry_time: 9_999_999_999u64,
     };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
@@ -419,7 +419,7 @@ fn test_update_eligibility_and_zero_claim() {
         initial_claim_percent: 100,
         apy_bonus_bps: 0,
         eligibility: vec![], // Empty initially
-        expiry_time: None,
+        expiry_time: 9_999_999_999u64,
     };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
@@ -471,7 +471,7 @@ fn test_edge_cases_and_unauthorized() {
         initial_claim_percent: 0,
         apy_bonus_bps: 1_000_000_000,
         eligibility: vec![("user1".to_string(), Uint128::MAX)],
-        expiry_time: None,
+        expiry_time: 9_999_999_999u64,
     };
     let err = execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap_err();
     match err {
@@ -493,7 +493,7 @@ fn test_edge_cases_and_unauthorized() {
         initial_claim_percent: 0,
         apy_bonus_bps: crate::contract::MAX_APY_BONUS_BPS,
         eligibility: vec![("user1".to_string(), Uint128::MAX)],
-        expiry_time: None,
+        expiry_time: 9_999_999_999u64,
     };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
@@ -528,7 +528,7 @@ fn test_airdrop_expiry() {
         initial_claim_percent: 100,
         apy_bonus_bps: 0,
         eligibility: vec![("user1".to_string(), Uint128::new(1000))],
-        expiry_time: Some(expiry_time),
+        expiry_time: expiry_time,
     };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
@@ -547,7 +547,7 @@ fn test_airdrop_expiry() {
         initial_claim_percent: 100,
         apy_bonus_bps: 0,
         eligibility: vec![("user2".to_string(), Uint128::new(1000))],
-        expiry_time: Some(expiry_time),
+        expiry_time: expiry_time,
     };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
@@ -587,7 +587,7 @@ fn test_add_airdrop_eligibility_batch_cap() {
         initial_claim_percent: 100,
         apy_bonus_bps: 0,
         eligibility: ok_eligibility,
-        expiry_time: None,
+        expiry_time: 9_999_999_999u64,
     };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
@@ -604,7 +604,7 @@ fn test_add_airdrop_eligibility_batch_cap() {
         initial_claim_percent: 100,
         apy_bonus_bps: 0,
         eligibility: too_many,
-        expiry_time: None,
+        expiry_time: 9_999_999_999u64,
     };
     let err = execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap_err();
     match err {
@@ -633,7 +633,7 @@ fn test_update_eligibility_batch_cap() {
         initial_claim_percent: 100,
         apy_bonus_bps: 0,
         eligibility: vec![],
-        expiry_time: None,
+        expiry_time: 9_999_999_999u64,
     };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
@@ -683,7 +683,7 @@ fn test_solvency_query_totals_and_funding() {
             ("user1".to_string(), Uint128::new(1000)),
             ("user2".to_string(), Uint128::new(500)),
         ],
-        expiry_time: None,
+        expiry_time: 9_999_999_999u64,
     };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
 
@@ -739,7 +739,7 @@ fn test_solvency_tracks_update_eligibility_delta() {
             initial_claim_percent: 100,
             apy_bonus_bps: 0,
             eligibility: vec![("user1".to_string(), Uint128::new(500))],
-            expiry_time: None,
+            expiry_time: 9_999_999_999u64,
         },
     )
     .unwrap();
@@ -793,7 +793,7 @@ fn test_withdraw_blocked_while_active() {
             initial_claim_percent: 100,
             apy_bonus_bps: 0,
             eligibility: vec![],
-            expiry_time: Some(now + 2000),
+            expiry_time: now + 2000,
         },
     )
     .unwrap();
@@ -816,12 +816,58 @@ fn test_withdraw_blocked_while_active() {
     }
 }
 
+/// Audit follow-up: `expiry_time` is now mandatory on `AddAirdrop` AND must
+/// be strictly greater than `vesting_end_time`. This removes the
+/// previously-possible "expiry_time = None" foot-gun where leftover
+/// tokens were permanently unreclaimable, and replaces it with a
+/// deterministic `InvalidExpiry` rejection at creation time.
 #[test]
-fn test_withdraw_blocked_when_no_expiry() {
+fn test_add_airdrop_rejects_expiry_le_vesting_end() {
     let mut deps = mock_dependencies();
     instantiate(deps.as_mut(), mock_env(), mock_info("creator", &[]), InstantiateMsg { admin: "admin".to_string() }).unwrap();
 
     let now = mock_env().block.time.seconds();
+    // expiry_time exactly equal to vesting_end_time → rejected.
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::AddAirdrop {
+            token_address: "native.oro".to_string(),
+            is_native: true,
+            start_time: now,
+            vesting_start_time: now,
+            vesting_end_time: now + 1000,
+            initial_claim_percent: 100,
+            apy_bonus_bps: 0,
+            eligibility: vec![],
+            expiry_time: now + 1000,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err, ContractError::InvalidExpiry {}));
+
+    // expiry_time below vesting_end_time → also rejected.
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::AddAirdrop {
+            token_address: "native.oro".to_string(),
+            is_native: true,
+            start_time: now,
+            vesting_start_time: now,
+            vesting_end_time: now + 1000,
+            initial_claim_percent: 100,
+            apy_bonus_bps: 0,
+            eligibility: vec![],
+            expiry_time: now + 500,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err, ContractError::InvalidExpiry {}));
+
+    // expiry_time > vesting_end_time → accepted.
     execute(
         deps.as_mut(),
         mock_env(),
@@ -835,35 +881,10 @@ fn test_withdraw_blocked_when_no_expiry() {
             initial_claim_percent: 100,
             apy_bonus_bps: 0,
             eligibility: vec![],
-            expiry_time: None,
+            expiry_time: now + 1001,
         },
     )
     .unwrap();
-
-    // Toggle inactive — still blocked because no expiry
-    execute(
-        deps.as_mut(),
-        mock_env(),
-        mock_info("admin", &[]),
-        ExecuteMsg::ToggleAirdrop { id: 1, active: false },
-    )
-    .unwrap();
-
-    let err = execute(
-        deps.as_mut(),
-        mock_env(),
-        mock_info("admin", &[]),
-        ExecuteMsg::WithdrawFunds {
-            token_address: "native.oro".to_string(),
-            amount: Uint128::new(10),
-            is_native: true,
-        },
-    )
-    .unwrap_err();
-    match err {
-        ContractError::WithdrawalBlockedNoExpiry { airdrop_id } => assert_eq!(airdrop_id, 1),
-        other => panic!("expected WithdrawalBlockedNoExpiry, got: {other:?}"),
-    }
 }
 
 #[test]
@@ -885,7 +906,7 @@ fn test_withdraw_blocked_before_expiry() {
             initial_claim_percent: 100,
             apy_bonus_bps: 0,
             eligibility: vec![],
-            expiry_time: Some(now + 2000),
+            expiry_time: now + 2000,
         },
     )
     .unwrap();
@@ -934,7 +955,7 @@ fn test_withdraw_allowed_after_inactive_and_expired() {
             initial_claim_percent: 100,
             apy_bonus_bps: 0,
             eligibility: vec![],
-            expiry_time: Some(now + 2000),
+            expiry_time: now + 2000,
         },
     )
     .unwrap();
@@ -993,7 +1014,7 @@ fn test_claim_and_status_at_vesting_start_boundary() {
                 ("user_query".to_string(), Uint128::new(1000)),
                 ("user_claim".to_string(), Uint128::new(1000)),
             ],
-            expiry_time: None,
+            expiry_time: 9_999_999_999u64,
         },
     )
     .unwrap();
@@ -1051,7 +1072,7 @@ fn test_withdraw_allowed_for_unrelated_token() {
             initial_claim_percent: 100,
             apy_bonus_bps: 0,
             eligibility: vec![],
-            expiry_time: Some(now + 2000),
+            expiry_time: now + 2000,
         },
     )
     .unwrap();
@@ -1104,7 +1125,7 @@ fn test_add_airdrop_deduplicates_repeated_addresses() {
                 ("user1".to_string(), Uint128::new(200)),
                 ("user2".to_string(), Uint128::new(50)),
             ],
-            expiry_time: Some(now + 2000),
+            expiry_time: now + 2000,
         },
     )
     .unwrap();
@@ -1172,7 +1193,7 @@ fn test_solvency_saturates_on_max_outstanding_overflow() {
                 apy_bonus_bps: 10_000,
                 is_active: true,
                 is_native: true,
-                expiry_time: None,
+                expiry_time: 9_999_999_999u64,
             },
         )
         .unwrap();
@@ -1229,7 +1250,7 @@ fn setup_season(
         initial_claim_percent: initial_pct,
         apy_bonus_bps: apy_bps,
         eligibility: vec![("user".to_string(), eligibility)],
-        expiry_time: None,
+        expiry_time: 9_999_999_999u64,
     };
     execute(deps.as_mut(), mock_env(), mock_info("admin", &[]), msg).unwrap();
     start_time
@@ -1446,7 +1467,7 @@ fn test_update_apy_bonus_excludes_claimed_users_from_bonus_base() {
                 ("user1".to_string(), Uint128::new(1000)),
                 ("user2".to_string(), Uint128::new(1000)),
             ],
-            expiry_time: None,
+            expiry_time: 9_999_999_999u64,
         },
     )
     .unwrap();
@@ -1530,7 +1551,7 @@ fn test_claim_rejected_when_payout_is_zero_then_succeeds_later() {
             initial_claim_percent: 0,
             apy_bonus_bps: 0,
             eligibility: vec![("user".to_string(), Uint128::new(1000))],
-            expiry_time: None,
+            expiry_time: 9_999_999_999u64,
         },
     )
     .unwrap();
@@ -1600,7 +1621,7 @@ fn test_claim_rejects_attached_funds() {
             initial_claim_percent: 100,
             apy_bonus_bps: 0,
             eligibility: vec![("user".to_string(), Uint128::new(500))],
-            expiry_time: None,
+            expiry_time: 9_999_999_999u64,
         },
     )
     .unwrap();
@@ -1629,7 +1650,7 @@ fn test_claim_rejects_attached_funds() {
             initial_claim_percent: 100,
             apy_bonus_bps: 0,
             eligibility: vec![("user".to_string(), Uint128::new(500))],
-            expiry_time: None,
+            expiry_time: 9_999_999_999u64,
         },
     )
     .unwrap();
@@ -1707,7 +1728,7 @@ fn test_user_airdrop_status_returns_inactive_when_disabled() {
             initial_claim_percent: 40,
             apy_bonus_bps: 0,
             eligibility: vec![("user".to_string(), Uint128::new(1000))],
-            expiry_time: None,
+            expiry_time: 9_999_999_999u64,
         },
     )
     .unwrap();
@@ -1783,7 +1804,7 @@ fn test_withdraw_scans_only_token_bucket() {
             initial_claim_percent: 100,
             apy_bonus_bps: 0,
             eligibility: vec![],
-            expiry_time: Some(now + 200),
+            expiry_time: now + 200,
         },
     )
     .unwrap();
@@ -1813,7 +1834,7 @@ fn test_withdraw_scans_only_token_bucket() {
                 initial_claim_percent: 100,
                 apy_bonus_bps: 0,
                 eligibility: vec![],
-                expiry_time: None,
+                expiry_time: 9_999_999_999u64,
             },
         )
         .unwrap();
@@ -1899,7 +1920,7 @@ fn test_withdraw_guard_uses_stored_is_native_not_caller_flag() {
             initial_claim_percent: 100,
             apy_bonus_bps: 0,
             eligibility: vec![],
-            expiry_time: None,
+            expiry_time: 9_999_999_999u64,
         },
     )
     .unwrap();
@@ -1940,4 +1961,405 @@ fn test_withdraw_guard_uses_stored_is_native_not_caller_flag() {
     )
     .unwrap_err();
     assert!(matches!(err, ContractError::WithdrawalBlocked { airdrop_id: 1 }));
+}
+
+// ─── UpdateTimes / UpdateExpiry (admin retiming handlers) ─────────────────────
+
+/// Helper: instantiate + add a single 1-user airdrop with predictable
+/// timings. Used by the UpdateTimes / UpdateExpiry tests below.
+fn setup_retiming_airdrop(
+    deps: &mut cosmwasm_std::OwnedDeps<
+        cosmwasm_std::MemoryStorage,
+        cosmwasm_std::testing::MockApi,
+        cosmwasm_std::testing::MockQuerier,
+    >,
+) -> u64 {
+    instantiate(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("creator", &[]),
+        InstantiateMsg { admin: "admin".to_string() },
+    )
+    .unwrap();
+    let now = mock_env().block.time.seconds();
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::AddAirdrop {
+            token_address: "native.oro".to_string(),
+            is_native: true,
+            start_time: now + 100,
+            vesting_start_time: now + 200,
+            vesting_end_time: now + 1000,
+            initial_claim_percent: 40,
+            apy_bonus_bps: 0,
+            eligibility: vec![("user".to_string(), Uint128::new(1000))],
+            expiry_time: now + 2000,
+        },
+    )
+    .unwrap();
+    now
+}
+
+#[test]
+fn test_update_times_unauthorized() {
+    let mut deps = mock_dependencies();
+    let _ = setup_retiming_airdrop(&mut deps);
+
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("not-admin", &[]),
+        ExecuteMsg::UpdateTimes {
+            airdrop_id: 1,
+            start_time: Some(mock_env().block.time.seconds() + 200),
+            vesting_start_time: None,
+            vesting_end_time: None,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err, ContractError::Unauthorized {}));
+}
+
+#[test]
+fn test_update_times_requires_at_least_one_field() {
+    let mut deps = mock_dependencies();
+    let _ = setup_retiming_airdrop(&mut deps);
+
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateTimes {
+            airdrop_id: 1,
+            start_time: None,
+            vesting_start_time: None,
+            vesting_end_time: None,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err, ContractError::NoTimeFieldsProvided {}));
+}
+
+#[test]
+fn test_update_times_happy_path_pushes_all_three() {
+    let mut deps = mock_dependencies();
+    let now = setup_retiming_airdrop(&mut deps);
+
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateTimes {
+            airdrop_id: 1,
+            start_time: Some(now + 150),
+            vesting_start_time: Some(now + 300),
+            vesting_end_time: Some(now + 1500),
+        },
+    )
+    .unwrap();
+
+    let res: AirdropResponse =
+        from_json(&query(deps.as_ref(), mock_env(), QueryMsg::Airdrop { id: 1 }).unwrap()).unwrap();
+    assert_eq!(res.start_time, now + 150);
+    assert_eq!(res.vesting_start_time, now + 300);
+    assert_eq!(res.vesting_end_time, now + 1500);
+    // Expiry untouched.
+    assert_eq!(res.expiry_time, now + 2000);
+}
+
+#[test]
+fn test_update_times_partial_only_start_time() {
+    let mut deps = mock_dependencies();
+    let now = setup_retiming_airdrop(&mut deps);
+
+    // Only push start_time. vesting_start_time stays at now+200 (which is
+    // still >= new start_time of now+150 — invariant holds).
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateTimes {
+            airdrop_id: 1,
+            start_time: Some(now + 150),
+            vesting_start_time: None,
+            vesting_end_time: None,
+        },
+    )
+    .unwrap();
+
+    let res: AirdropResponse =
+        from_json(&query(deps.as_ref(), mock_env(), QueryMsg::Airdrop { id: 1 }).unwrap()).unwrap();
+    assert_eq!(res.start_time, now + 150);
+    assert_eq!(res.vesting_start_time, now + 200); // unchanged
+    assert_eq!(res.vesting_end_time, now + 1000); // unchanged
+}
+
+#[test]
+fn test_update_times_rejects_non_forward_start() {
+    let mut deps = mock_dependencies();
+    let now = setup_retiming_airdrop(&mut deps);
+
+    // Try to MOVE start_time BACKWARD (now + 50, current is now + 100).
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateTimes {
+            airdrop_id: 1,
+            start_time: Some(now + 50),
+            vesting_start_time: None,
+            vesting_end_time: None,
+        },
+    )
+    .unwrap_err();
+    match err {
+        ContractError::NonForwardUpdate { field, old, new } => {
+            assert_eq!(field, "start_time");
+            assert_eq!(old, now + 100);
+            assert_eq!(new, now + 50);
+        }
+        other => panic!("expected NonForwardUpdate, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_update_times_equal_value_also_rejected() {
+    let mut deps = mock_dependencies();
+    let now = setup_retiming_airdrop(&mut deps);
+
+    // "Forward-only" is STRICT — equality is rejected too.
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateTimes {
+            airdrop_id: 1,
+            start_time: Some(now + 100),
+            vesting_start_time: None,
+            vesting_end_time: None,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err, ContractError::NonForwardUpdate { .. }));
+}
+
+#[test]
+fn test_update_times_rejected_after_start() {
+    let mut deps = mock_dependencies();
+    let now = setup_retiming_airdrop(&mut deps);
+
+    // Jump past start_time and try to retime.
+    let mut env = mock_env();
+    env.block.time = cosmwasm_std::Timestamp::from_seconds(now + 150);
+
+    let err = execute(
+        deps.as_mut(),
+        env,
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateTimes {
+            airdrop_id: 1,
+            start_time: Some(now + 200),
+            vesting_start_time: None,
+            vesting_end_time: None,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err, ContractError::AirdropAlreadyStarted {}));
+}
+
+#[test]
+fn test_update_times_rejects_broken_vesting_window() {
+    let mut deps = mock_dependencies();
+    let now = setup_retiming_airdrop(&mut deps);
+
+    // Push start_time PAST vesting_start_time without also updating vesting_start.
+    // current vesting_start = now+200; new start = now+300 → invariant broken.
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateTimes {
+            airdrop_id: 1,
+            start_time: Some(now + 300),
+            vesting_start_time: None,
+            vesting_end_time: None,
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err, ContractError::InvalidVestingWindow {}));
+}
+
+#[test]
+fn test_update_times_rejects_pushing_vesting_end_past_expiry() {
+    let mut deps = mock_dependencies();
+    let now = setup_retiming_airdrop(&mut deps);
+
+    // Try to push vesting_end_time to now+2000 (== current expiry). Invariant
+    // requires expiry > vesting_end strictly, so even == is rejected via
+    // InvalidExpiry. Admin must extend expiry first via UpdateExpiry.
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateTimes {
+            airdrop_id: 1,
+            start_time: None,
+            vesting_start_time: None,
+            vesting_end_time: Some(now + 2000),
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err, ContractError::InvalidExpiry {}));
+}
+
+#[test]
+fn test_update_expiry_unauthorized() {
+    let mut deps = mock_dependencies();
+    let now = setup_retiming_airdrop(&mut deps);
+
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("not-admin", &[]),
+        ExecuteMsg::UpdateExpiry { airdrop_id: 1, expiry_time: now + 3000 },
+    )
+    .unwrap_err();
+    assert!(matches!(err, ContractError::Unauthorized {}));
+}
+
+#[test]
+fn test_update_expiry_happy_path() {
+    let mut deps = mock_dependencies();
+    let now = setup_retiming_airdrop(&mut deps);
+
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateExpiry { airdrop_id: 1, expiry_time: now + 3000 },
+    )
+    .unwrap();
+
+    let res: AirdropResponse =
+        from_json(&query(deps.as_ref(), mock_env(), QueryMsg::Airdrop { id: 1 }).unwrap()).unwrap();
+    assert_eq!(res.expiry_time, now + 3000);
+}
+
+#[test]
+fn test_update_expiry_forward_only_rejects_shrink() {
+    let mut deps = mock_dependencies();
+    let now = setup_retiming_airdrop(&mut deps);
+
+    // Current expiry = now + 2000. Try to shorten to now + 1500.
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateExpiry { airdrop_id: 1, expiry_time: now + 1500 },
+    )
+    .unwrap_err();
+    match err {
+        ContractError::NonForwardUpdate { field, old, new } => {
+            assert_eq!(field, "expiry_time");
+            assert_eq!(old, now + 2000);
+            assert_eq!(new, now + 1500);
+        }
+        other => panic!("expected NonForwardUpdate, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_update_expiry_rejected_after_expiry_passes() {
+    let mut deps = mock_dependencies();
+    let now = setup_retiming_airdrop(&mut deps);
+
+    // Jump past current expiry.
+    let mut env = mock_env();
+    env.block.time = cosmwasm_std::Timestamp::from_seconds(now + 2500);
+
+    let err = execute(
+        deps.as_mut(),
+        env,
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateExpiry { airdrop_id: 1, expiry_time: now + 5000 },
+    )
+    .unwrap_err();
+    assert!(matches!(err, ContractError::AirdropExpired {}));
+}
+
+#[test]
+fn test_update_expiry_allowed_mid_vesting() {
+    let mut deps = mock_dependencies();
+    let now = setup_retiming_airdrop(&mut deps);
+
+    // Advance to mid-vesting (start has passed, vesting in progress).
+    let mut env = mock_env();
+    env.block.time = cosmwasm_std::Timestamp::from_seconds(now + 500);
+
+    // UpdateExpiry should still work — extending the reclaim window only
+    // gives unclaimed users more time, never less.
+    execute(
+        deps.as_mut(),
+        env.clone(),
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateExpiry { airdrop_id: 1, expiry_time: now + 3000 },
+    )
+    .unwrap();
+
+    let res: AirdropResponse =
+        from_json(&query(deps.as_ref(), env, QueryMsg::Airdrop { id: 1 }).unwrap()).unwrap();
+    assert_eq!(res.expiry_time, now + 3000);
+}
+
+#[test]
+fn test_update_times_then_update_expiry_combined_flow() {
+    let mut deps = mock_dependencies();
+    let now = setup_retiming_airdrop(&mut deps);
+
+    // Admin wants to push vesting_end to now+2500 — would violate the
+    // expiry invariant (current expiry = now+2000). They must extend
+    // expiry first, then push vesting_end.
+    let err = execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateTimes {
+            airdrop_id: 1,
+            start_time: None,
+            vesting_start_time: None,
+            vesting_end_time: Some(now + 2500),
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err, ContractError::InvalidExpiry {}));
+
+    // Extend expiry first.
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateExpiry { airdrop_id: 1, expiry_time: now + 3000 },
+    )
+    .unwrap();
+
+    // Now push vesting_end — succeeds.
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("admin", &[]),
+        ExecuteMsg::UpdateTimes {
+            airdrop_id: 1,
+            start_time: None,
+            vesting_start_time: None,
+            vesting_end_time: Some(now + 2500),
+        },
+    )
+    .unwrap();
+
+    let res: AirdropResponse =
+        from_json(&query(deps.as_ref(), mock_env(), QueryMsg::Airdrop { id: 1 }).unwrap()).unwrap();
+    assert_eq!(res.expiry_time, now + 3000);
+    assert_eq!(res.vesting_end_time, now + 2500);
 }

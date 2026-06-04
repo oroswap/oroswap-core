@@ -18,7 +18,12 @@ pub enum ExecuteMsg {
         initial_claim_percent: u64,
         apy_bonus_bps: u64,
         eligibility: Vec<(String, Uint128)>,
-        expiry_time: Option<u64>,
+        /// Required. Self-flagged follow-up to FIND-008/FIND-001 audit cycle:
+        /// previously optional, but `None` had no admin escape — leftover
+        /// tokens locked permanently. Now mandatory and validated to be
+        /// strictly greater than `vesting_end_time` so `WithdrawFunds` always
+        /// has a deterministic reclaim window.
+        expiry_time: u64,
     },
     ToggleAirdrop {
         id: u64,
@@ -62,6 +67,36 @@ pub enum ExecuteMsg {
         airdrop_id: u64,
         apy_bonus_bps: u64,
     },
+    /// Admin-only. Push `start_time`, `vesting_start_time`, and/or
+    /// `vesting_end_time` forward before the airdrop begins. Each supplied
+    /// field must be **strictly greater** than the currently stored value
+    /// (forward-only — no shortening of the launch window or vesting). All
+    /// existing invariants are re-checked against the resulting state:
+    ///   - `now < airdrop.start_time` (admin can only update pre-launch).
+    ///   - At least one field must be `Some`.
+    ///   - `new_start_time >= now` (no past).
+    ///   - `new_start_time <= new_vesting_start_time < new_vesting_end_time`.
+    ///   - `airdrop.expiry_time > new_vesting_end_time` (extend expiry first
+    ///     via `UpdateExpiry` if needed).
+    /// Unsupplied fields fall back to the currently stored value.
+    UpdateTimes {
+        airdrop_id: u64,
+        start_time: Option<u64>,
+        vesting_start_time: Option<u64>,
+        vesting_end_time: Option<u64>,
+    },
+    /// Admin-only. Extend `expiry_time` further into the future. The new
+    /// value must be strictly greater than the currently stored expiry
+    /// (forward-only — admin cannot bring the reclaim window forward and
+    /// short-change unclaimed users). Permitted at any phase BEFORE the
+    /// current expiry has passed:
+    ///   - `now < airdrop.expiry_time` (can't extend a passed expiry).
+    ///   - `expiry_time > airdrop.expiry_time` (forward-only).
+    ///   - `expiry_time > airdrop.vesting_end_time` (invariant preserved).
+    UpdateExpiry {
+        airdrop_id: u64,
+        expiry_time: u64,
+    },
 }
 
 #[cw_serde]
@@ -104,7 +139,7 @@ pub struct AirdropResponse {
     pub apy_bonus_bps: u64,
     pub is_active: bool,
     pub is_native: bool,
-    pub expiry_time: Option<u64>,
+    pub expiry_time: u64,
 }
 
 
