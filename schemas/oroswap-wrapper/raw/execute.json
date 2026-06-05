@@ -62,7 +62,7 @@
       "additionalProperties": false
     },
     {
-      "description": "Resume lock/unlock operations. Owner only — a compromised pause authority cannot grief by toggling pause state.",
+      "description": "Resume lock/unlock operations. Owner only — a compromised pause authority cannot toggle the pause state on its own.",
       "type": "object",
       "required": [
         "unpause"

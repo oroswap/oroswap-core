@@ -23,7 +23,7 @@ pub const LOCK_DENOM: &str =
     "ibc/F1073E5895A25347EF10A7B50783D3048882726895AEE1176C498C45D0576F2B";
 
 /// Sub-denom suffix for the minted token.
-pub const MINT_SUBDENOM: &str = "xoro";
+pub const MINT_SUBDENOM: &str = "oro";
 
 /// The type alias for our customised multi-test App with the Stargate keeper.
 pub type CustomizedApp = App<
@@ -92,6 +92,8 @@ impl Helper {
             mint_symbol: None,
             mint_description: None,
             owner: owner.to_string(),
+            // FIND-005: explicit cap in base units. 1B tokens × 10^6 decimals.
+            mint_max_supply: cosmwasm_std::Uint128::new(1_000_000_000_000_000),
         };
 
         let wrapper = app

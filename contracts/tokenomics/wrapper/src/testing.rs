@@ -19,6 +19,10 @@ fn seed_config(deps: &mut cosmwasm_std::OwnedDeps<impl cosmwasm_std::Storage, im
                 mint_decimals: 6,
                 owner: Addr::unchecked(owner),
                 paused: false,
+                // Generous cap so existing unit tests aren't gated by it;
+                // the dedicated `test_lock_rejects_when_supply_cap_hit`
+                // exercises the cap explicitly.
+                max_supply: cosmwasm_std::Uint128::new(1_000_000_000_000_000),
             },
         )
         .unwrap();
@@ -308,5 +312,39 @@ fn reply_rejects_empty_mint_denom() {
     assert!(
         matches!(err, ContractError::FailedToParseReply {}),
         "empty mint_denom must surface as FailedToParseReply, got {err:?}",
+    );
+}
+
+/// FIND-005 regression: `mint_max_supply == 0` must be rejected at
+/// instantiate. The cap is immutable on-chain (`can_change_minting_cap: false`),
+/// so a zero cap would silently brick all future mints with no recovery path.
+#[test]
+fn instantiate_rejects_zero_mint_max_supply() {
+    use crate::contract::instantiate;
+    use crate::msg::InstantiateMsg;
+    use cosmwasm_std::Uint128;
+
+    let mut deps = mock_dependencies();
+
+    let err = instantiate(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("creator", &[]),
+        InstantiateMsg {
+            lock_denom: "uzig".to_string(),
+            mint_subdenom: "wzig".to_string(),
+            mint_uri: None,
+            mint_decimals: 6,
+            mint_name: None,
+            mint_symbol: None,
+            mint_description: None,
+            owner: "owner".to_string(),
+            mint_max_supply: Uint128::zero(),
+        },
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, ContractError::InvalidMintMaxSupply {}),
+        "zero mint_max_supply must surface as InvalidMintMaxSupply, got {err:?}",
     );
 }

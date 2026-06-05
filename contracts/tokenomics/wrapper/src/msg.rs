@@ -16,7 +16,7 @@ pub struct InstantiateMsg {
     /// Sub-denom suffix used when creating the ZigChain factory token.
     /// The resulting full denom will be:
     ///   "coin.<contract_address>.<mint_subdenom>"
-    /// Example: "xoro"
+    /// Example: "oro"
     pub mint_subdenom: String,
 
     /// Optional URI for the minted token's on-chain metadata.
@@ -42,6 +42,17 @@ pub struct InstantiateMsg {
 
     /// Owner / admin of the contract (can pause/unpause and update config).
     pub owner: String,
+
+    /// Wrapper-enforced cap on the circulating supply of the minted denom,
+    /// expressed in **base units** (i.e. already scaled by `mint_decimals`).
+    ///
+    /// Set this to the source asset's known maximum supply in base units —
+    /// e.g. for an asset with 6 decimals and a 790,000,000-token max,
+    /// `mint_max_supply = 790_000_000_000_000`. The contract validates
+    /// `> 0` at instantiate; consistency with `mint_decimals` is an
+    /// operator concern. The value is stored in `Config.max_supply` and
+    /// is immutable after instantiate, so it must be set correctly here.
+    pub mint_max_supply: Uint128,
 }
 
 /// Execute messages for the wrapper contract.
@@ -62,7 +73,7 @@ pub enum ExecuteMsg {
     Pause {},
 
     /// Resume lock/unlock operations. Owner only — a compromised pause
-    /// authority cannot grief by toggling pause state.
+    /// authority cannot toggle the pause state on its own.
     Unpause {},
 
     /// Proposes a new owner. The proposed owner must call ClaimOwnership within expires_in seconds.

@@ -58,7 +58,8 @@ zigchaind tx wasm instantiate $CODE_ID '{
   "mint_symbol": "ORO",
   "mint_description": "Oroswap ORO token",
   "mint_uri": "https://example.com/oro.json",
-  "owner": "zig1..."
+  "owner": "zig1...",
+  "mint_max_supply": "790000000000000"
 }' --label "wrapper" --admin zig1... --amount 1000uzig \
    --from $KEY --keyring-backend test --node $RPC --chain-id $CHAIN \
    --gas-prices 0.25uzig --gas auto --gas-adjustment 1.5 -y
@@ -73,11 +74,32 @@ optional. When omitted the contract falls back to `"Oroswap <subdenom>"`,
 (`mint_uri` stays empty).
 
 `mint_decimals` is **required** — no default. It must match the
-`lock_denom`'s source-token decimals (e.g. 6 for USDC, 18 for most
-ERC-20s) so that the 1:1 wrap-mint displays correctly in wallets.
+`lock_denom`'s source-token decimals (e.g. 6 for USDC) so that the 1:1 wrap-mint displays correctly in wallets.
 The chain bakes this exponent into the denom's `Metadata.denom_units`
 at create-time and the contract refuses to change it later, so getting
 it right here is critical.
+
+`mint_max_supply` is **required** — express it in **base units** (i.e.
+already scaled by `mint_decimals`). It defines the **circulating supply
+cap** of the wrapped denom: at any point in time `MintSupply ≤
+mint_max_supply`. Example: a token with an 790,000,000 maximum at 6
+decimals → `"mint_max_supply": "790000000000000"` (= 790 × 10¹²). The
+contract rejects `0` at instantiate with `InvalidMintMaxSupply`.
+
+**Supply-cap accounting note.** ZigChain's factory module enforces
+`minting_cap` against the cumulative `total_minted` counter, which is
+not decremented by burns. Setting that value to the source asset's
+maximum supply would couple it to lifetime throughput rather than peak
+circulating supply, and the field is immutable after create-denom. The
+wrapper therefore sets the on-chain tokenfactory `minting_cap` to
+`Uint128::MAX` so that the chain-side check is never the binding
+constraint, and enforces the intended supply invariant in
+`execute_lock` by querying live `total_supply` from the bank module.
+Because circulating supply is decremented by burns, the cap applies to
+peak supply rather than lifetime throughput, and wrap/unwrap activity
+operates normally as long as instantaneous circulating supply stays
+within the configured value. A lock that would push circulating supply
+over the cap is rejected with `MaxSupplyExceeded { current, mint, cap }`.
 
 ## ExecuteMsg
 

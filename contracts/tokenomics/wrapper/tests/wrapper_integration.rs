@@ -602,7 +602,7 @@ fn test_initial_metadata_emitted_at_instantiate() {
         .metadata
         .as_ref()
         .expect("metadata field");
-    // Defaults derive from MINT_SUBDENOM = "xoro"
+    // Defaults derive from MINT_SUBDENOM = "oro"
     assert_eq!(m.symbol, MINT_SUBDENOM);
     assert_eq!(m.name, format!("Oroswap {}", MINT_SUBDENOM));
     assert_eq!(m.description, format!("Oroswap {} Token", MINT_SUBDENOM));

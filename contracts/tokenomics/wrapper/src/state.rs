@@ -1,5 +1,5 @@
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::Addr;
+use cosmwasm_std::{Addr, Uint128};
 use cw_storage_plus::{Item, Map};
 
 use oroswap::common::OwnershipProposal;
@@ -25,6 +25,19 @@ pub struct Config {
     pub owner: Addr,
     /// Whether the contract is currently paused
     pub paused: bool,
+    /// Wrapper-enforced cap on the **circulating supply** of the minted
+    /// denom (in base units). `execute_lock` rejects any mint where
+    /// `current_supply + mint_amount > max_supply`.
+    ///
+    /// The check is wrapper-side rather than pure tokenfactory because
+    /// ZigChain's tokenfactory `minting_cap` is enforced against the
+    /// cumulative `total_minted` counter (not decremented by burns), which
+    /// would couple the cap to lifetime throughput rather than peak
+    /// circulating supply. Tracking circulating supply at the wrapper
+    /// level lets burns free up headroom so the cap applies to instantaneous
+    /// outstanding supply, matching the intended invariant
+    /// ("wrapped supply cannot exceed source supply").
+    pub max_supply: Uint128,
 }
 
 /// Authoritative copy of the minted denom's human-readable Metadata.

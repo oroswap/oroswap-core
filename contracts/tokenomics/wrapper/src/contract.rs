@@ -9,7 +9,7 @@ use cw_utils::must_pay;
 use oroswap::common::{claim_ownership, drop_ownership_proposal, propose_new_owner};
 
 use oroswap::token_factory::{
-    tf_burn_msg, tf_create_denom_msg, tf_mint_msg, MsgCreateDenomResponse,
+    tf_burn_msg, tf_create_denom_msg_with_cap, tf_mint_msg, MsgCreateDenomResponse,
 };
 #[cfg(feature = "zigchain")]
 use oroswap::token_factory::{tf_propose_denom_admin_msg, tf_set_denom_metadata_full_msg};
@@ -80,6 +80,14 @@ pub fn instantiate(
         StdError::generic_err("mint_subdenom must not be empty")
     );
 
+    // mint_max_supply defines the wrapper's circulating supply cap and
+    // must be greater than zero. A zero value would make every subsequent
+    // lock fail, with no on-chain path to correct it (the field is
+    // immutable after instantiate).
+    if msg.mint_max_supply.is_zero() {
+        return Err(ContractError::InvalidMintMaxSupply {});
+    }
+
     CONFIG.save(
         deps.storage,
         &Config {
@@ -88,6 +96,7 @@ pub fn instantiate(
             mint_decimals: msg.mint_decimals,
             owner: owner.clone(),
             paused: false,
+            max_supply: msg.mint_max_supply,
         },
     )?;
 
@@ -109,9 +118,24 @@ pub fn instantiate(
         },
     )?;
 
-    // Emit ZigChain factory create-denom sub-message
+    // Emit ZigChain factory create-denom sub-message.
+    //
+    // The on-chain `minting_cap` is set to `Uint128::MAX` (≈ 3.4 × 10³⁸).
+    // ZigChain's factory module enforces this value against the cumulative
+    // `total_minted` counter, which is not decremented by burns; coupling
+    // that counter to the source asset's max supply would make the cap
+    // track lifetime throughput rather than peak circulating supply, and
+    // the field is immutable after create-denom. Setting `Uint128::MAX`
+    // keeps the chain-side check from becoming the binding constraint
+    // under normal wrap/unwrap activity; the operationally meaningful cap
+    // is `config.max_supply`, enforced in `execute_lock` against the live
+    // circulating supply queried from the bank module.
     let create_denom_msg = SubMsg::reply_on_success(
-        tf_create_denom_msg(env.contract.address.to_string(), msg.mint_subdenom.clone()),
+        tf_create_denom_msg_with_cap(
+            env.contract.address.to_string(),
+            msg.mint_subdenom.clone(),
+            Uint128::MAX,
+        ),
         ReplyIds::InstantiateDenom as u64,
     );
 
@@ -123,6 +147,7 @@ pub fn instantiate(
             attr("owner", owner),
             attr("lock_denom", msg.lock_denom),
             attr("mint_subdenom", msg.mint_subdenom),
+            attr("mint_max_supply", msg.mint_max_supply),
         ]))
 }
 
@@ -280,6 +305,22 @@ fn execute_lock(
 
     if amount.is_zero() {
         return Err(ContractError::ZeroAmount {});
+    }
+
+    // Cap on circulating supply, not cumulative mints. `query_supply` is
+    // the chain's authoritative count of the wrapped denom in circulation
+    // right now; burns decrement it, so the cap tracks peak supply rather
+    // than lifetime throughput.
+    let current_supply = deps.querier.query_supply(&config.mint_denom)?.amount;
+    let new_supply = current_supply
+        .checked_add(amount)
+        .map_err(|e| ContractError::Std(cosmwasm_std::StdError::from(e)))?;
+    if new_supply > config.max_supply {
+        return Err(ContractError::MaxSupplyExceeded {
+            current: current_supply,
+            mint: amount,
+            cap: config.max_supply,
+        });
     }
 
     // Mint 1:1 using ZigChain factory

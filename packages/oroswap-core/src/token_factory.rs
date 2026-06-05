@@ -1,5 +1,5 @@
 pub use cosmos_sdk_proto::cosmos::base::v1beta1::Coin as ProtoCoin;
-use cosmwasm_std::{Binary, Coin, CosmosMsg, CustomMsg, StdError};
+use cosmwasm_std::{Binary, Coin, CosmosMsg, CustomMsg, StdError, Uint128};
 
 #[cfg(any(feature = "zigchain"))]
 use cosmwasm_std::BankMsg;
@@ -352,6 +352,52 @@ where
         sub_denom: denom.into(),
         creator: sender.into(),
         minting_cap: LP_MAX_SUPPLY.to_string(),
+        can_change_minting_cap: false,
+    };
+
+    CosmosMsg::Stargate {
+        type_url: MsgCreateDenom::TYPE_URL.to_string(),
+        value: Binary::from(create_denom_msg.encode_to_vec()),
+    }
+}
+
+/// Same as `tf_create_denom_msg` but with an explicit, caller-supplied
+/// `minting_cap` instead of the generic `LP_MAX_SUPPLY` constant.
+///
+/// FIND-005 (audit follow-up): contracts that wrap a known finite source
+/// asset (e.g. the wrapper contract wrapping a bridged ERC-20) should
+/// configure the tokenfactory cap to match that asset's actual maximum
+/// supply rather than `u64::MAX`. This pins the wrapped denom's supply
+/// assumption on-chain and removes reliance on a shared constant that
+/// was correct for pair-LP tokens but loose for bridged asset wrappers.
+///
+/// `can_change_minting_cap` is intentionally `false` — the cap is meant
+/// to be a load-bearing invariant set once at instantiate.
+///
+/// The non-zigchain `MsgCreateDenom` variant has no cap field, so the
+/// supplied value is silently ignored on chains that don't support it.
+pub fn tf_create_denom_msg_with_cap<T>(
+    sender: impl Into<String>,
+    denom: impl Into<String>,
+    minting_cap: Uint128,
+) -> CosmosMsg<T>
+where
+    T: CustomMsg,
+{
+    #[cfg(not(any(feature = "zigchain")))]
+    let create_denom_msg = {
+        let _ = minting_cap; // not part of the non-zigchain proto shape
+        MsgCreateDenom {
+            sender: sender.into(),
+            subdenom: denom.into(),
+        }
+    };
+
+    #[cfg(feature = "zigchain")]
+    let create_denom_msg = MsgCreateDenom {
+        sub_denom: denom.into(),
+        creator: sender.into(),
+        minting_cap: minting_cap.to_string(),
         can_change_minting_cap: false,
     };
 

@@ -34,4 +34,14 @@ pub enum ContractError {
 
     #[error("No unpause authority - only contract owner can unpause")]
     NoUnpauseAuthority {},
+
+    #[error("mint_max_supply must be greater than zero (set it to the source asset's max supply in base units)")]
+    InvalidMintMaxSupply {},
+
+    #[error("Lock would push circulating supply over the configured cap. current_supply={current}, lock_amount={mint}, max_supply={cap}")]
+    MaxSupplyExceeded {
+        current: cosmwasm_std::Uint128,
+        mint: cosmwasm_std::Uint128,
+        cap: cosmwasm_std::Uint128,
+    },
 }
