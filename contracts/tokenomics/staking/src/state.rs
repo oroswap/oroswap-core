@@ -18,7 +18,13 @@ pub struct RewardInfo {
 #[cw_serde]
 pub struct UserRewardInfo {
     pub last_rewards_index: Vec<(String, Decimal256)>,
-    pub pending_rewards: Vec<cosmwasm_std::Coin>,
+    /// Exact fractional reward balance per denom. Flooring happens only at
+    /// the boundary where Decimal256 leaves the contract (Leave → UnbondingEntry
+    /// snapshot, PendingRewards query → UI). Carrying the sub-unit remainder
+    /// across syncs eliminates per-interaction dust loss: a user's lifetime
+    /// payout equals their proportional share down to at most one final floor
+    /// at full exit.
+    pub pending_rewards: Vec<(String, Decimal256)>,
 }
 
 pub const CONFIG: Item<Config> = Item::new("config");

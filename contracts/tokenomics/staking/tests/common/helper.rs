@@ -145,6 +145,42 @@ impl Helper {
         })
     }
 
+    /// Returns the result of instantiating with the supplied `unbonding_period`
+    /// without unwrapping, so tests can assert on rejection paths.
+    pub fn try_new_with_unbonding(owner: &Addr, unbonding_period: u64) -> AnyResult<Self> {
+        let mut app = BasicAppBuilder::new()
+            .with_stargate(StargateKeeper::default())
+            .build(|router, _, storage| {
+                router
+                    .bank
+                    .init_balance(storage, owner, coins(u128::MAX, ORO_DENOM))
+                    .unwrap()
+            });
+
+        let staking_code_id = app.store_code(staking_contract());
+
+        let msg = InstantiateMsg {
+            owner: owner.to_string(),
+            oro_denom: ORO_DENOM.to_string(),
+            unbonding_period,
+            minimum_stake_amount: Uint128::new(1),
+        };
+        let staking = app.instantiate_contract(
+            staking_code_id,
+            owner.clone(),
+            &msg,
+            &[],
+            String::from("Oroswap Staking"),
+            Some(owner.to_string()),
+        )?;
+
+        Ok(Self {
+            app,
+            owner: owner.clone(),
+            staking,
+        })
+    }
+
     pub fn give_oro(&mut self, amount: u128, recipient: &Addr) {
         self.app
             .send_tokens(

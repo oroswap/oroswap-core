@@ -1245,6 +1245,177 @@ fn test_instantiate_rejects_zero_minimum() {
     );
 }
 
+/// Regression for the per-sync flooring bug (the "interact-every-block
+/// burns rewards" issue). Two equal-share stakers; rps tuned so each
+/// per-sync accrual would individually round to 0 under integer flooring.
+/// Alice forces ~50 syncs via repeated micro-Enters; Bob stays passive.
+///
+/// Under the OLD per-sync floor, Alice's pending would stay at 0 forever
+/// because each individual sync's accrual (~0.5 uzig) floors to 0 and the
+/// snapshot advances anyway — wiping the fractional accrual permanently.
+///
+/// With the Decimal256 carry, the sub-1-unit accruals stack inside
+/// `UserRewardInfo.pending_rewards` and pay out a meaningful amount at
+/// final Claim — proving the dust fix actually preserves user funds.
+#[test]
+fn test_decimal_carry_preserves_subunit_accruals_across_syncs() {
+    let owner = Addr::unchecked("owner");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    let alice = Addr::unchecked("alice");
+    let bob = Addr::unchecked("bob");
+    helper.give_oro(10_000_000, &alice);
+    helper.give_oro(10_000_000, &bob);
+
+    helper.stake(&alice, 1_000_000).unwrap();
+    helper.stake(&bob, 1_000_000).unwrap();
+
+    // 100 uzig over 100s → rps = 1 uzig/sec. With 50/50 split each staker
+    // accrues ~0.5 uzig per second — floors to 0 on any single-second sync.
+    let denom = "uzig";
+    helper.mint_coin(&owner, coin(100, denom));
+    helper.add_reward(&owner, coin(100, denom), 100).unwrap();
+
+    // 50 sync events spaced 2s apart. Per sync alice accrues ~1.0 uzig in
+    // the new code, which all stacks; in the old code, the per-share half
+    // would have already floored to 0 by the time it hit Uint128.
+    for _ in 0..50 {
+        helper.next_block(2);
+        helper.stake(&alice, 1).unwrap();
+    }
+    helper.next_block(1);
+
+    // Drain.
+    let alice_stake = helper.query_stake_of(&alice).unwrap().u128();
+    let bob_stake = helper.query_stake_of(&bob).unwrap().u128();
+    helper.unstake(&alice, alice_stake).unwrap();
+    helper.unstake(&bob, bob_stake).unwrap();
+    helper.next_block(UNBONDING_PERIOD);
+
+    let alice_pre = helper.query_balance(&alice, denom).unwrap().u128();
+    let bob_pre = helper.query_balance(&bob, denom).unwrap().u128();
+    helper.claim(&alice).unwrap();
+    helper.claim(&bob).unwrap();
+    let alice_got = helper.query_balance(&alice, denom).unwrap().u128() - alice_pre;
+    let bob_got = helper.query_balance(&bob, denom).unwrap().u128() - bob_pre;
+    let total = alice_got + bob_got;
+
+    // Sum of payouts must reach the funded stream (allow a few uzig of
+    // final-floor dust at full exit; the per-sync dust is now preserved).
+    assert!(
+        total >= 95,
+        "total payout {total} far below stream 100 — dust still being lost",
+    );
+
+    // The core regression assertion: Alice must receive a meaningful
+    // payout despite all her syncs producing sub-1-unit per-sync accruals.
+    // Under the old per-sync floor she would have received ≈ 0.
+    assert!(
+        alice_got >= 30,
+        "alice received {alice_got} uzig across 50 forced syncs — \
+         decimal carry must preserve sub-1-unit accruals (would be ~0 \
+         under old per-sync flooring; bob got {bob_got})",
+    );
+}
+
+/// Symmetric companion to `test_decimal_carry_preserves_subunit_accruals_across_syncs`:
+/// proves the carry-across-Leaves path. A solo staker does MANY back-to-back
+/// Leaves at 1-second intervals against a fractional rps (0.5 uzig/sec). Each
+/// per-Leave accrual is sub-1-unit; under the OLD per-sync floor every Leave
+/// would snapshot 0 into its UnbondingEntry and the entire reward stream would
+/// be destroyed. Under the carry fix, the sub-1-unit accruals stack across
+/// Leaves: every other Leave pays out a clean integer unit from the
+/// accumulated carry, so the total Claim payout matches the entitled stream.
+#[test]
+fn test_decimal_carry_preserves_across_multiple_leaves() {
+    let owner = Addr::unchecked("owner");
+    let mut helper = Helper::new(&owner).unwrap();
+
+    let alice = Addr::unchecked("alice");
+    helper.give_oro(10_000_000, &alice);
+    helper.stake(&alice, 1_000_000).unwrap();
+
+    // 50 uzig over 100s → rps = 0.5/sec. Solo staker = Alice receives all,
+    // so per-second accrual is exactly 0.5 uzig — squarely sub-1-unit and
+    // perfectly fractional.
+    let denom = "uzig";
+    helper.mint_coin(&owner, coin(50, denom));
+    helper.add_reward(&owner, coin(50, denom), 100).unwrap();
+
+    // 10 Leaves of 1 wei each, spaced 1s apart — fills the unbonding queue
+    // to exactly MAX_UNBONDING_ENTRIES so we exercise the boundary cleanly.
+    // Each Leave triggers a sync that, under the old per-sync floor, would
+    // see accrual=0.5 → floor to 0 → snapshot advances → 0.5 uzig lost
+    // forever. Under the carry fix, the 0.5 stacks with the previous
+    // Leave's leftover.
+    for _ in 0..10 {
+        helper.next_block(1);
+        helper.unstake(&alice, 1).unwrap();
+    }
+
+    // Wait out the unbonding queue and Claim all 10 entries at once.
+    helper.next_block(UNBONDING_PERIOD);
+    let pre = helper.query_balance(&alice, denom).unwrap().u128();
+    helper.claim(&alice).unwrap();
+    let post = helper.query_balance(&alice, denom).unwrap().u128();
+    let received = post - pre;
+
+    // Entitled: 0.5 uzig/sec × 10 sec = 5 uzig.
+    // Carry pattern (per Leave): 0.5 → 1.0(payout 1, carry 0) → 0.5 → 1.0(payout 1) → …
+    //   → 5 payouts of 1 uzig across the 10 Leaves = 5 uzig.
+    // Under the OLD per-sync floor: each 0.5 floors to 0; received = 0.
+    assert!(
+        received >= 4,
+        "alice received {received} uzig across 10 Leaves — \
+         carry-across-Leaves must preserve sub-1-unit accruals \
+         (entitled = 5; expected ~5; would be 0 under old per-sync flooring)",
+    );
+
+    // Hard upper bound: a user can never collect MORE than their entitlement.
+    assert!(
+        received <= 5,
+        "alice received {received} uzig > entitled 5 — carry must not over-credit",
+    );
+
+    // Also verify she got her ORO back (10 wei across 10 entries).
+    let oro = helper.query_balance(&alice, ORO_DENOM).unwrap().u128();
+    // Alice started with 10_000_000; staked 1_000_000; unstaked 10; claimed 10.
+    // Balance now = 10_000_000 - 1_000_000 + 10 = 9_000_010.
+    assert_eq!(
+        oro, 9_000_010,
+        "alice ORO balance after multi-Leave + Claim should be 9_000_010",
+    );
+}
+
+/// Instantiate must enforce the same `[MIN, MAX]` bounds on
+/// `unbonding_period` that `UpdateConfig` enforces. Closes the JIT-stake
+/// attack surface where a misdeploy with `0` would let an attacker do
+/// `Enter -> Leave -> Claim` in one block around an AddReward event.
+#[test]
+fn test_instantiate_rejects_bad_unbonding_period() {
+    let owner = Addr::unchecked("owner");
+
+    // Reject: zero.
+    Helper::try_new_with_unbonding(&owner, 0)
+        .map(|_| ())
+        .expect_err("unbonding_period=0 must be rejected");
+
+    // Reject: just below the floor (MIN_UNBONDING_PERIOD = 60).
+    Helper::try_new_with_unbonding(&owner, 59)
+        .map(|_| ())
+        .expect_err("unbonding_period=59 must be rejected");
+
+    // Reject: just above the ceiling (MAX_UNBONDING_PERIOD = 30 days).
+    Helper::try_new_with_unbonding(&owner, 30 * 24 * 60 * 60 + 1)
+        .map(|_| ())
+        .expect_err("unbonding_period above 30d must be rejected");
+
+    // Accept: exact bounds.
+    Helper::try_new_with_unbonding(&owner, 60).expect("MIN bound must instantiate");
+    Helper::try_new_with_unbonding(&owner, 30 * 24 * 60 * 60)
+        .expect("MAX bound must instantiate");
+}
+
 /// `UpdateConfig` accepts a new `minimum_stake_amount`; subsequent Enter
 /// calls are gated by the new floor. Non-owner callers are rejected.
 #[test]

@@ -30,6 +30,15 @@ pub const MAX_UNBONDING_ENTRIES: usize = 10;
 /// Maximum number of distinct active reward denoms.
 pub const MAX_REWARD_DENOMS: usize = 5;
 
+/// Lower bound on `unbonding_period`. Enforced at both `instantiate` and
+/// `UpdateConfig` so a misdeployment can't disable the JIT-stake defence
+/// (same-block Enter -> Leave -> Claim around a reward event).
+pub const MIN_UNBONDING_PERIOD: u64 = 60;
+
+/// Upper bound on `unbonding_period`. Enforced at both `instantiate` and
+/// `UpdateConfig`.
+pub const MAX_UNBONDING_PERIOD: u64 = 30 * 24 * 60 * 60;
+
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
     deps: DepsMut,
@@ -54,6 +63,16 @@ pub fn instantiate(
 
     if msg.minimum_stake_amount.is_zero() {
         return Err(ContractError::MinimumStakeAmountIsZero);
+    }
+
+    // Same bounds as UpdateConfig — a deploy-time `0` would defeat the
+    // JIT-stake defence around AddReward events.
+    if msg.unbonding_period < MIN_UNBONDING_PERIOD
+        || msg.unbonding_period > MAX_UNBONDING_PERIOD
+    {
+        return Err(ContractError::Std(StdError::generic_err(format!(
+            "unbonding_period must be between {MIN_UNBONDING_PERIOD} and {MAX_UNBONDING_PERIOD} seconds"
+        ))));
     }
 
     CONFIG.save(
@@ -390,8 +409,6 @@ fn execute_update_config(
     }
 
     if let Some(period) = unbonding_period {
-        const MIN_UNBONDING_PERIOD: u64 = 60;
-        const MAX_UNBONDING_PERIOD: u64 = 30 * 24 * 60 * 60;
         if period < MIN_UNBONDING_PERIOD || period > MAX_UNBONDING_PERIOD {
             return Err(ContractError::Std(StdError::generic_err(format!(
                 "unbonding_period must be between {MIN_UNBONDING_PERIOD} and {MAX_UNBONDING_PERIOD} seconds"
@@ -582,7 +599,11 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
                     pending_rewards: vec![],
                 });
 
-            let mut pending = user_reward_info.pending_rewards.clone();
+            // Build a Decimal256 accumulator seeded with the carried fractional
+            // remainder, mirror update_rewards + sync_user_rewards into it, then
+            // floor each denom ONCE before returning. The UI gets clean integer
+            // Coins; the contract never persists this read-only state.
+            let mut acc: Vec<(String, Decimal256)> = user_reward_info.pending_rewards.clone();
             let user_shares = STAKES.may_load(deps.storage, &addr)?.unwrap_or_default();
 
             // Pass 1: accrual from currently-active streams.
@@ -598,19 +619,11 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
 
                 if global_reward.index > user_index && !user_shares.is_zero() {
                     let diff = global_reward.index - user_index;
-                    let pending_amount_u256 =
-                        diff * Decimal256::from_ratio(user_shares, 1u64);
-                    let pending_amount: Uint128 =
-                        pending_amount_u256.to_uint_floor().try_into()?;
-
-                    if !pending_amount.is_zero() {
-                        if let Some(c) =
-                            pending.iter_mut().find(|c| c.denom == global_reward.denom)
-                        {
-                            c.amount += pending_amount;
-                        } else {
-                            pending.push(coin(pending_amount.u128(), &global_reward.denom));
-                        }
+                    let accrual = diff * Decimal256::from_ratio(user_shares, 1u64);
+                    if let Some(c) = acc.iter_mut().find(|(d, _)| d == &global_reward.denom) {
+                        c.1 += accrual;
+                    } else {
+                        acc.push((global_reward.denom.clone(), accrual));
                     }
                 }
             }
@@ -632,19 +645,28 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
 
                 if finished_index > user_index && !user_shares.is_zero() {
                     let diff = finished_index - user_index;
-                    let pending_amount_u256 =
-                        diff * Decimal256::from_ratio(user_shares, 1u64);
-                    let pending_amount: Uint128 =
-                        pending_amount_u256.to_uint_floor().try_into()?;
-                    if !pending_amount.is_zero() {
-                        if let Some(c) = pending.iter_mut().find(|c| c.denom == denom) {
-                            c.amount += pending_amount;
-                        } else {
-                            pending.push(coin(pending_amount.u128(), &denom));
-                        }
+                    let accrual = diff * Decimal256::from_ratio(user_shares, 1u64);
+                    if let Some(c) = acc.iter_mut().find(|(d, _)| d == &denom) {
+                        c.1 += accrual;
+                    } else {
+                        acc.push((denom, accrual));
                     }
                 }
             }
+
+            // Floor at the API boundary; suppress zero-amount entries so the
+            // UI never has to filter them out.
+            let pending: Vec<Coin> = acc
+                .into_iter()
+                .filter_map(|(denom, d)| {
+                    let amount: Uint128 = d.to_uint_floor().try_into().ok()?;
+                    if amount.is_zero() {
+                        None
+                    } else {
+                        Some(coin(amount.u128(), denom.as_str()))
+                    }
+                })
+                .collect();
             to_json_binary(&pending)
         }
         QueryMsg::PauseAuthorities {} => {
@@ -930,6 +952,12 @@ fn execute_claim_orphaned_rewards(
 
 /// Accrue rewards earned since the user's last interaction. A user with no
 /// snapshot for a denom starts from `Decimal256::zero()`.
+///
+/// FIND-dust: accrual is accumulated as Decimal256 (no per-sync floor) and
+/// flooring only happens at the boundary when `clear_pending=true` materialises
+/// the bucket into integer Coin(s). The sub-unit remainder stays in
+/// `pending_rewards` so it can grow past 1 unit on a future sync — preventing
+/// the "interact-every-block burns rewards" rounding loss.
 fn sync_user_rewards(
     storage: &mut dyn Storage,
     user: &Addr,
@@ -954,21 +982,18 @@ fn sync_user_rewards(
 
         if global_reward.index > user_index && !user_shares.is_zero() {
             let diff = global_reward.index - user_index;
-            let pending_amount_u256 = diff * Decimal256::from_ratio(user_shares, 1u64);
-            let pending_amount: Uint128 = pending_amount_u256.to_uint_floor().try_into()?;
+            let accrual = diff * Decimal256::from_ratio(user_shares, 1u64);
 
-            if !pending_amount.is_zero() {
-                if let Some(c) = user_reward_info
+            if let Some(c) = user_reward_info
+                .pending_rewards
+                .iter_mut()
+                .find(|(d, _)| d == &global_reward.denom)
+            {
+                c.1 += accrual;
+            } else {
+                user_reward_info
                     .pending_rewards
-                    .iter_mut()
-                    .find(|c| c.denom == global_reward.denom)
-                {
-                    c.amount += pending_amount;
-                } else {
-                    user_reward_info
-                        .pending_rewards
-                        .push(coin(pending_amount.u128(), &global_reward.denom));
-                }
+                    .push((global_reward.denom.clone(), accrual));
             }
         }
 
@@ -1008,20 +1033,17 @@ fn sync_user_rewards(
 
         if finished_index > user_index && !user_shares.is_zero() {
             let diff = finished_index - user_index;
-            let pending_amount_u256 = diff * Decimal256::from_ratio(user_shares, 1u64);
-            let pending_amount: Uint128 = pending_amount_u256.to_uint_floor().try_into()?;
-            if !pending_amount.is_zero() {
-                if let Some(c) = user_reward_info
+            let accrual = diff * Decimal256::from_ratio(user_shares, 1u64);
+            if let Some(c) = user_reward_info
+                .pending_rewards
+                .iter_mut()
+                .find(|(d, _)| d == &denom)
+            {
+                c.1 += accrual;
+            } else {
+                user_reward_info
                     .pending_rewards
-                    .iter_mut()
-                    .find(|c| c.denom == denom)
-                {
-                    c.amount += pending_amount;
-                } else {
-                    user_reward_info
-                        .pending_rewards
-                        .push(coin(pending_amount.u128(), &denom));
-                }
+                    .push((denom.clone(), accrual));
             }
         }
 
@@ -1040,10 +1062,28 @@ fn sync_user_rewards(
         }
     }
 
-    let rewards_to_return = user_reward_info.pending_rewards.clone();
-    if clear_pending {
-        user_reward_info.pending_rewards.clear();
-    }
+    // FIND-dust: when called from Leave (clear_pending=true) materialise the
+    // decimal pending bucket into integer Coins, then CARRY the sub-1
+    // remainder back into pending_rewards so the next sync builds on today's
+    // leftovers instead of starting from zero.
+    let rewards_to_return: Vec<Coin> = if clear_pending {
+        let mut out: Vec<Coin> = Vec::with_capacity(user_reward_info.pending_rewards.len());
+        for (denom, decimal_amount) in user_reward_info.pending_rewards.iter_mut() {
+            let payout: Uint128 = decimal_amount.to_uint_floor().try_into()?;
+            if !payout.is_zero() {
+                out.push(coin(payout.u128(), denom.as_str()));
+                *decimal_amount -= Decimal256::from_ratio(payout, 1u64);
+            }
+        }
+        // Drop fully-zero entries to keep the vec compact.
+        user_reward_info
+            .pending_rewards
+            .retain(|(_, d)| !d.is_zero());
+        out
+    } else {
+        // Callers (Enter) ignore this return value; return empty for cheapness.
+        vec![]
+    };
 
     USER_REWARDS.save(storage, user, &user_reward_info)?;
     Ok(rewards_to_return)
