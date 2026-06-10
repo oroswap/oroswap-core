@@ -595,11 +595,14 @@ pub fn tf_set_denom_metadata_full_msg<T>(
     display: String,
     decimals: u32,
     uri: Option<String>,
+    uri_hash: Option<String>,
 ) -> CosmosMsg<T>
 where
     T: CustomMsg,
 {
     let metadata_uri = uri.unwrap_or_default();
+    let metadata_uri_hash = uri_hash.unwrap_or_default();
+    let base_alias = format!("u{}", display);
     let msg = MsgSetDenomMetadata {
         signer: sender.into(),
         metadata: Some(Metadata {
@@ -608,7 +611,7 @@ where
                 DenomUnit {
                     denom: denom.clone(),
                     exponent: 0,
-                    aliases: vec![],
+                    aliases: vec![base_alias],
                 },
                 DenomUnit {
                     denom: display.clone(),
@@ -621,7 +624,7 @@ where
             name,
             symbol,
             uri: metadata_uri,
-            uri_hash: "".to_string(),
+            uri_hash: metadata_uri_hash,
         }),
     };
 

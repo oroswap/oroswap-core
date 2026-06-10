@@ -61,6 +61,13 @@
         "null"
       ]
     },
+    "mint_uri_hash": {
+      "description": "Optional hash of the content addressed by `mint_uri` (e.g. an IPFS CID or sha256 of the logo / manifest). Empty by default. Editable post-instantiate via `UpdateDenomMetadata` since v5 leaves uri_hash on the mutable side of the freeze.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "owner": {
       "description": "Owner / admin of the contract (can pause/unpause and update config).",
       "type": "string"

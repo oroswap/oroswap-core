@@ -87,6 +87,10 @@ fn test_migrate_same_name() {
 /// Regression guard for the patch-semantics bug: an `UpdateDenomMetadata`
 /// call that supplies only `uri` must NOT silently overwrite the previously
 /// stored name/symbol/description with subdenom-derived defaults.
+///
+/// (Post v5-freeze trim: only description and uri remain in the variant; the
+/// name and symbol fields are immutable post-instantiate and the test now
+/// asserts they remain untouched across any update call.)
 #[cfg(feature = "zigchain")]
 #[test]
 fn test_update_metadata_is_a_patch_not_a_reset() {
@@ -100,6 +104,7 @@ fn test_update_metadata_is_a_patch_not_a_reset() {
                 symbol: "wBRAND".to_string(),
                 description: "Hand-picked description".to_string(),
                 uri: Some("https://old.example/logo.png".to_string()),
+                uri_hash: Some("oldhash".to_string()),
             },
         )
         .unwrap();
@@ -110,10 +115,9 @@ fn test_update_metadata_is_a_patch_not_a_reset() {
         mock_env(),
         mock_info("owner", &[]),
         ExecuteMsg::UpdateDenomMetadata {
-            name: None,
-            symbol: None,
             description: None,
             uri: Some("https://new.example/logo.png".to_string()),
+            uri_hash: None,
         },
     )
     .unwrap();
@@ -123,9 +127,11 @@ fn test_update_metadata_is_a_patch_not_a_reset() {
     assert_eq!(stored.symbol, "wBRAND");
     assert_eq!(stored.description, "Hand-picked description");
     assert_eq!(stored.uri.as_deref(), Some("https://new.example/logo.png"));
+    assert_eq!(stored.uri_hash.as_deref(), Some("oldhash"));
 }
 
-/// Patching a single field overlays only that field; the rest are preserved.
+/// Patching a single editable field overlays only that field; the rest
+/// (including the v5-frozen identity fields) are preserved.
 #[cfg(feature = "zigchain")]
 #[test]
 fn test_update_metadata_overlays_supplied_fields() {
@@ -139,6 +145,7 @@ fn test_update_metadata_overlays_supplied_fields() {
                 symbol: "ORIG".to_string(),
                 description: "Original description".to_string(),
                 uri: Some("https://example/old.png".to_string()),
+                uri_hash: None,
             },
         )
         .unwrap();
@@ -148,19 +155,19 @@ fn test_update_metadata_overlays_supplied_fields() {
         mock_env(),
         mock_info("owner", &[]),
         ExecuteMsg::UpdateDenomMetadata {
-            name: Some("New Name".to_string()),
-            symbol: None,
-            description: None,
+            description: Some("New description".to_string()),
             uri: None,
+            uri_hash: Some("freshhash".to_string()),
         },
     )
     .unwrap();
 
     let stored = DENOM_METADATA.load(&deps.storage).unwrap();
-    assert_eq!(stored.name, "New Name");
+    assert_eq!(stored.name, "Original Name");
     assert_eq!(stored.symbol, "ORIG");
-    assert_eq!(stored.description, "Original description");
+    assert_eq!(stored.description, "New description");
     assert_eq!(stored.uri.as_deref(), Some("https://example/old.png"));
+    assert_eq!(stored.uri_hash.as_deref(), Some("freshhash"));
 }
 
 #[test]
@@ -334,6 +341,7 @@ fn instantiate_rejects_zero_mint_max_supply() {
             lock_denom: "uzig".to_string(),
             mint_subdenom: "wzig".to_string(),
             mint_uri: None,
+            mint_uri_hash: None,
             mint_decimals: 6,
             mint_name: None,
             mint_symbol: None,

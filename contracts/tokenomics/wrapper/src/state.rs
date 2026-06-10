@@ -60,6 +60,9 @@ pub struct DenomMetadata {
     pub description: String,
     /// Optional URI for the on-chain Metadata (logo, manifest, etc.).
     pub uri: Option<String>,
+    /// Optional integrity hash of the content at `uri` (e.g. sha256, IPFS CID).
+    /// Empty / `None` when not provided.
+    pub uri_hash: Option<String>,
 }
 
 pub const CONFIG: Item<Config> = Item::new("config");

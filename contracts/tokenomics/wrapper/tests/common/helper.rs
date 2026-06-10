@@ -87,6 +87,7 @@ impl Helper {
             lock_denom: LOCK_DENOM.to_string(),
             mint_subdenom: MINT_SUBDENOM.to_string(),
             mint_uri: Some("https://example.com/metadata.json".to_string()),
+            mint_uri_hash: None,
             mint_decimals: 6,
             mint_name: None,
             mint_symbol: None,
@@ -298,19 +299,17 @@ impl Helper {
     pub fn update_denom_metadata(
         &mut self,
         sender: &Addr,
-        name: Option<String>,
-        symbol: Option<String>,
         description: Option<String>,
         uri: Option<String>,
+        uri_hash: Option<String>,
     ) -> AnyResult<AppResponse> {
         self.app.execute_contract(
             sender.clone(),
             self.wrapper.clone(),
             &ExecuteMsg::UpdateDenomMetadata {
-                name,
-                symbol,
                 description,
                 uri,
+                uri_hash,
             },
             &[],
         )

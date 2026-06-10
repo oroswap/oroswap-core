@@ -22,6 +22,12 @@ pub struct InstantiateMsg {
     /// Optional URI for the minted token's on-chain metadata.
     pub mint_uri: Option<String>,
 
+    /// Optional hash of the content addressed by `mint_uri` (e.g. an IPFS
+    /// CID or sha256 of the logo / manifest). Empty by default. Editable
+    /// post-instantiate via `UpdateDenomMetadata` since v5 leaves uri_hash
+    /// on the mutable side of the freeze.
+    pub mint_uri_hash: Option<String>,
+
     /// Number of decimals for the minted token. Must match the
     /// `lock_denom`'s decimals so wallets display 1:1 wrapping correctly.
     /// Required — no default, since silently assuming 6 would mis-state
@@ -96,11 +102,17 @@ pub enum ExecuteMsg {
     /// (The tokenfactory module rewrites Metadata as a whole, so the
     /// contract keeps an authoritative copy in storage and re-encodes the
     /// full Metadata on every call — never silently regenerating defaults.)
+    ///
+    /// Only `description`, `uri` and `uri_hash` are accepted. The identity
+    /// fields `name`, `symbol`, `display` and `denom_units` are permanently
+    /// frozen by the ZIGchain v5 tokenfactory upgrade once `total_minted > 0`
+    /// (which is always true after the first Lock), so this variant
+    /// deliberately does not expose them. They are set once at instantiate
+    /// from the InstantiateMsg fields and never mutated afterwards.
     UpdateDenomMetadata {
-        name: Option<String>,
-        symbol: Option<String>,
         description: Option<String>,
         uri: Option<String>,
+        uri_hash: Option<String>,
     },
 
     /// Begin the two-step transfer of the minted denom's bank- and

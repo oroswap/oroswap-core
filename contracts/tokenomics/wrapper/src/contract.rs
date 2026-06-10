@@ -115,6 +115,7 @@ pub fn instantiate(
             symbol,
             description,
             uri: msg.mint_uri,
+            uri_hash: msg.mint_uri_hash,
         },
     )?;
 
@@ -201,6 +202,7 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractEr
                         meta.symbol.to_lowercase(),
                         config.mint_decimals,
                         meta.uri,
+                        meta.uri_hash,
                     ))
                 };
                 #[cfg(not(feature = "zigchain"))]
@@ -268,11 +270,10 @@ pub fn execute(
         }
         ExecuteMsg::RecoverExcess {} => execute_recover_excess(deps, env, info),
         ExecuteMsg::UpdateDenomMetadata {
-            name,
-            symbol,
             description,
             uri,
-        } => execute_update_denom_metadata(deps, env, info, name, symbol, description, uri),
+            uri_hash,
+        } => execute_update_denom_metadata(deps, env, info, description, uri, uri_hash),
         ExecuteMsg::ProposeDenomAdmin {
             bank_admin,
             metadata_admin,
@@ -495,14 +496,20 @@ fn execute_recover_excess(
 /// means "use the value previously persisted by this contract", and on first
 /// update after instantiate we fall back to the same defaults the reply
 /// handler uses.
+/// Update the mutable subset of the minted denom's on-chain Metadata.
+///
+/// Only `description`, `uri` and `uri_hash` are accepted. The identity fields
+/// (`name`, `symbol`, `display`, `denom_units`) are permanently frozen by the
+/// ZIGchain v5 tokenfactory upgrade once `total_minted > 0` — which is always
+/// true after the first Lock — so any update touching them would be rejected
+/// by the chain. They are set once at instantiate from `InstantiateMsg`
 fn execute_update_denom_metadata(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    name: Option<String>,
-    symbol: Option<String>,
     description: Option<String>,
     uri: Option<String>,
+    uri_hash: Option<String>,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
     if info.sender != config.owner {
@@ -518,47 +525,55 @@ fn execute_update_denom_metadata(
 
     #[cfg(feature = "zigchain")]
     {
-        // True patch semantics: overlay any `Some(_)` fields onto the
-        // currently-stored Metadata, keep the rest as-is, then re-encode
-        // the full Metadata for the chain (which only supports a full set,
-        // not a partial update).
+        // Patch only the editable fields. name / symbol / display / decimals
+        // are read back as-is from the stored copy so the full-set msg is
+        // identity-preserving on the frozen fields.
         let mut meta = DENOM_METADATA.load(deps.storage)?;
-        if let Some(v) = name {
-            meta.name = v;
-        }
-        if let Some(v) = symbol {
-            meta.symbol = v;
-        }
         if let Some(v) = description {
             meta.description = v;
         }
         if let Some(v) = uri {
             meta.uri = Some(v);
         }
+        if let Some(v) = uri_hash {
+            meta.uri_hash = Some(v);
+        }
         DENOM_METADATA.save(deps.storage, &meta)?;
 
         let msg = tf_set_denom_metadata_full_msg(
             env.contract.address.clone(),
             config.mint_denom.clone(),
-            meta.name.clone(),
-            meta.symbol.clone(),
-            meta.description.clone(),
-            meta.symbol.to_lowercase(),
-            config.mint_decimals,
-            meta.uri.clone(),
+            meta.name.clone(),           // frozen post-v5 — re-sent unchanged
+            meta.symbol.clone(),         // frozen post-v5 — re-sent unchanged
+            meta.description.clone(),    // editable
+            meta.symbol.to_lowercase(),  // display, frozen — derived, unchanged
+            config.mint_decimals,        // denom_units exponent, frozen
+            meta.uri.clone(),            // editable
+            meta.uri_hash.clone(),       // editable
         );
 
-        Ok(Response::new().add_message(msg).add_attributes([
-            attr("action", "update_denom_metadata"),
-            attr("name", meta.name),
-            attr("symbol", meta.symbol),
-            attr("description", meta.description),
-        ]))
+        // cosmwasm-std rejects empty attribute values, so only attach the
+        // editable fields that actually carry a value after the patch.
+        let mut attrs = vec![attr("action", "update_denom_metadata")];
+        if !meta.description.is_empty() {
+            attrs.push(attr("description", meta.description));
+        }
+        if let Some(u) = meta.uri {
+            if !u.is_empty() {
+                attrs.push(attr("uri", u));
+            }
+        }
+        if let Some(h) = meta.uri_hash {
+            if !h.is_empty() {
+                attrs.push(attr("uri_hash", h));
+            }
+        }
+        Ok(Response::new().add_message(msg).add_attributes(attrs))
     }
 
     #[cfg(not(feature = "zigchain"))]
     {
-        let _ = (env, name, symbol, description, uri);
+        let _ = (env, description, uri, uri_hash);
         Err(StdError::generic_err(
             "UpdateDenomMetadata is only supported with the zigchain feature",
         )

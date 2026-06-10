@@ -61,34 +61,39 @@ unpause() {
 # Pass an empty string ("") for any field you want to leave alone — the
 # helper translates it to `null` before sending.
 #
-# Decimals are NOT updatable. The exponent was baked in at instantiate via
-# `mint_decimals` and the contract reads `config.mint_decimals` on every
-# patch — no need to (and no way to) supply it here.
+# IDENTITY FIELDS NOT UPDATABLE: `name`, `symbol`, `display` and `denom_units`
+# (incl. decimals) are permanently frozen by the ZIGchain v5 tokenfactory
+# upgrade once `total_minted > 0` (always true after the first Lock). They
+# are set once at instantiate via the InstantiateMsg and never mutated.
+# Only the v5-editable fields are accepted here: `description`, `uri`,
+# `uri_hash`.
 #
-# Usage: update_denom_metadata <name|""> <symbol|""> <description|""> <uri|"">
+# Note on `uri_hash`: ZIGchain validates this as a 64-character alphanumeric
+# SHA256 hex string. Anything else (e.g. a "sha256:" prefix or shorter) is
+# rejected by the factory module at message-validation time.
+#
+# Usage: update_denom_metadata <description|""> <uri|""> <uri_hash|"">
 update_denom_metadata() {
-    if [[ $# -lt 4 ]]; then
-        echo "❌ Usage: update_denom_metadata <name|\"\"> <symbol|\"\"> <description|\"\"> <uri|\"\">"
+    if [[ $# -lt 3 ]]; then
+        echo "❌ Usage: update_denom_metadata <description|\"\"> <uri|\"\"> <uri_hash|\"\">"
         echo "   Pass \"\" for any field you want to leave unchanged (patch semantics)."
         exit 1
     fi
-    local name_arg="$1"
-    local symbol_arg="$2"
-    local desc_arg="$3"
-    local uri_arg="$4"
+    local desc_arg="$1"
+    local uri_arg="$2"
+    local uri_hash_arg="$3"
 
     fmt() {
         if [[ -z "$1" ]]; then echo "null"; else echo "\"$1\""; fi
     }
 
-    local name_json symbol_json desc_json uri_json
-    name_json=$(fmt "$name_arg")
-    symbol_json=$(fmt "$symbol_arg")
+    local desc_json uri_json uri_hash_json
     desc_json=$(fmt "$desc_arg")
     uri_json=$(fmt "$uri_arg")
+    uri_hash_json=$(fmt "$uri_hash_arg")
 
     echo "🏷  Patching denom metadata (only non-null fields will change)..."
-    execute "{\"update_denom_metadata\":{\"name\":$name_json,\"symbol\":$symbol_json,\"description\":$desc_json,\"uri\":$uri_json}}" ""
+    execute "{\"update_denom_metadata\":{\"description\":$desc_json,\"uri\":$uri_json,\"uri_hash\":$uri_hash_json}}" ""
 }
 
 # Usage: propose_denom_admin <bank_admin> <metadata_admin>
@@ -215,7 +220,7 @@ if [[ $# -lt 1 ]]; then
   echo "  unlock <amount> <denom>                                     # Unlock tokens"
   echo "  pause                                                       # Pause (owner or pause-authority)"
   echo "  unpause                                                     # Unpause (owner only)"
-  echo "  update_denom_metadata <name> <symbol> <description> <uri>   # Patch metadata; pass \"\" to keep field unchanged"
+  echo "  update_denom_metadata <description> <uri> <uri_hash>          # Patch metadata; pass \"\" to keep field unchanged. name/symbol immutable (v5 freeze)"
   echo "  propose_denom_admin <bank_admin> <metadata_admin>           # Retire: drain MintSupply to 0 first ⚠️"
   echo "  add_pause_authorities <addr1> [addr2] ...                   # Grant pause authority"
   echo "  remove_pause_authorities <addr1> [addr2] ...                # Revoke pause authority"

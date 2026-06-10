@@ -20,7 +20,7 @@ fi
 # ─── Deploy Function ────────────────────────────────────────────────────────
 deploy() {
     if [[ $# -lt 4 ]]; then
-        echo "❌ Usage: deploy <lock_denom> <mint_subdenom> <mint_decimals> <mint_max_supply> [owner]"
+        echo "❌ Usage: deploy <lock_denom> <mint_subdenom> <mint_decimals> <mint_max_supply> [owner] [mint_uri] [mint_uri_hash]"
         echo "   <mint_decimals>    MUST match the source token's decimals so that"
         echo "                      wallets display 1:1 wrapping correctly. E.g. 6 for USDC."
         echo "   <mint_max_supply>  FIND-005: wrapper-enforced cap on the CIRCULATING"
@@ -29,6 +29,11 @@ deploy() {
         echo "                      so wrap/unwrap cycles work forever as long as"
         echo "                      instantaneous supply stays under this value."
         echo "                      Example: 790,000,000 ORO @ 6 decimals → 790000000000000."
+        echo "   [mint_uri]         Optional logo / metadata URI."
+        echo "   [mint_uri_hash]    Optional integrity hash for mint_uri. MUST be a"
+        echo "                      64-character alphanumeric SHA256 hex (ZIGchain"
+        echo "                      factory module rejects anything shorter or with"
+        echo "                      separators like 'sha256:'). Editable post-deploy."
         echo ""
         echo "   The instantiate call attaches --amount 1000uzig to fund the contract"
         echo "   for the ZigChain factory MsgCreateDenom fee (~1000uzig)."
@@ -39,6 +44,8 @@ deploy() {
     local mint_decimals="$3"
     local mint_max_supply="$4"
     local admin="${5:-$($BINARY keys show "$KEY_NAME" -a --keyring-backend "$KEYRING_BACKEND")}"
+    local mint_uri="${6:-}"
+    local mint_uri_hash="${7:-}"
 
     # Pre-flight: refuse a zero cap before paying for the store-code tx.
     # The contract also rejects this at instantiate, but a CLI-side guard
@@ -81,7 +88,12 @@ deploy() {
     #   account. Without --amount the contract has zero balance at
     #   instantiate time → the sub-message reverts → the whole tx
     #   reverts. Don't trim this.
-    local inst_msg="{\"lock_denom\":\"$lock_denom\",\"mint_subdenom\":\"$mint_subdenom\",\"mint_decimals\":$mint_decimals,\"mint_max_supply\":\"$mint_max_supply\",\"owner\":\"$admin\"}"
+    # mint_uri / mint_uri_hash are Option<String> in InstantiateMsg — omit
+    # the key entirely when caller didn't supply (Option defaults to None).
+    local extra=""
+    [[ -n "$mint_uri" ]]      && extra+=",\"mint_uri\":\"$mint_uri\""
+    [[ -n "$mint_uri_hash" ]] && extra+=",\"mint_uri_hash\":\"$mint_uri_hash\""
+    local inst_msg="{\"lock_denom\":\"$lock_denom\",\"mint_subdenom\":\"$mint_subdenom\",\"mint_decimals\":$mint_decimals,\"mint_max_supply\":\"$mint_max_supply\",\"owner\":\"$admin\"$extra}"
 
     local inst_res=$($BINARY tx wasm instantiate "$code_id" "$inst_msg" --label "Oroswap Wrapper ($mint_subdenom)" \
         --admin "$admin" --from "$KEY_NAME" --keyring-backend "$KEYRING_BACKEND" --amount 1000uzig \

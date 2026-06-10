@@ -609,62 +609,95 @@ fn test_initial_metadata_emitted_at_instantiate() {
     assert_eq!(m.display, MINT_SUBDENOM.to_lowercase());
     assert_eq!(m.base, helper.mint_denom);
     assert_eq!(m.uri, "https://example.com/metadata.json");
-    // DenomUnits: [{base, 0}, {display, mint_decimals=6}]
+    // DenomUnits: [{base, 0, aliases:["u<display>"]}, {display, mint_decimals=6, aliases:[]}]
     assert_eq!(m.denom_units.len(), 2);
     assert_eq!(m.denom_units[0].exponent, 0);
+    assert_eq!(
+        m.denom_units[0].aliases,
+        vec![format!("u{}", MINT_SUBDENOM.to_lowercase())],
+        "base micro-unit must carry the conventional u<display> alias",
+    );
     assert_eq!(m.denom_units[1].exponent, 6);
     assert_eq!(m.denom_units[1].denom, MINT_SUBDENOM.to_lowercase());
+    assert_eq!(
+        m.denom_units[1].aliases,
+        Vec::<String>::new(),
+        "display unit should not carry an alias",
+    );
 }
 
-/// Regression for B-3: a partial `UpdateDenomMetadata { uri: Some, rest: None }`
-/// must emit a `MsgSetDenomMetadata` that preserves the previously-stored
-/// name/symbol/description — NOT regenerate them from subdenom defaults — and
-/// must echo back the stored `mint_decimals`, never a hardcoded 6.
+/// Post v5-freeze trim: `UpdateDenomMetadata` only exposes `description` and
+/// `uri`. The frozen identity fields (`name`, `symbol`, `display`, `denom_units`)
+/// must continue to be re-sent UNCHANGED from instantiate-time values inside
+/// every `MsgSetDenomMetadata` the contract emits — so the chain's v5 module
+/// sees same-value writes on frozen fields and accepts the tx, while still
+/// updating the editable fields.
 #[test]
-fn test_update_metadata_partial_patch_preserves_custom_fields() {
+fn test_update_metadata_only_patches_editable_fields() {
     let owner = Addr::unchecked("owner");
     let mut helper = Helper::new(&owner).unwrap();
 
-    // First: set custom branding via a full patch (all fields Some).
+    // Capture the instantiate-time frozen values so we can assert they're
+    // preserved verbatim across every subsequent update.
+    let initial = {
+        let cap = helper.captured.lock().unwrap();
+        cap.set_metadata[0]
+            .metadata
+            .as_ref()
+            .expect("initial metadata")
+            .clone()
+    };
+
+    // First update: change description only.
     helper
         .update_denom_metadata(
             &owner,
-            Some("Custom Wrapped Branding".to_string()),
-            Some("xCUSTOM".to_string()),
             Some("Hand-picked description".to_string()),
-            Some("https://example/v1.png".to_string()),
+            None,
+            None,
         )
         .unwrap();
 
-    // Then: "just update the logo" — only uri.
+    // Second update: change uri only.
+    helper
+        .update_denom_metadata(
+            &owner,
+            None,
+            Some("https://example/v2.png".to_string()),
+            None,
+        )
+        .unwrap();
+
+    // Third update: change uri_hash only.
     helper
         .update_denom_metadata(
             &owner,
             None,
             None,
-            None,
-            Some("https://example/v2.png".to_string()),
+            Some("sha256:abc123".to_string()),
         )
         .unwrap();
 
     let captured = helper.captured.lock().unwrap();
-    // 1 from reply + 2 from the two UpdateDenomMetadata calls = 3.
-    assert_eq!(captured.set_metadata.len(), 3);
+    // 1 from reply + 3 from the three UpdateDenomMetadata calls = 4.
+    assert_eq!(captured.set_metadata.len(), 4);
 
-    let latest = captured.set_metadata[2]
+    let latest = captured.set_metadata[3]
         .metadata
         .as_ref()
         .expect("metadata field");
-    // The custom branding must survive the uri-only patch.
-    assert_eq!(latest.name, "Custom Wrapped Branding");
-    assert_eq!(latest.symbol, "xCUSTOM");
+
+    // Frozen fields: re-sent verbatim from instantiate-time values.
+    assert_eq!(latest.name, initial.name);
+    assert_eq!(latest.symbol, initial.symbol);
+    assert_eq!(latest.display, initial.display);
+    assert_eq!(latest.denom_units, initial.denom_units);
+    assert_eq!(latest.base, initial.base);
+
+    // Editable fields: reflect the most recent updates.
     assert_eq!(latest.description, "Hand-picked description");
-    // display tracks the (latest) symbol.
-    assert_eq!(latest.display, "xcustom");
-    // uri was the only field actually patched.
     assert_eq!(latest.uri, "https://example/v2.png");
-    // Decimals echo the instantiate-time value, NOT a hardcoded 6.
-    assert_eq!(latest.denom_units[1].exponent, 6);
+    assert_eq!(latest.uri_hash, "sha256:abc123");
 }
 
 /// `ProposeDenomAdmin` payload capture: owner-only handler reaches the chain
