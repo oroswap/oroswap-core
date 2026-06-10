@@ -44,4 +44,7 @@ pub enum ContractError {
         mint: cosmwasm_std::Uint128,
         cap: cosmwasm_std::Uint128,
     },
+
+    #[error("uri_hash must be a 64-character hexadecimal SHA256 string (got {got} chars)")]
+    InvalidUriHash { got: usize },
 }

@@ -108,6 +108,11 @@ pub fn instantiate(
     let description = msg
         .mint_description
         .unwrap_or_else(|| format!("Oroswap {} Token", symbol));
+    // Pre-validate uri_hash so a malformed input fails the tx at instantiate
+    // instead of in the create-denom reply, where the chain's "not a valid
+    // SHA256 hash string of 64 alpha numeric characters" error is buried
+    // inside a sub-msg revert.
+    validate_uri_hash(&msg.mint_uri_hash)?;
     DENOM_METADATA.save(
         deps.storage,
         &DenomMetadata {
@@ -423,6 +428,24 @@ fn check_paused(config: &Config) -> Result<(), ContractError> {
     Ok(())
 }
 
+/// Validate the shape of a uri_hash exactly as the ZIGchain factory module
+/// does at message-validation time: must be empty (treat as None) OR exactly
+/// 64 ASCII hex characters (a valid SHA256 hex digest). Surfaces the typed
+/// `InvalidUriHash` error before the tx hits the chain — far better operator
+/// UX than the buried "valid SHA256 hash string of 64 alpha numeric
+/// characters" error returned from inside a sub-msg revert.
+fn validate_uri_hash(uri_hash: &Option<String>) -> Result<(), ContractError> {
+    if let Some(h) = uri_hash {
+        if h.is_empty() {
+            return Ok(());
+        }
+        if h.len() != 64 || !h.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(ContractError::InvalidUriHash { got: h.len() });
+        }
+    }
+    Ok(())
+}
+
 /// Pause is allowed if the sender is the contract owner or sits in the
 /// pause-authority set.
 fn check_pause_authority(storage: &dyn Storage, sender: &Addr) -> Result<(), ContractError> {
@@ -525,6 +548,10 @@ fn execute_update_denom_metadata(
 
     #[cfg(feature = "zigchain")]
     {
+        // Pre-validate uri_hash (see InstantiateMsg path) so chain-side
+        // shape rejection is surfaced as a typed contract error.
+        validate_uri_hash(&uri_hash)?;
+
         // Patch only the editable fields. name / symbol / display / decimals
         // are read back as-is from the stored copy so the full-set msg is
         // identity-preserving on the frozen fields.

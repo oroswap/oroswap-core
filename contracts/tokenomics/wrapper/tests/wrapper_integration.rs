@@ -674,7 +674,7 @@ fn test_update_metadata_only_patches_editable_fields() {
             &owner,
             None,
             None,
-            Some("sha256:abc123".to_string()),
+            Some("3333333333333333333333333333333333333333333333333333333333333333".to_string()),
         )
         .unwrap();
 
@@ -697,7 +697,7 @@ fn test_update_metadata_only_patches_editable_fields() {
     // Editable fields: reflect the most recent updates.
     assert_eq!(latest.description, "Hand-picked description");
     assert_eq!(latest.uri, "https://example/v2.png");
-    assert_eq!(latest.uri_hash, "sha256:abc123");
+    assert_eq!(latest.uri_hash, "3333333333333333333333333333333333333333333333333333333333333333");
 }
 
 /// `ProposeDenomAdmin` payload capture: owner-only handler reaches the chain

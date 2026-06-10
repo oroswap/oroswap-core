@@ -68,16 +68,29 @@ zigchaind tx wasm instantiate $CODE_ID '{
 After instantiate, the minted denom will be
 `coin.<contract_address>.oro`.
 
-`mint_name`, `mint_symbol`, `mint_description`, and `mint_uri` are
-optional. When omitted the contract falls back to `"Oroswap <subdenom>"`,
-`"<subdenom>"`, and `"Oroswap <subdenom> Token"` respectively
-(`mint_uri` stays empty).
+`mint_name`, `mint_symbol`, `mint_description`, `mint_uri`, and
+`mint_uri_hash` are optional. When omitted the contract falls back to
+`"Oroswap <subdenom>"`, `"<subdenom>"`, and `"Oroswap <subdenom> Token"`
+respectively (`mint_uri` and `mint_uri_hash` stay empty).
+
+> `mint_uri_hash`, when supplied, **must** be a 64-character alphanumeric
+> SHA256 hex string (no `sha256:` prefix). The contract pre-validates the
+> shape and rejects malformed values with `InvalidUriHash { got }` before
+> any sub-message is dispatched — matching the ZIGchain factory module's
+> own validation rule.
 
 `mint_decimals` is **required** — no default. It must match the
 `lock_denom`'s source-token decimals (e.g. 6 for USDC) so that the 1:1 wrap-mint displays correctly in wallets.
 The chain bakes this exponent into the denom's `Metadata.denom_units`
 at create-time and the contract refuses to change it later, so getting
 it right here is critical.
+
+The base micro-unit also gets a conventional `u<display>` alias
+automatically (e.g. `display: "oro"` → alias `uoro`), matching the
+`uusdc` / `uatom` / `uosmo` precedent so wallets and CLIs can refer to
+micro-units without writing out the full `coin.<wrapper>.<subdenom>`
+string. `denom_units` (including aliases) is frozen post-v5; the
+alias is therefore set once at instantiate and immutable thereafter.
 
 `mint_max_supply` is **required** — express it in **base units** (i.e.
 already scaled by `mint_decimals`). It defines the **circulating supply
@@ -149,17 +162,29 @@ Owner only. Returns to the owner any `lock_denom` whose balance exceeds
 to the contract without going through `Lock`. Errors with
 `"No excess tokens to recover"` when the invariant already holds.
 
-### `UpdateDenomMetadata { name, symbol, description, uri }`
+### `UpdateDenomMetadata { description, uri, uri_hash }`
 Owner only. **Patch semantics**: any field left as `null` keeps the
 value currently stored on-chain; only `Some(_)` fields are overwritten.
 So `{ "uri": "https://new/logo.png" }` updates the URI alone and leaves
-name/symbol/description untouched — even if they were customised at
+description/uri_hash untouched — even if they were customised at
 instantiate.
 
-Under the hood the ZigChain factory module rewrites Metadata as a whole
+Only `description`, `uri`, and `uri_hash` are accepted. The identity
+fields `name`, `symbol`, `display`, and `denom_units` (including
+decimals) are **permanently frozen** by the ZIGchain v5 tokenfactory
+upgrade once `total_minted > 0` — always true after the first `Lock`.
+The wrapper therefore does not expose them for update; they are set
+once at instantiate via the `InstantiateMsg` and never mutated.
+
+`uri_hash`, when supplied, must be a 64-character alphanumeric SHA256
+hex string (the same shape the chain enforces). The contract validates
+it via `InvalidUriHash { got }` before constructing the chain message.
+
+Under the hood the ZIGchain factory module rewrites Metadata as a whole
 on each `MsgSetDenomMetadata`, so the contract keeps an authoritative
 copy in storage, overlays the supplied fields onto it, and re-encodes
-the full Metadata on every call. `decimals` is sourced from
+the full Metadata on every call — re-sending the frozen fields verbatim
+so the chain sees same-value writes on them. `decimals` is sourced from
 `config.mint_decimals` (set once at instantiate, immutable) — never a
 hardcoded value.
 

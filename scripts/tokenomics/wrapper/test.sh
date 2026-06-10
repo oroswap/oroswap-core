@@ -68,9 +68,11 @@ unpause() {
 # Only the v5-editable fields are accepted here: `description`, `uri`,
 # `uri_hash`.
 #
-# Note on `uri_hash`: ZIGchain validates this as a 64-character alphanumeric
-# SHA256 hex string. Anything else (e.g. a "sha256:" prefix or shorter) is
-# rejected by the factory module at message-validation time.
+# Note on `uri_hash`: must be a 64-character hexadecimal SHA256 string
+# (anything else — e.g. a "sha256:" prefix, wrong length, or non-hex char —
+# is rejected by the wrapper itself with `InvalidUriHash { got }` BEFORE the
+# tx is broadcast, mirroring the ZIGchain factory module's own constraint
+# so operators see a typed error instead of a buried sub-msg revert).
 #
 # Usage: update_denom_metadata <description|""> <uri|""> <uri_hash|"">
 update_denom_metadata() {

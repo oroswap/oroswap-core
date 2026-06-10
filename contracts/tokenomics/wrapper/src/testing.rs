@@ -104,7 +104,9 @@ fn test_update_metadata_is_a_patch_not_a_reset() {
                 symbol: "wBRAND".to_string(),
                 description: "Hand-picked description".to_string(),
                 uri: Some("https://old.example/logo.png".to_string()),
-                uri_hash: Some("oldhash".to_string()),
+                uri_hash: Some(
+                    "1111111111111111111111111111111111111111111111111111111111111111".to_string(),
+                ),
             },
         )
         .unwrap();
@@ -127,7 +129,10 @@ fn test_update_metadata_is_a_patch_not_a_reset() {
     assert_eq!(stored.symbol, "wBRAND");
     assert_eq!(stored.description, "Hand-picked description");
     assert_eq!(stored.uri.as_deref(), Some("https://new.example/logo.png"));
-    assert_eq!(stored.uri_hash.as_deref(), Some("oldhash"));
+    assert_eq!(
+        stored.uri_hash.as_deref(),
+        Some("1111111111111111111111111111111111111111111111111111111111111111"),
+    );
 }
 
 /// Patching a single editable field overlays only that field; the rest
@@ -157,7 +162,9 @@ fn test_update_metadata_overlays_supplied_fields() {
         ExecuteMsg::UpdateDenomMetadata {
             description: Some("New description".to_string()),
             uri: None,
-            uri_hash: Some("freshhash".to_string()),
+            uri_hash: Some(
+                "2222222222222222222222222222222222222222222222222222222222222222".to_string(),
+            ),
         },
     )
     .unwrap();
@@ -167,7 +174,81 @@ fn test_update_metadata_overlays_supplied_fields() {
     assert_eq!(stored.symbol, "ORIG");
     assert_eq!(stored.description, "New description");
     assert_eq!(stored.uri.as_deref(), Some("https://example/old.png"));
-    assert_eq!(stored.uri_hash.as_deref(), Some("freshhash"));
+    assert_eq!(
+        stored.uri_hash.as_deref(),
+        Some("2222222222222222222222222222222222222222222222222222222222222222"),
+    );
+}
+
+/// Pre-broadcast validation: malformed `uri_hash` in `UpdateDenomMetadata`
+/// returns the typed `InvalidUriHash` error instead of being rejected
+/// further down by the ZIGchain factory module. Locks down the three
+/// failure shapes the chain itself enforces (wrong length, non-hex chars,
+/// the common `sha256:` prefix mistake).
+#[cfg(feature = "zigchain")]
+#[test]
+fn test_update_metadata_uri_hash_pre_validation() {
+    let mut deps = mock_dependencies();
+    seed_config(&mut deps, "owner", "uzig", "coin.contract.wzig");
+    DENOM_METADATA
+        .save(
+            &mut deps.storage,
+            &DenomMetadata {
+                name: "Wrapped".to_string(),
+                symbol: "W".to_string(),
+                description: "d".to_string(),
+                uri: None,
+                uri_hash: None,
+            },
+        )
+        .unwrap();
+
+    let cases: &[(&str, usize)] = &[
+        ("sha256:abc123", 13),     // common mistake: prefixed string
+        ("abc123", 6),              // too short
+        (
+            "11111111111111111111111111111111111111111111111111111111111111111", // 65 chars
+            65,
+        ),
+        (
+            "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg", // non-hex (g)
+            64,
+        ),
+    ];
+    for (bad, expected_len) in cases {
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            mock_info("owner", &[]),
+            ExecuteMsg::UpdateDenomMetadata {
+                description: None,
+                uri: None,
+                uri_hash: Some((*bad).to_string()),
+            },
+        )
+        .unwrap_err();
+        match err {
+            ContractError::InvalidUriHash { got } => {
+                assert_eq!(got, *expected_len, "wrong reported length for {bad}");
+            }
+            other => panic!("expected InvalidUriHash for {bad}, got {other:?}"),
+        }
+    }
+
+    // Valid 64-char hex passes (note: subsequent chain call would also accept).
+    execute(
+        deps.as_mut(),
+        mock_env(),
+        mock_info("owner", &[]),
+        ExecuteMsg::UpdateDenomMetadata {
+            description: None,
+            uri: None,
+            uri_hash: Some(
+                "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789".to_string(),
+            ),
+        },
+    )
+    .unwrap();
 }
 
 #[test]
