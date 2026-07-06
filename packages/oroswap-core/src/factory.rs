@@ -24,6 +24,14 @@ pub struct Config {
     pub coin_registry_address: Addr,
 }
 
+/// Historical default pool-creation fee denom (the pre-redenomination base
+/// denom). The denom is stored factory-side (not in `Config`, to avoid bloating
+/// the struct every other contract deserializes) under the `pool_creation_fee_denom`
+/// storage key; this is the value used when that key is unset.
+pub fn default_pool_creation_fee_denom() -> String {
+    "uzig".to_string()
+}
+
 /// This enum describes available pair types.
 /// ## Available pool types
 /// ```
@@ -147,6 +155,13 @@ pub enum ExecuteMsg {
         /// New [`PairConfig`] settings for a pair type
         config: PairConfig,
     },
+    /// Updates the native denom accepted (and forwarded to the maker) as the
+    /// pool-creation fee. Owner only. Kept as a focused message so a base-denom
+    /// rename (e.g. `uzig`->`azig`) needs no code change.
+    UpdatePoolCreationFeeDenom {
+        /// The new pool-creation fee denom (validated as a native denom)
+        denom: String,
+    },
     /// CreatePair instantiates a new pair contract.
     CreatePair {
         /// The pair type (exposed in [`PairType`])
@@ -265,9 +280,28 @@ pub enum QueryMsg {
     PausedPairsCount {},
 }
 
+/// A native-denom rewrite instruction for the redenomination migrate:
+/// rewrite `from` -> `to` across the factory's stored pair keys.
+#[cw_serde]
+pub struct DenomRewrite {
+    /// The denom to rewrite from (e.g. `uzig`)
+    pub from: String,
+    /// The denom to rewrite to (e.g. `azig`)
+    pub to: String,
+}
+
 #[cw_serde]
 pub struct MigrateMsg {
     pub tracker_config: Option<TrackerConfig>,
+    /// When set, the migrate re-keys `PAIRS` and `PAUSED_PAIRS`, swapping the
+    /// native denom `from`->`to` in every stored pair key (the ZIGchain
+    /// `uzig`->`azig` redenomination), and updates `pool_creation_fee_denom`
+    /// if it currently equals `from`. When `None`, the migrate keeps its legacy
+    /// pair-key-normalization behavior (re-derive keys from each pair's own
+    /// reported `asset_infos`). `#[serde(default)]` keeps old `{tracker_config}`
+    /// payloads valid.
+    #[serde(default)]
+    pub redenom: Option<DenomRewrite>,
 }
 
 /// A custom struct for each query response that returns general contract settings/configs.

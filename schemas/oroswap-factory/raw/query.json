@@ -27,7 +27,8 @@
         "pair": {
           "type": "object",
           "required": [
-            "asset_infos"
+            "asset_infos",
+            "pair_type"
           ],
           "properties": {
             "asset_infos": {
@@ -36,6 +37,14 @@
               "items": {
                 "$ref": "#/definitions/AssetInfo"
               }
+            },
+            "pair_type": {
+              "description": "The pair type for which we return pair information",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/PairType"
+                }
+              ]
             }
           },
           "additionalProperties": false
@@ -63,14 +72,15 @@
               "minimum": 0.0
             },
             "start_after": {
-              "description": "The pair item to start reading from. It is an [`Option`] type that accepts [`AssetInfo`] elements.",
-              "type": [
-                "array",
-                "null"
-              ],
-              "items": {
-                "$ref": "#/definitions/AssetInfo"
-              }
+              "description": "The pair item to start reading from. It is an [`Option`] type that contains both asset infos and pair type.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/StartAfter"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "additionalProperties": false
@@ -126,6 +136,93 @@
       ],
       "properties": {
         "tracker_config": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "pairs_by_assets"
+      ],
+      "properties": {
+        "pairs_by_assets": {
+          "type": "object",
+          "required": [
+            "asset_infos"
+          ],
+          "properties": {
+            "asset_infos": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/AssetInfo"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Returns whether a specific pair is paused",
+      "type": "object",
+      "required": [
+        "is_pair_paused"
+      ],
+      "properties": {
+        "is_pair_paused": {
+          "type": "object",
+          "required": [
+            "asset_infos",
+            "pair_type"
+          ],
+          "properties": {
+            "asset_infos": {
+              "description": "The assets for which we check if the pair is paused",
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/AssetInfo"
+              }
+            },
+            "pair_type": {
+              "description": "The pair type to check",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/PairType"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Returns all pause authorities",
+      "type": "object",
+      "required": [
+        "pause_authorities"
+      ],
+      "properties": {
+        "pause_authorities": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Returns the total number of paused pairs",
+      "type": "object",
+      "required": [
+        "paused_pairs_count"
+      ],
+      "properties": {
+        "paused_pairs_count": {
           "type": "object",
           "additionalProperties": false
         }
@@ -232,6 +329,25 @@
           "additionalProperties": false
         }
       ]
+    },
+    "StartAfter": {
+      "type": "object",
+      "required": [
+        "asset_infos",
+        "pair_type"
+      ],
+      "properties": {
+        "asset_infos": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AssetInfo"
+          }
+        },
+        "pair_type": {
+          "$ref": "#/definitions/PairType"
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

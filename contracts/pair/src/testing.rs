@@ -12,15 +12,16 @@ use oroswap::asset::{Asset, AssetInfo, PairInfo};
 use oroswap::common::LP_SUBDENOM;
 use oroswap::factory::PairType;
 use oroswap::pair::{
-    Cw20HookMsg, ExecuteMsg, InstantiateMsg, PoolResponse, ReverseSimulationResponse,
+    Cw20HookMsg, ExecuteMsg, InstantiateMsg, MigrateMsg, PoolResponse, ReverseSimulationResponse,
     SimulationResponse, TWAP_PRECISION,
 };
 use oroswap::token_factory::{MsgBurn, MsgCreateDenom, MsgCreateDenomResponse, MsgMint};
+use cw2::{get_contract_version, set_contract_version};
 
 use crate::contract::compute_offer_amount;
 use crate::contract::reply;
 use crate::contract::{
-    accumulate_prices, assert_max_spread, compute_swap, execute, instantiate, query_pool,
+    accumulate_prices, assert_max_spread, compute_swap, execute, instantiate, migrate, query_pool,
     query_reverse_simulation, query_share, query_simulation,
 };
 use crate::error::ContractError;
@@ -1641,4 +1642,163 @@ fn ensure_useful_error_messages_are_given_on_swaps() {
         StdError::generic_err("Swap amount must not be zero")
     );
     compute_offer_amount(OFFER, ASK, AMOUNT, DZERO).unwrap();
+}
+
+// ─── Migration (uzig->azig redenomination) ───────────────────────────────────
+
+#[cfg(test)]
+fn migrate_test_config(asset0_denom: &str) -> Config {
+    Config {
+        pair_info: PairInfo {
+            asset_infos: vec![
+                AssetInfo::NativeToken {
+                    denom: asset0_denom.to_string(),
+                },
+                AssetInfo::Token {
+                    contract_addr: Addr::unchecked("asset0000"),
+                },
+            ],
+            contract_addr: Addr::unchecked("pair"),
+            liquidity_token: "lp_token".to_owned(),
+            pair_type: PairType::Xyk {},
+        },
+        factory_addr: Addr::unchecked("factory"),
+        block_time_last: 12345,
+        price0_cumulative_last: Uint128::new(999),
+        price1_cumulative_last: Uint128::new(888),
+        track_asset_balances: false,
+        fee_share: None,
+        tracker_addr: None,
+        paused: false,
+    }
+}
+
+#[test]
+fn test_migrate_rewrites_denom_and_resets_twap() {
+    let mut deps = mock_dependencies(&[]);
+    set_contract_version(deps.as_mut().storage, "oroswap-pair", "1.1.0").unwrap();
+    CONFIG
+        .save(deps.as_mut().storage, &migrate_test_config("uzig"))
+        .unwrap();
+
+    let env = mock_env();
+    let res = migrate(
+        deps.as_mut(),
+        env.clone(),
+        MigrateMsg {
+            denom_from: "uzig".to_string(),
+            denom_to: "azig".to_string(),
+        },
+    )
+    .unwrap();
+
+    assert!(res
+        .attributes
+        .iter()
+        .any(|a| a.key == "rewrote" && a.value == "1"));
+
+    let config = CONFIG.load(deps.as_ref().storage).unwrap();
+    assert_eq!(
+        config.pair_info.asset_infos[0],
+        AssetInfo::NativeToken {
+            denom: "azig".to_string()
+        }
+    );
+    // TWAP reset: accumulators zeroed, block_time_last stamped to the migration block.
+    assert!(config.price0_cumulative_last.is_zero());
+    assert!(config.price1_cumulative_last.is_zero());
+    assert_eq!(config.block_time_last, env.block.time.seconds());
+    // cw2 version bumped to the crate version.
+    assert_eq!(
+        get_contract_version(deps.as_ref().storage).unwrap().version,
+        env!("CARGO_PKG_VERSION")
+    );
+}
+
+#[test]
+fn test_migrate_noop_when_denom_absent_preserves_twap() {
+    let mut deps = mock_dependencies(&[]);
+    set_contract_version(deps.as_mut().storage, "oroswap-pair", "1.1.0").unwrap();
+    // Pool has no uzig side.
+    CONFIG
+        .save(deps.as_mut().storage, &migrate_test_config("uusd"))
+        .unwrap();
+
+    let res = migrate(
+        deps.as_mut(),
+        mock_env(),
+        MigrateMsg {
+            denom_from: "uzig".to_string(),
+            denom_to: "azig".to_string(),
+        },
+    )
+    .unwrap();
+
+    assert!(res
+        .attributes
+        .iter()
+        .any(|a| a.key == "rewrote" && a.value == "0"));
+    let config = CONFIG.load(deps.as_ref().storage).unwrap();
+    // Untouched assets + preserved TWAP (a non-uzig pool must not be disturbed).
+    assert_eq!(
+        config.pair_info.asset_infos[0],
+        AssetInfo::NativeToken {
+            denom: "uusd".to_string()
+        }
+    );
+    assert_eq!(config.price0_cumulative_last, Uint128::new(999));
+    assert_eq!(config.price1_cumulative_last, Uint128::new(888));
+    assert_eq!(config.block_time_last, 12345);
+}
+
+#[test]
+fn test_migrate_rejects_wrong_stored_contract() {
+    let mut deps = mock_dependencies(&[]);
+    set_contract_version(deps.as_mut().storage, "some-other-contract", "1.0.0").unwrap();
+    CONFIG
+        .save(deps.as_mut().storage, &migrate_test_config("uzig"))
+        .unwrap();
+
+    let err = migrate(
+        deps.as_mut(),
+        mock_env(),
+        MigrateMsg {
+            denom_from: "uzig".to_string(),
+            denom_to: "azig".to_string(),
+        },
+    )
+    .unwrap_err();
+    match err {
+        ContractError::Std(e) => assert!(e.to_string().contains("Cannot migrate")),
+        _ => panic!("expected Std error, got {err:?}"),
+    }
+    // Guard fired before any state mutation.
+    let config = CONFIG.load(deps.as_ref().storage).unwrap();
+    assert_eq!(
+        config.pair_info.asset_infos[0],
+        AssetInfo::NativeToken {
+            denom: "uzig".to_string()
+        }
+    );
+}
+
+#[test]
+fn test_migrate_rejects_invalid_target_denom() {
+    let mut deps = mock_dependencies(&[]);
+    set_contract_version(deps.as_mut().storage, "oroswap-pair", "1.1.0").unwrap();
+    CONFIG
+        .save(deps.as_mut().storage, &migrate_test_config("uzig"))
+        .unwrap();
+
+    // "x" is too short to be a valid native denom.
+    let err = migrate(
+        deps.as_mut(),
+        mock_env(),
+        MigrateMsg {
+            denom_from: "uzig".to_string(),
+            denom_to: "x".to_string(),
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err, ContractError::Std(_)));
 }

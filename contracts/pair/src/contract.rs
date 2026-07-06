@@ -6,32 +6,33 @@ use std::vec;
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     attr, coin, ensure_eq, from_json, to_json_binary, wasm_execute, Addr, Binary, BankMsg, Coin, CosmosMsg,
-    CustomMsg, CustomQuery, Decimal, Decimal256, Deps, DepsMut, Empty, Env, Fraction, MessageInfo,
+    CustomMsg, CustomQuery, Decimal, Decimal256, Deps, DepsMut, Env, Fraction, MessageInfo,
     QuerierWrapper, Reply, Response, StdError, StdResult, SubMsg, SubMsgResponse, SubMsgResult,
     Uint128, Uint256, Uint64, WasmMsg,
 };
-use cw2::set_contract_version;
+use cw2::{get_contract_version, set_contract_version};
 use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
 use cw_utils::{
     one_coin, parse_reply_instantiate_data, MsgInstantiateContractResponse, PaymentError,
 };
 
 use oroswap::asset::{
-    addr_opt_validate, check_swap_parameters, Asset, AssetInfo, PairInfo,
+    addr_opt_validate, check_swap_parameters, validate_native_denom, Asset, AssetInfo, PairInfo,
     MINIMUM_LIQUIDITY_AMOUNT, CoinsExt,
 };
 use oroswap::common::LP_SUBDENOM;
 use oroswap::incentives::ExecuteMsg as IncentiveExecuteMsg;
 use oroswap::pair::{
-    ConfigResponse, FeeShareConfig, ReplyIds, XYKPoolConfig, XYKPoolParams, XYKPoolUpdateParams,
-    DEFAULT_SLIPPAGE, MAX_ALLOWED_SLIPPAGE, MAX_FEE_SHARE_BPS,
+    ConfigResponse, FeeShareConfig, MigrateMsg, ReplyIds, XYKPoolConfig, XYKPoolParams,
+    XYKPoolUpdateParams, DEFAULT_SLIPPAGE, MAX_ALLOWED_SLIPPAGE, MAX_FEE_SHARE_BPS,
 };
 use oroswap::pair::{
     CumulativePricesResponse, Cw20HookMsg, ExecuteMsg, InstantiateMsg, PoolResponse, QueryMsg,
     ReverseSimulationResponse, SimulationResponse, TWAP_PRECISION,
 };
 use oroswap::querier::{
-    query_factory_config, query_fee_info, query_native_supply, query_tracker_config,
+    query_factory_config, query_factory_pool_creation_fee_denom, query_fee_info,
+    query_native_supply, query_tracker_config,
 };
 use oroswap::token_factory::{
     tf_before_send_hook_msg, tf_burn_msg, tf_create_denom_msg, tf_mint_msg, MsgCreateDenomResponse,
@@ -116,10 +117,13 @@ pub fn instantiate(
         ),
     ];
 
-    // Forward pool creation fee to maker fee address
+    // Forward pool creation fee to maker fee address. The denom is a factory
+    // setting read from the factory (not hardcoded), so a base-denom rename
+    // (e.g. `uzig`->`azig`) needs no pair-code change.
+    let fee_denom = query_factory_pool_creation_fee_denom(&deps.querier, &msg.factory_addr)?;
     messages.push(SubMsg::new(CosmosMsg::Bank(BankMsg::Send {
         to_address: fee_address.to_string(),
-        amount: vec![coin(pair_config.pool_creation_fee.u128(), "uzig")],
+        amount: vec![coin(pair_config.pool_creation_fee.u128(), fee_denom.as_str())],
     })));
 
     Ok(Response::new()
@@ -1466,10 +1470,58 @@ pub fn assert_slippage_tolerance(
     Ok(())
 }
 
-/// Manages the contract migration.
+/// Manages the contract migration for the ZIGchain `uzig`->`azig`
+/// redenomination. Rewrites any `AssetInfo::NativeToken` in
+/// `Config.pair_info.asset_infos` whose denom == `denom_from` to `denom_to`,
+/// and — only if a denom was actually rewritten — resets the TWAP accumulator.
+///
+/// Note: the *previously deployed* code's `unimplemented!()` migrate does NOT
+/// block this — CosmWasm runs the NEW code's migrate entry point.
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(_deps: DepsMut, _env: Env, _msg: Empty) -> Result<Response, ContractError> {
-    unimplemented!("No safe path available for migration")
+pub fn migrate(deps: DepsMut, env: Env, msg: MigrateMsg) -> Result<Response, ContractError> {
+    // cw2 guard: refuse to run against a contract that isn't this one.
+    let stored = get_contract_version(deps.storage)?;
+    if stored.contract != CONTRACT_NAME {
+        return Err(StdError::generic_err(format!(
+            "Cannot migrate: stored contract is `{}`, expected `{CONTRACT_NAME}`",
+            stored.contract
+        ))
+        .into());
+    }
+
+    // Reject a fat-fingered target denom before mutating state.
+    validate_native_denom(&msg.denom_to)?;
+
+    let mut config = CONFIG.load(deps.storage)?;
+    let mut rewrote: u32 = 0;
+    for ai in config.pair_info.asset_infos.iter_mut() {
+        if let AssetInfo::NativeToken { denom } = ai {
+            if *denom == msg.denom_from {
+                *denom = msg.denom_to.clone();
+                rewrote += 1;
+            }
+        }
+    }
+
+    // Reset the TWAP accumulator ONLY if a denom was actually rewritten. The
+    // cumulative-price accumulator integrates the raw reserve ratio; a decimals
+    // change (6->18) rescales that ratio by up to 10^12, so any window spanning
+    // the migration would be meaningless. Stamp `block_time_last` to the current
+    // block (NOT 0) so the first post-migration interval is small rather than
+    // ~the whole Unix epoch. A pool with no `denom_from` side is left untouched.
+    if rewrote > 0 {
+        config.price0_cumulative_last = Uint128::zero();
+        config.price1_cumulative_last = Uint128::zero();
+        config.block_time_last = env.block.time.seconds();
+    }
+
+    CONFIG.save(deps.storage, &config)?;
+    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+    Ok(Response::new()
+        .add_attribute("action", "migrate_denom_rewrite")
+        .add_attribute("denom_from", msg.denom_from)
+        .add_attribute("denom_to", msg.denom_to)
+        .add_attribute("rewrote", rewrote.to_string()))
 }
 
 /// Returns the total amount of assets in the pool as well as the total amount of LP tokens currently minted.

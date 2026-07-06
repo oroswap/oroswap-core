@@ -224,9 +224,20 @@ pub struct CumulativePricesResponse {
 }
 
 /// This structure describes a migration message.
-/// We currently take no arguments for migrations.
+///
+/// Used for the ZIGchain `uzig`->`azig` redenomination: the chain rescales bank
+/// balances but not contract state, so each pool must have the native denom in
+/// its stored `asset_infos` rewritten from `denom_from` to `denom_to`. The
+/// migrate also resets the pool's TWAP accumulator (the reserve-ratio scale
+/// changes across a decimals change). A pool whose `asset_infos` contains no
+/// `denom_from` is left untouched (0 rewrites, TWAP preserved).
 #[cw_serde]
-pub struct MigrateMsg {}
+pub struct MigrateMsg {
+    /// The native denom to rewrite from (e.g. `uzig`)
+    pub denom_from: String,
+    /// The native denom to rewrite to (e.g. `azig`)
+    pub denom_to: String,
+}
 
 /// This structure holds XYK pool parameters.
 #[cw_serde]

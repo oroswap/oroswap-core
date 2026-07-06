@@ -2,7 +2,7 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, Api, Deps, Order, StdResult};
 use cw_storage_plus::{Bound, Item, Map};
 use oroswap::asset::AssetInfo;
-use oroswap::factory::{Config, PairConfig, TrackerConfig, PairType, StartAfter};
+use oroswap::factory::{default_pool_creation_fee_denom, Config, PairConfig, TrackerConfig, PairType, StartAfter};
 use oroswap::common::OwnershipProposal;
 
 #[cfg(test)]
@@ -21,6 +21,21 @@ pub const TMP_PAIR_INFO: Item<TmpPairInfo> = Item::new("tmp_pair_info");
 
 /// Saves factory settings
 pub const CONFIG: Item<Config> = Item::new("config");
+
+/// Native denom accepted (and forwarded to the maker) as the pool-creation fee.
+/// Stored separately from [`Config`] so the shared config struct other contracts
+/// deserialize isn't bloated by a factory-only setting. The raw storage key
+/// (`pool_creation_fee_denom`) is read directly by the pair at instantiate via
+/// `query_factory_pool_creation_fee_denom`.
+pub const POOL_CREATION_FEE_DENOM: Item<String> = Item::new("pool_creation_fee_denom");
+
+/// Loads the pool-creation fee denom, falling back to the historical default
+/// (`uzig`) when unset — e.g. a factory deployed before this key existed.
+pub fn load_pool_creation_fee_denom(storage: &dyn cosmwasm_std::Storage) -> StdResult<String> {
+    Ok(POOL_CREATION_FEE_DENOM
+        .may_load(storage)?
+        .unwrap_or_else(default_pool_creation_fee_denom))
+}
 
 /// Saves created pairs (from olders to latest)
 pub const PAIRS: Map<&[u8], Addr> = Map::new("pair_info");
@@ -54,6 +69,59 @@ pub fn pair_key(asset_infos: &[AssetInfo], pair_type: &PairType) -> Vec<u8> {
     // Append pair type to the key
     key.extend_from_slice(pair_type.to_string().as_bytes());
     key
+}
+
+/// Rebuilds a pair key produced by [`pair_key`] with the native denom `from`
+/// swapped to `to`. Returns `Some(new_key)` if `from` appeared as one of the
+/// key's asset segments, or `None` if the key is unaffected (so callers skip it,
+/// making a redenomination migrate idempotent).
+///
+/// A key is `asset_bytes` (sorted, `\x01`-delimited) followed by `\x01` and the
+/// pair-type string. `\x01` cannot appear inside a valid native denom (see
+/// [`validate_native_denom`]) or a bech32 address, so splitting on it is safe;
+/// the last segment is always the pair type. Because `from` and `to` can sort
+/// differently (e.g. `azig` < `uzig`), the asset segments are re-sorted after
+/// the swap — reproducing exactly what [`pair_key`] would emit for the swapped
+/// assets, which a naive byte substring-replace would not.
+pub fn swap_denom_in_pair_key(old_key: &[u8], from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
+    let mut segments: Vec<Vec<u8>> = old_key
+        .split(|b| *b == 0x01u8)
+        .map(|s| s.to_vec())
+        .collect();
+
+    // A well-formed pair key has at least one asset segment plus the pair-type
+    // segment. Anything shorter is not a pair key we should touch.
+    if segments.len() < 2 {
+        return None;
+    }
+
+    // The final segment is the pair type; everything before it is an asset.
+    let pair_type = segments.pop().unwrap();
+
+    let mut changed = false;
+    for seg in segments.iter_mut() {
+        if seg.as_slice() == from {
+            *seg = to.to_vec();
+            changed = true;
+        }
+    }
+    if !changed {
+        return None;
+    }
+
+    // Re-sort asset segments to match pair_key's byte ordering.
+    segments.sort();
+
+    let mut new_key = Vec::<u8>::new();
+    for (i, seg) in segments.iter().enumerate() {
+        if i > 0 {
+            new_key.extend_from_slice(b"\x01");
+        }
+        new_key.extend_from_slice(seg);
+    }
+    new_key.extend_from_slice(b"\x01");
+    new_key.extend_from_slice(&pair_type);
+    Some(new_key)
 }
 
 /// Saves pair type configurations
@@ -309,5 +377,56 @@ mod tests {
                 }))
             );
         }
+    }
+
+    #[test]
+    fn test_swap_denom_in_pair_key() {
+        let token = token_asset_info(Addr::unchecked("token_addr"));
+
+        // Swapping uzig->azig must equal pair_key rebuilt from the swapped assets.
+        let uzig_assets = [native_asset_info("uzig".to_string()), token.clone()];
+        let azig_assets = [native_asset_info("azig".to_string()), token.clone()];
+        let uzig_key = pair_key(&uzig_assets, &PairType::Xyk {});
+        let expected = pair_key(&azig_assets, &PairType::Xyk {});
+        assert_eq!(
+            swap_denom_in_pair_key(&uzig_key, b"uzig", b"azig").unwrap(),
+            expected
+        );
+
+        // Idempotent: a key already on azig has no uzig segment -> None.
+        assert!(swap_denom_in_pair_key(&expected, b"uzig", b"azig").is_none());
+
+        // Unrelated key (no uzig) -> None.
+        let control = pair_key(
+            &[native_asset_info("uusd".to_string()), token.clone()],
+            &PairType::Xyk {},
+        );
+        assert!(swap_denom_in_pair_key(&control, b"uzig", b"azig").is_none());
+
+        // Two native denoms where the swap flips sort order (uosmo < uzig, but
+        // azig < uosmo): the asset segments must be re-sorted, not substring-replaced.
+        let a = [
+            native_asset_info("uzig".to_string()),
+            native_asset_info("uosmo".to_string()),
+        ];
+        let b = [
+            native_asset_info("azig".to_string()),
+            native_asset_info("uosmo".to_string()),
+        ];
+        assert_eq!(
+            swap_denom_in_pair_key(&pair_key(&a, &PairType::Stable {}), b"uzig", b"azig").unwrap(),
+            pair_key(&b, &PairType::Stable {})
+        );
+
+        // Custom pair type (string contains '-', never \x01) is preserved.
+        assert_eq!(
+            swap_denom_in_pair_key(
+                &pair_key(&uzig_assets, &PairType::Custom("concentrated".to_string())),
+                b"uzig",
+                b"azig"
+            )
+            .unwrap(),
+            pair_key(&azig_assets, &PairType::Custom("concentrated".to_string()))
+        );
     }
 }

@@ -17,11 +17,17 @@
     },
     "fee_address": {
       "description": "Contract address to send governance fees to (the Maker)",
-      "type": ["string", "null"]
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "generator_address": {
       "description": "Address of contract that is used to auto_stake LP tokens once someone provides liquidity in a pool",
-      "type": ["string", "null"]
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "owner": {
       "description": "Address of owner that is allowed to change factory contract parameters",
@@ -63,7 +69,12 @@
     "PairConfig": {
       "description": "This structure stores a pair type's configuration.",
       "type": "object",
-      "required": ["code_id", "maker_fee_bps", "pair_type", "total_fee_bps"],
+      "required": [
+        "code_id",
+        "maker_fee_bps",
+        "pair_type",
+        "total_fee_bps"
+      ],
       "properties": {
         "code_id": {
           "description": "ID of contract which is allowed to create pairs of this type",
@@ -100,6 +111,14 @@
           "default": false,
           "type": "boolean"
         },
+        "pool_creation_fee": {
+          "default": "1000",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Uint128"
+            }
+          ]
+        },
         "total_fee_bps": {
           "description": "The total fees (in bps) charged by a pair of this type",
           "type": "integer",
@@ -115,7 +134,9 @@
         {
           "description": "XYK pair type",
           "type": "object",
-          "required": ["xyk"],
+          "required": [
+            "xyk"
+          ],
           "properties": {
             "xyk": {
               "type": "object",
@@ -127,7 +148,9 @@
         {
           "description": "Stable pair type",
           "type": "object",
-          "required": ["stable"],
+          "required": [
+            "stable"
+          ],
           "properties": {
             "stable": {
               "type": "object",
@@ -139,7 +162,9 @@
         {
           "description": "Custom pair type",
           "type": "object",
-          "required": ["custom"],
+          "required": [
+            "custom"
+          ],
           "properties": {
             "custom": {
               "type": "string"
@@ -151,7 +176,10 @@
     },
     "TrackerConfig": {
       "type": "object",
-      "required": ["code_id", "token_factory_addr"],
+      "required": [
+        "code_id",
+        "token_factory_addr"
+      ],
       "properties": {
         "code_id": {
           "description": "Tracking contract code id",
@@ -165,6 +193,10 @@
         }
       },
       "additionalProperties": false
+    },
+    "Uint128": {
+      "description": "A thin wrapper around u128 that is using strings for JSON encoding/decoding, such that the full u128 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.\n\n# Examples\n\nUse `from` to create instances of this and `u128` to get the value out:\n\n``` # use cosmwasm_std::Uint128; let a = Uint128::from(123u128); assert_eq!(a.u128(), 123);\n\nlet b = Uint128::from(42u64); assert_eq!(b.u128(), 42);\n\nlet c = Uint128::from(70u32); assert_eq!(c.u128(), 70); ```",
+      "type": "string"
     }
   }
 }

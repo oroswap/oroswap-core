@@ -34,6 +34,9 @@ pub enum ContractError {
     #[error("Contract can't be migrated!")]
     MigrationError {},
 
+    #[error("Redenomination re-key collision: the target pair key already exists")]
+    RedenomKeyCollision {},
+
     #[error("Failed to parse or process reply message")]
     FailedToParseReply {},
     
