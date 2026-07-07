@@ -2199,7 +2199,7 @@ dependencies = [
 
 [[package]]
 name = "oroswap-pair-concentrated"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "cosmwasm-schema 1.5.11",
@@ -2225,7 +2225,7 @@ dependencies = [
 
 [[package]]
 name = "oroswap-pair-stable"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "cosmwasm-schema 1.5.11",

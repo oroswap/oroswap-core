@@ -29,7 +29,10 @@ use oroswap::pair::{
     Cw20HookMsg, ExecuteMsg, PoolResponse, QueryMsg, ReverseSimulationResponse, SimulationResponse,
     StablePoolConfig,
 };
-use oroswap::querier::{query_factory_config, query_fee_info, query_native_supply};
+use oroswap::querier::{
+    query_factory_config, query_factory_pool_creation_fee_denom, query_fee_info,
+    query_native_supply,
+};
 use oroswap::token_factory::{tf_burn_msg, tf_create_denom_msg, MsgCreateDenomResponse};
 use oroswap::DecimalCheckedOps;
 use oroswap_circular_buffer::BufferManager;
@@ -140,10 +143,13 @@ pub fn instantiate(
         ),
     ];
 
-    // Forward pool creation fee to maker fee address
+    // Forward pool creation fee to maker fee address. The denom is a factory
+    // setting read from the factory (not hardcoded), so a base-denom rename
+    // (e.g. `uzig`->`azig`) needs no pair-code change.
+    let fee_denom = query_factory_pool_creation_fee_denom(&deps.querier, &msg.factory_addr)?;
     messages.push(SubMsg::new(CosmosMsg::Bank(BankMsg::Send {
         to_address: fee_address.to_string(),
-        amount: vec![coin(pair_config.pool_creation_fee.u128(), "uzig")],
+        amount: vec![coin(pair_config.pool_creation_fee.u128(), fee_denom.as_str())],
     })));
 
     Ok(Response::new()
