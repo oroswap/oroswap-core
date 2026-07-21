@@ -1,6 +1,6 @@
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    attr, Addr, Api, CustomQuery, DepsMut, Env, MessageInfo, Response, StdError, StdResult,
+    attr, Addr, Api, CustomQuery, DepsMut, Env, MessageInfo, Response, StdError, StdResult, Uint128,
 };
 use cw_storage_plus::Item;
 
@@ -9,7 +9,7 @@ const MAX_PROPOSAL_TTL: u64 = 1209600;
 pub const LP_SUBDENOM: &str = "oroswaplptoken";
 
 /// Tokenfactory maxSupply for LP token
-pub const LP_MAX_SUPPLY: u64 = u64::MAX;
+pub const LP_MAX_SUPPLY: Uint128 = Uint128::MAX;
 
 /// This structure describes the parameters used for creating a request for a change of contract ownership.
 #[cw_serde]
