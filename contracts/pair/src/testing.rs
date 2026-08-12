@@ -104,7 +104,7 @@ fn proper_initialization() {
         let decoded_msg: MsgCreateDenom = MsgCreateDenom::try_from(value.clone()).unwrap();
         assert_eq!(decoded_msg.creator, env.contract.address.to_string());
         assert_eq!(decoded_msg.sub_denom, LP_SUBDENOM.to_string());
-        assert_eq!(decoded_msg.minting_cap, u64::MAX.to_string());
+        assert_eq!(decoded_msg.minting_cap, Uint128::MAX.to_string());
         assert_eq!(decoded_msg.can_change_minting_cap, false);
     } else {
         panic!("Expected Stargate message");
