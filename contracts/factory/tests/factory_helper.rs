@@ -179,7 +179,7 @@ impl FactoryHelper {
         };
 
         router.execute_contract(sender.clone(), self.factory.clone(), &msg, &[Coin {
-            denom: "uzig".to_string(),
+            denom: "azig".to_string(),
             amount: Uint128::new(1000),
         }])
     }
@@ -246,7 +246,7 @@ fn mock_app() -> TestApp {
     app.sudo(
         BankSudo::Mint {
             to_address: "owner".to_string(),
-            amount: coins(10000, "uzig"),
+            amount: coins(10000, "azig"),
         }
         .into(),
     )
@@ -255,7 +255,7 @@ fn mock_app() -> TestApp {
     app.sudo(
         BankSudo::Mint {
             to_address: "random_stranger".to_string(),
-            amount: coins(10000, "uzig"),
+            amount: coins(10000, "azig"),
         }
         .into(),
     )

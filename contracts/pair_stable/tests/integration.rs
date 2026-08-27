@@ -192,7 +192,7 @@ fn instantiate_pair(mut router: &mut TestApp, owner: &Addr) -> Addr {
             factory_instance.clone(),
             &msg,
             &[Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000), // Pool creation fee
             }],
         )
@@ -236,7 +236,7 @@ fn test_provide_and_withdraw_liquidity() {
                 amount: Uint128::new(100_000_000_000u128),
             },
             Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000), // Pool creation fee
             },
         ],
@@ -564,7 +564,7 @@ fn provide_lp_for_single_token() {
                 amount: Uint128::new(100_000_000_000u128),
             },
             Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000), // Pool creation fee
             },
         ],
@@ -687,7 +687,7 @@ fn provide_lp_for_single_token() {
     };
 
     app.execute_contract(owner.clone(), factory_instance.clone(), &msg, &[Coin {
-        denom: "uzig".to_string(),
+        denom: "azig".to_string(),
         amount: Uint128::new(1000), // Pool creation fee
     }])
         .unwrap();
@@ -913,7 +913,7 @@ fn test_compatibility_of_tokens_with_different_precision() {
                 amount: Uint128::new(100_000_000_000u128),
             },
             Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000), // Pool creation fee
             },
         ],
@@ -1036,7 +1036,7 @@ fn test_compatibility_of_tokens_with_different_precision() {
     };
 
     app.execute_contract(owner.clone(), factory_instance.clone(), &msg, &[Coin {
-        denom: "uzig".to_string(),
+        denom: "azig".to_string(),
         amount: Uint128::new(1000), // Pool creation fee
     }])
         .unwrap();
@@ -1158,7 +1158,7 @@ fn test_if_twap_is_calculated_correctly_when_pool_idles() {
                 amount: Uint128::new(100_000_000_000000u128),
             },
             Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000), // Pool creation fee
             },
         ],
@@ -1180,7 +1180,7 @@ fn test_if_twap_is_calculated_correctly_when_pool_idles() {
                 amount: Uint128::new(2000000_000000),
             },
             Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000), // Pool creation fee
             },
         ],
@@ -1250,7 +1250,7 @@ fn test_if_twap_is_calculated_correctly_when_pool_idles() {
         factory_addr.clone(),
         &msg,
         &[Coin {
-            denom: "uzig".to_string(),
+            denom: "azig".to_string(),
             amount: Uint128::new(1000),
         }],
     )
@@ -1345,7 +1345,7 @@ fn create_pair_with_same_assets() {
                 amount: Uint128::new(100_000_000_000u128),
             },
             Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000), // Pool creation fee
             },
         ],
@@ -1381,7 +1381,7 @@ fn create_pair_with_same_assets() {
             owner.clone(),
             &msg,
             &[Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000), // Pool creation fee
             }],
             String::from("PAIR"),
@@ -1410,7 +1410,7 @@ fn update_pair_config() {
                 amount: Uint128::new(100_000_000_000u128),
             },
             Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000), // Pool creation fee
             },
         ],
@@ -1483,7 +1483,7 @@ fn update_pair_config() {
             factory_instance.clone(),
             &msg,
             &[Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000), // Pool creation fee
             }],
         )

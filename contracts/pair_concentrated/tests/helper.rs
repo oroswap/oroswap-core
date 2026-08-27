@@ -82,6 +82,10 @@ pub fn init_native_coins(test_coins: &[TestCoin]) -> Vec<Coin> {
         coins.push(coin(INIT_BALANCE, "uzig"));
     }
 
+    // The factory's pool-creation fee is denominated in azig, so every test
+    // account needs a balance of it regardless of what the pool itself trades.
+    coins.push(coin(INIT_BALANCE, "azig"));
+
     coins
 }
 
@@ -302,7 +306,7 @@ impl Helper {
             init_params: Some(to_json_binary(&params).unwrap()),
         };
 
-        app.execute_contract(owner.clone(), factory.clone(), &init_pair_msg, &[coin(1000, "uzig")])?;
+        app.execute_contract(owner.clone(), factory.clone(), &init_pair_msg, &[coin(1000, "azig")])?;
 
         let resp: PairInfo = app.wrap().query_wasm_smart(
             &factory,

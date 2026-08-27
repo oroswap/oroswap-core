@@ -466,7 +466,7 @@ fn create_pair() {
     let info = mock_info(
         "addr0000",
         &[Coin {
-            denom: "uzig".to_string(),
+            denom: "azig".to_string(),
             amount: Uint128::new(1000),
         }],
     );
@@ -587,7 +587,7 @@ fn register() {
 
     let env = mock_env();
     let info = mock_info("addr0000", &[Coin {
-        denom: "uzig".to_string(),
+        denom: "azig".to_string(),
         amount: Uint128::new(1000),
     }]);
     let _res = instantiate(deps.as_mut(), env.clone(), info.clone(), msg.clone()).unwrap();
@@ -609,7 +609,7 @@ fn register() {
 
     let env = mock_env();
     let info = mock_info("addr0000", &[Coin {
-        denom: "uzig".to_string(),
+        denom: "azig".to_string(),
         amount: Uint128::new(1000),
     }]);
     let _res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
@@ -690,7 +690,7 @@ fn register() {
 
     let env = mock_env();
     let info = mock_info("addr0000", &[Coin {
-        denom: "uzig".to_string(),
+        denom: "azig".to_string(),
         amount: Uint128::new(1000),
     }]);
     let _res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
@@ -916,7 +916,7 @@ fn test_pause_pairs_batch() {
             init_params: None,
         };
         let info = mock_info("addr0000", &[Coin {
-            denom: "uzig".to_string(),
+            denom: "azig".to_string(),
             amount: Uint128::new(1000),
         }]);
         execute(deps.as_mut(), env.clone(), info, msg).unwrap();
@@ -1067,7 +1067,7 @@ fn test_unpause_pairs_batch() {
             init_params: None,
         };
         let info = mock_info("addr0000", &[Coin {
-            denom: "uzig".to_string(),
+            denom: "azig".to_string(),
             amount: Uint128::new(1000),
         }]);
         execute(deps.as_mut(), env.clone(), info, msg).unwrap();
@@ -1329,7 +1329,7 @@ fn test_pause_individual_pair() {
         init_params: None,
     };
     let info = mock_info("addr0000", &[Coin {
-        denom: "uzig".to_string(),
+        denom: "azig".to_string(),
         amount: Uint128::new(1000),
     }]);
     execute(deps.as_mut(), env.clone(), info, msg).unwrap();
@@ -1496,7 +1496,7 @@ fn test_pause_all_pairs() {
             init_params: None,
         };
         let info = mock_info("addr0000", &[Coin {
-            denom: "uzig".to_string(),
+            denom: "azig".to_string(),
             amount: Uint128::new(1000),
         }]);
         execute(deps.as_mut(), env.clone(), info, msg).unwrap();

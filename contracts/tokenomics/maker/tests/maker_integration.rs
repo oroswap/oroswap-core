@@ -36,7 +36,7 @@ fn mock_app(owner: Addr, coins: Vec<Coin>) -> TestApp {
     // Initialize balances after app creation
     app.init_modules(|router, _, storage| {
         router.bank.init_balance(storage, &owner, coins);
-        router.bank.init_balance(storage, &owner, vec![coin(10000, "uzig")]); // Provide enough for 10 pairs
+        router.bank.init_balance(storage, &owner, vec![coin(10000, "uzig"), coin(10000, "azig")]); // Provide enough for 10 pairs
     });
     app
 }
@@ -412,7 +412,7 @@ fn create_pair(
     router.init_modules(|router, _, storage| {
         router
             .bank
-            .init_balance(storage, &permissionless, vec![coin(1000, "uzig")])
+            .init_balance(storage, &permissionless, vec![coin(1000, "uzig"), coin(1000, "azig")])
     });
 
     let res = router
@@ -424,7 +424,7 @@ fn create_pair(
                 asset_infos: asset_infos.clone(),
                 init_params: None,
             },
-            &[coin(1000, "uzig")], // Add pool creation fee
+            &[coin(1000, "azig")], // Add pool creation fee
         )
         .unwrap();
 
@@ -2051,7 +2051,7 @@ fn test_collect_cooldown() {
                 asset_infos: asset_infos.to_vec(),
                 init_params: None,
             },
-            &[coin(1000, "uzig")], // Add pool creation fee
+            &[coin(1000, "azig")], // Add pool creation fee
         )
         .unwrap();
 

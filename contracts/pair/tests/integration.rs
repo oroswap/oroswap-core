@@ -154,7 +154,7 @@ fn instantiate_pair(mut router: &mut TestApp, owner: &Addr) -> Addr {
             owner.clone(),
             &msg,
             &[Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000),
             }],
             String::from("PAIR"),
@@ -195,7 +195,7 @@ fn test_provide_and_withdraw_liquidity() {
                 amount: Uint128::new(100_000_000_000u128),
             },
             Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000), // This matches the pool_creation_fee
             },
         ],
@@ -557,7 +557,7 @@ fn test_compatibility_of_tokens_with_different_precision() {
                 amount: Uint128::new(100_000_000_000000u128),
             },
             Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000), // This matches the pool_creation_fee
             },
         ],
@@ -686,7 +686,7 @@ fn test_compatibility_of_tokens_with_different_precision() {
         factory_instance.clone(), 
         &msg, 
         &[Coin {
-            denom: "uzig".to_string(),
+            denom: "azig".to_string(),
             amount: Uint128::new(1000), // This matches the pool_creation_fee we set in the factory config
         }]
     )
@@ -824,7 +824,7 @@ fn test_if_twap_is_calculated_correctly_when_pool_idles() {
                 amount: Uint128::new(100_000_000_000000u128),
             },
             Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000), // This matches the pool_creation_fee
             },
         ],
@@ -844,7 +844,7 @@ fn test_if_twap_is_calculated_correctly_when_pool_idles() {
                 amount: Uint128::new(2000000_000000),
             },
             Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000), // This matches the pool_creation_fee
             },
         ],
@@ -926,7 +926,7 @@ fn create_pair_with_same_assets() {
                 amount: Uint128::new(100_000_000_000u128),
             },
             Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000), // This matches the pool_creation_fee
             },
         ],
@@ -1044,7 +1044,7 @@ fn asset_balances_tracking_works_correctly() {
                 amount: Uint128::new(10000_000000),
             },
             Coin {
-                denom: "uzig".to_owned(),
+                denom: "azig".to_owned(),
                 amount: Uint128::new(1000), // This matches the pool_creation_fee
             },
         ],
@@ -1111,7 +1111,7 @@ fn asset_balances_tracking_works_correctly() {
         factory_instance.clone(), 
         &msg, 
         &[Coin {
-            denom: "uzig".to_string(),
+            denom: "azig".to_string(),
             amount: Uint128::new(1000), // This matches the pool_creation_fee we set in the factory config
         }]
     )
@@ -1292,7 +1292,7 @@ fn update_pair_config() {
                 amount: Uint128::new(100_000_000_000u128),
             },
             Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000), // This matches the pool_creation_fee
             },
         ],
@@ -1358,7 +1358,7 @@ fn update_pair_config() {
             owner.clone(),
             &msg,
             &[Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000),
             }],
             String::from("PAIR"),
@@ -1404,7 +1404,7 @@ fn enable_disable_fee_sharing() {
                 amount: Uint128::new(100_000_000_000u128),
             },
             Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000), // This matches the pool_creation_fee
             },
         ],
@@ -1470,7 +1470,7 @@ fn enable_disable_fee_sharing() {
             owner.clone(),
             &msg,
             &[Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000),
             }],
             String::from("PAIR"),
@@ -1624,7 +1624,7 @@ fn provide_liquidity_with_autostaking_to_generator() {
                 amount: Uint128::new(100_000_000_000u128),
             },
             Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000), // This matches the pool_creation_fee
             },
         ],
@@ -1744,7 +1744,7 @@ fn provide_liquidity_with_autostaking_to_generator() {
         factory_instance.clone(),
         &msg,
         &[Coin {
-            denom: "uzig".to_string(),
+            denom: "azig".to_string(),
             amount: Uint128::new(1000),
         }]
     )
@@ -1842,7 +1842,7 @@ fn test_imbalanced_withdraw_is_disabled() {
                 amount: Uint128::new(100_000_000_000u128),
             },
             Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000), // This matches the pool_creation_fee
             },
         ],
@@ -1995,7 +1995,7 @@ fn test_fee_share(
                 amount: Uint128::new(100_000_000_000000u128),
             },
             Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000), // This matches the pool_creation_fee
             },
         ],
@@ -2125,7 +2125,7 @@ fn test_fee_share(
         factory_instance.clone(), 
         &msg, 
         &[Coin {
-            denom: "uzig".to_string(),
+            denom: "azig".to_string(),
             amount: Uint128::new(1000), // This matches the pool_creation_fee we set in the factory config
         }]
     )
@@ -2310,7 +2310,7 @@ fn test_provide_liquidity_without_funds() {
                 amount: Uint128::new(100_000_000_000u128),
             },
             Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(1000), // This matches the pool_creation_fee
             },
         ],
@@ -2409,7 +2409,7 @@ fn test_tracker_contract() {
                 amount: Uint128::new(1000_000000),
             },
             Coin {
-                denom: "uzig".to_owned(),
+                denom: "azig".to_owned(),
                 amount: Uint128::new(1000), // This matches the pool_creation_fee
             },
         ],
@@ -2476,7 +2476,7 @@ fn test_tracker_contract() {
         factory_instance.clone(), 
         &msg, 
         &[Coin {
-            denom: "uzig".to_string(),
+            denom: "azig".to_string(),
             amount: Uint128::new(1000), // This matches the pool_creation_fee we set in the factory config
         }]
     )
@@ -2579,7 +2579,7 @@ fn test_create_xyk_custom_type() {
         owner.clone(),
         vec![
             Coin {
-                denom: "uzig".to_string(),
+                denom: "azig".to_string(),
                 amount: Uint128::new(2000), // This matches the pool_creation_fee
             },
         ],
@@ -2653,7 +2653,7 @@ fn test_create_xyk_custom_type() {
         factory_instance.clone(), 
         &msg, 
         &[Coin {
-            denom: "uzig".to_string(),
+            denom: "azig".to_string(),
             amount: Uint128::new(1000), // This matches the pool_creation_fee we set in the factory config
         }]
     )
@@ -2697,7 +2697,7 @@ fn test_create_xyk_custom_type() {
         factory_instance.clone(), 
         &msg, 
         &[Coin {
-            denom: "uzig".to_string(),
+            denom: "azig".to_string(),
             amount: Uint128::new(1000), // This matches the pool_creation_fee we set in the factory config
         }]
     )
