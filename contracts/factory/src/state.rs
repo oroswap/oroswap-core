@@ -29,8 +29,10 @@ pub const CONFIG: Item<Config> = Item::new("config");
 /// `query_factory_pool_creation_fee_denom`.
 pub const POOL_CREATION_FEE_DENOM: Item<String> = Item::new("pool_creation_fee_denom");
 
-/// Loads the pool-creation fee denom, falling back to the historical default
-/// (`uzig`) when unset — e.g. a factory deployed before this key existed.
+/// Loads the pool-creation fee denom, falling back to [`default_pool_creation_fee_denom`]
+/// when unset — e.g. a factory deployed before this key existed. Note the
+/// redenomination migrate always writes the key explicitly, so on a migrated
+/// factory the fallback is never reached.
 pub fn load_pool_creation_fee_denom(storage: &dyn cosmwasm_std::Storage) -> StdResult<String> {
     Ok(POOL_CREATION_FEE_DENOM
         .may_load(storage)?

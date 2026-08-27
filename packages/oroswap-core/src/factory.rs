@@ -24,12 +24,18 @@ pub struct Config {
     pub coin_registry_address: Addr,
 }
 
-/// Historical default pool-creation fee denom (the pre-redenomination base
-/// denom). The denom is stored factory-side (not in `Config`, to avoid bloating
-/// the struct every other contract deserializes) under the `pool_creation_fee_denom`
-/// storage key; this is the value used when that key is unset.
+/// Default pool-creation fee denom — the chain's base denom after the v5
+/// redenomination. The denom is stored factory-side (not in `Config`, to avoid
+/// bloating the struct every other contract deserializes) under the
+/// `pool_creation_fee_denom` storage key; this is the value used when that key
+/// is unset, i.e. on a freshly instantiated factory.
+///
+/// A factory deployed on a chain that has NOT redenominated must override this
+/// via `ExecuteMsg::UpdatePoolCreationFeeDenom` right after instantiate,
+/// otherwise pool creation rejects every caller — no one can attach a denom the
+/// chain doesn't have.
 pub fn default_pool_creation_fee_denom() -> String {
-    "uzig".to_string()
+    "azig".to_string()
 }
 
 /// This enum describes available pair types.

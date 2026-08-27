@@ -79,9 +79,10 @@ pub fn instantiate(
     }
     CONFIG.save(deps.storage, &config)?;
 
-    // Pool-creation fee denom (stored outside Config). Defaults to the historical
-    // base denom; change it (e.g. to `azig` on a fresh non-mainnet deploy) via
-    // `ExecuteMsg::UpdatePoolCreationFeeDenom` or the redenomination migrate.
+    // Pool-creation fee denom (stored outside Config). Defaults to the chain's
+    // post-redenomination base denom; override it via
+    // `ExecuteMsg::UpdatePoolCreationFeeDenom` when deploying to a chain that
+    // still uses the pre-redenomination denom.
     POOL_CREATION_FEE_DENOM.save(deps.storage, &default_pool_creation_fee_denom())?;
 
     if let Some(tracker_config) = msg.tracker_config {
@@ -1008,7 +1009,19 @@ pub fn migrate(deps: DepsMut, _env: Env, msg: MigrateMsg) -> Result<Response, Co
             let rekeyed_paused = rekey_paused_pairs_denom(deps.storage, &from, &to)?;
 
             // Keep the pool-creation fee denom consistent with the rename.
-            if load_pool_creation_fee_denom(deps.storage)? == from {
+            //
+            // Read the raw key rather than `load_pool_creation_fee_denom`: an
+            // ABSENT key means a factory predating this field, which charged the
+            // pre-rename base denom and so must be rewritten. Resolving it
+            // through the default instead would make this branch depend on
+            // whatever `default_pool_creation_fee_denom()` happens to return —
+            // and once that default moves to the post-rename denom, the key on
+            // exactly those old factories would silently never be written.
+            //
+            // A factory charging some unrelated denom (e.g. `uusd`) is left
+            // alone, which is why this stays conditional.
+            let current = POOL_CREATION_FEE_DENOM.may_load(deps.storage)?;
+            if current.as_deref().unwrap_or(from.as_str()) == from {
                 POOL_CREATION_FEE_DENOM.save(deps.storage, &to)?;
             }
 
@@ -1373,5 +1386,82 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err, ContractError::RedenomKeyCollision {});
+    }
+
+    /// Live mainnet's 1.1.0 factory has NO `pool_creation_fee_denom` key at all.
+    /// The redenom migrate must still write it, and must do so independently of
+    /// whatever `default_pool_creation_fee_denom()` currently returns.
+    #[test]
+    fn test_migration_redenom_writes_fee_denom_when_key_absent() {
+        let mut deps = mock_deps(&[]);
+        set_contract_version(deps.as_mut().storage, CONTRACT_NAME, "1.1.0").unwrap();
+        CONFIG
+            .save(
+                deps.as_mut().storage,
+                &Config {
+                    owner: Addr::unchecked("owner"),
+                    token_code_id: 1,
+                    generator_address: None,
+                    fee_address: None,
+                    whitelist_code_id: 1,
+                    coin_registry_address: Addr::unchecked("coin_registry"),
+                },
+            )
+            .unwrap();
+        assert!(
+            POOL_CREATION_FEE_DENOM
+                .may_load(deps.as_ref().storage)
+                .unwrap()
+                .is_none(),
+            "precondition: the key must start absent, as on the live 1.1.0 factory"
+        );
+
+        migrate(
+            deps.as_mut(),
+            mock_env(),
+            MigrateMsg {
+                tracker_config: None,
+                redenom: Some(DenomRewrite {
+                    from: "uzig".to_string(),
+                    to: "azig".to_string(),
+                }),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            POOL_CREATION_FEE_DENOM
+                .may_load(deps.as_ref().storage)
+                .unwrap()
+                .as_deref(),
+            Some("azig"),
+            "migrate must write the key explicitly, not leave it to the default"
+        );
+    }
+
+    /// A factory charging an unrelated denom must not be clobbered by the rename.
+    #[test]
+    fn test_migration_redenom_leaves_unrelated_fee_denom_alone() {
+        let mut deps = mock_deps(&[]);
+        set_contract_version(deps.as_mut().storage, CONTRACT_NAME, "1.1.0").unwrap();
+        seed_config(deps.as_mut().storage, "uusd");
+
+        migrate(
+            deps.as_mut(),
+            mock_env(),
+            MigrateMsg {
+                tracker_config: None,
+                redenom: Some(DenomRewrite {
+                    from: "uzig".to_string(),
+                    to: "azig".to_string(),
+                }),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            load_pool_creation_fee_denom(deps.as_ref().storage).unwrap(),
+            "uusd"
+        );
     }
 }

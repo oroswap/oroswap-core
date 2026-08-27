@@ -170,7 +170,7 @@ where
 /// Read directly from the factory's raw storage key `pool_creation_fee_denom`
 /// (kept out of [`FactoryConfig`] so the shared config struct other contracts
 /// deserialize is not bloated by a factory-only setting). Falls back to the
-/// historical default (`uzig`) when the key is unset — e.g. a factory deployed
+/// value from [`default_pool_creation_fee_denom`] when the key is unset — e.g. a factory deployed
 /// before this field existed and not yet migrated.
 pub fn query_factory_pool_creation_fee_denom<C>(
     querier: &QuerierWrapper<C>,
