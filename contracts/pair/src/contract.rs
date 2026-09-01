@@ -28,7 +28,7 @@ use oroswap::pair::{
 };
 use oroswap::pair::{
     CumulativePricesResponse, Cw20HookMsg, ExecuteMsg, InstantiateMsg, PoolResponse, QueryMsg,
-    ReverseSimulationResponse, SimulationResponse, TWAP_PRECISION,
+    ReverseSimulationResponse, SimulationResponse, XYK_TWAP_PRECISION,
 };
 use oroswap::querier::{
     query_factory_config, query_factory_pool_creation_fee_denom, query_fee_info,
@@ -91,8 +91,8 @@ pub fn instantiate(
         },
         factory_addr: deps.api.addr_validate(msg.factory_addr.as_str())?,
         block_time_last: 0,
-        price0_cumulative_last: Uint128::zero(),
-        price1_cumulative_last: Uint128::zero(),
+        price0_cumulative_last: Uint256::zero(),
+        price1_cumulative_last: Uint256::zero(),
         track_asset_balances,
         fee_share: None,
         tracker_addr: None,
@@ -897,20 +897,27 @@ pub fn accumulate_prices(
     config: &Config,
     x: Uint128,
     y: Uint128,
-) -> StdResult<Option<(Uint128, Uint128, u64)>> {
+) -> StdResult<Option<(Uint256, Uint256, u64)>> {
     let block_time = env.block.time.seconds();
     if block_time <= config.block_time_last {
         return Ok(None);
     }
 
     // We have to shift block_time when any price is zero in order to not fill an accumulator with a null price for that period
-    let time_elapsed = Uint128::from(block_time - config.block_time_last);
+    let time_elapsed = Uint256::from(block_time - config.block_time_last);
 
     let mut pcl0 = config.price0_cumulative_last;
     let mut pcl1 = config.price1_cumulative_last;
 
+    // `Uint256` throughout. This integrates the RAW reserve ratio, so at
+    // XYK_TWAP_PRECISION=18 the up-scaled direction leaves `Uint128` within
+    // seconds on a pool whose sides differ widely in decimals — and
+    // `multiply_ratio` PANICS on overflow. That panic reverts without advancing
+    // `block_time_last`, so every later swap panics too and the pool is
+    // permanently unusable. See `test_accumulate_prices_no_overflow_on_extreme_ratio`.
     if !x.is_zero() && !y.is_zero() {
-        let price_precision = Uint128::from(10u128.pow(TWAP_PRECISION.into()));
+        let price_precision = Uint256::from(10u128.pow(XYK_TWAP_PRECISION.into()));
+        let (x, y) = (Uint256::from(x), Uint256::from(y));
         pcl0 = config.price0_cumulative_last.wrapping_add(
             time_elapsed
                 .checked_mul(price_precision)?
@@ -1503,17 +1510,26 @@ pub fn migrate(deps: DepsMut, env: Env, msg: MigrateMsg) -> Result<Response, Con
         }
     }
 
-    // Reset the TWAP accumulator ONLY if a denom was actually rewritten. The
-    // cumulative-price accumulator integrates the raw reserve ratio; a decimals
-    // change (6->18) rescales that ratio by up to 10^12, so any window spanning
-    // the migration would be meaningless. Stamp `block_time_last` to the current
-    // block (NOT 0) so the first post-migration interval is small rather than
-    // ~the whole Unix epoch. A pool with no `denom_from` side is left untouched.
-    if rewrote > 0 {
-        config.price0_cumulative_last = Uint128::zero();
-        config.price1_cumulative_last = Uint128::zero();
-        config.block_time_last = env.block.time.seconds();
-    }
+    // Reset the TWAP accumulator UNCONDITIONALLY.
+    //
+    // Two independent reasons, either of which alone would require it:
+    //
+    //  1. Denom rename. The accumulator integrates the raw reserve ratio; a
+    //     decimals change (6->18) rescales that ratio by up to 10^12, so any
+    //     window spanning the migration would be meaningless.
+    //  2. Precision change. This release moves the XYK accumulator from
+    //     `Uint128` scaled 10^6 to `Uint256` scaled 10^18. Every stored value
+    //     is in the OLD units, so continuing to add to it would mix scales and
+    //     silently corrupt any difference taken across the boundary.
+    //
+    // Reason 2 applies to EVERY pool, including those with no `denom_from` side
+    // (`rewrote == 0`) — which is why this is no longer conditional.
+    //
+    // `block_time_last` is stamped to the current block (NOT 0) so the first
+    // post-migration interval is small rather than ~the whole Unix epoch.
+    config.price0_cumulative_last = Uint256::zero();
+    config.price1_cumulative_last = Uint256::zero();
+    config.block_time_last = env.block.time.seconds();
 
     CONFIG.save(deps.storage, &config)?;
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;

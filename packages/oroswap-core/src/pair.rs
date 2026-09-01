@@ -4,7 +4,7 @@ use cosmwasm_schema::{cw_serde, QueryResponses};
 use crate::asset::{Asset, AssetInfo, PairInfo};
 
 use crate::factory::PairType;
-use cosmwasm_std::{Addr, Binary, Decimal, Decimal256, Empty, StdError, Uint128, Uint64};
+use cosmwasm_std::{Addr, Binary, Decimal, Decimal256, Empty, StdError, Uint128, Uint256, Uint64};
 use cw20::Cw20ReceiveMsg;
 
 /// The default swap slippage
@@ -14,8 +14,24 @@ pub const MAX_ALLOWED_SLIPPAGE: &str = "0.5";
 /// The maximum fee share allowed, 10%
 pub const MAX_FEE_SHARE_BPS: u16 = 1000;
 
-/// Decimal precision for TWAP results
+/// Decimal precision for TWAP results in pools that accumulate a PRECISION-ADJUSTED
+/// price (stable). Those convert each amount to a common precision before
+/// accumulating, so the raw decimal gap between the two assets never reaches the
+/// accumulator and 6 is sufficient.
 pub const TWAP_PRECISION: u8 = 6;
+
+/// Decimal precision for TWAP results in the XYK pair, which accumulates the RAW
+/// reserve ratio and therefore inherits the two assets' decimal gap directly.
+///
+/// At 6, an 18-decimal base denom against a 6-decimal counter asset produced a
+/// per-update increment below 1, so every contribution was floored away and the
+/// accumulator never moved. 18 matches the headroom Astroport's observation
+/// oracle uses (`Decimal`, 18 dp).
+///
+/// This REQUIRES a `Uint256` accumulator: the opposite direction scales UP by the
+/// same ratio, and on a `Uint128` it panics inside `multiply_ratio` — which would
+/// permanently brick every subsequent swap against that pool.
+pub const XYK_TWAP_PRECISION: u8 = 18;
 
 /// Min safe trading size (0.00001) to calculate a price. This value considers
 /// amount in decimal form with respective token precision.
@@ -219,8 +235,10 @@ pub struct CumulativePricesResponse {
     pub assets: Vec<Asset>,
     /// The total amount of LP tokens currently issued
     pub total_share: Uint128,
-    /// The vector contains cumulative prices for each pair of assets in the pool
-    pub cumulative_prices: Vec<(AssetInfo, AssetInfo, Uint128)>,
+    /// The vector contains cumulative prices for each pair of assets in the pool.
+    /// `Uint256` because the accumulator can exceed 128 bits on pools whose two
+    /// sides differ widely in decimals.
+    pub cumulative_prices: Vec<(AssetInfo, AssetInfo, Uint256)>,
 }
 
 /// This structure describes a migration message.

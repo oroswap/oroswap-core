@@ -7,7 +7,7 @@ use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     attr, coin, ensure_eq, from_json, to_json_binary, Addr, Binary, Coin, CosmosMsg, Decimal,
     Decimal256, Deps, DepsMut, Empty, Env, Fraction, MessageInfo, QuerierWrapper, Reply, Response,
-    StdError, StdResult, SubMsg, SubMsgResponse, SubMsgResult, Uint128, WasmMsg, BankMsg,
+    StdError, StdResult, SubMsg, SubMsgResponse, SubMsgResult, Uint128, Uint256, WasmMsg, BankMsg,
 };
 use cw2::set_contract_version;
 use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
@@ -1024,7 +1024,11 @@ pub fn query_cumulative_prices(deps: Deps, env: Env) -> StdResult<CumulativePric
     Ok(CumulativePricesResponse {
         assets,
         total_share,
-        cumulative_prices: config.cumulative_prices,
+        cumulative_prices: config
+            .cumulative_prices
+            .into_iter()
+            .map(|(a, b, v)| (a, b, Uint256::from(v)))
+            .collect(),
     })
 }
 
