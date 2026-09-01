@@ -1,7 +1,21 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "MigrateMsg",
-  "description": "This structure describes a migration message. We currently take no arguments for migrations.",
+  "description": "This structure describes a migration message.\n\nUsed for the ZIGchain `uzig`->`azig` redenomination: the chain rescales bank balances but not contract state, so each pool must have the native denom in its stored `asset_infos` rewritten from `denom_from` to `denom_to`. The migrate also resets the pool's TWAP accumulator (the reserve-ratio scale changes across a decimals change). A pool whose `asset_infos` contains no `denom_from` is left untouched (0 rewrites, TWAP preserved).",
   "type": "object",
+  "required": [
+    "denom_from",
+    "denom_to"
+  ],
+  "properties": {
+    "denom_from": {
+      "description": "The native denom to rewrite from (e.g. `uzig`)",
+      "type": "string"
+    },
+    "denom_to": {
+      "description": "The native denom to rewrite to (e.g. `azig`)",
+      "type": "string"
+    }
+  },
   "additionalProperties": false
 }
