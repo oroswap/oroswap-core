@@ -22,7 +22,7 @@ use oroswap_pair_stable::math::{MAX_AMP, MAX_AMP_CHANGE, MIN_AMP_CHANGING_TIME};
 use oroswap_test::cw_multi_test::{AppBuilder, ContractWrapper, Executor};
 use oroswap_test::modules::stargate::{MockStargate, StargateApp as TestApp};
 use cosmwasm_std::{
-    attr, coin, from_json, to_json_binary, Addr, Coin, Decimal, QueryRequest, Uint128, WasmQuery,
+    attr, coin, from_json, to_json_binary, Addr, Coin, Decimal, QueryRequest, Uint128, Uint256, WasmQuery,
 };
 use cw20::{BalanceResponse, Cw20Coin, Cw20ExecuteMsg, Cw20QueryMsg, MinterResponse};
 
@@ -1326,8 +1326,8 @@ fn test_if_twap_is_calculated_correctly_when_pool_idles() {
 
     // Prices weren't changed for the last day, uusd amount in pool = 4000000_000000, uluna = 2000000_000000
     let price_precision = Uint128::from(10u128.pow(TWAP_PRECISION.into()));
-    assert_eq!(twap0 / price_precision, Uint128::new(85684)); // 1.008356286 * ELAPSED_SECONDS (86400)
-    assert_eq!(twap1 / price_precision, Uint128::new(87121)); // 0.991712963 * ELAPSED_SECONDS
+    assert_eq!(twap0 / Uint256::from(price_precision), Uint256::from(85684u128)); // 1.008356286 * ELAPSED_SECONDS (86400)
+    assert_eq!(twap1 / Uint256::from(price_precision), Uint256::from(87121u128)); // 0.991712963 * ELAPSED_SECONDS
 }
 
 #[test]

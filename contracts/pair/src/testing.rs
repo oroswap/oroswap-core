@@ -2,7 +2,7 @@ use cosmwasm_std::testing::{mock_env, mock_info, MOCK_CONTRACT_ADDR};
 use cosmwasm_std::{
     attr, coin, to_json_binary, Addr, BankMsg, Binary, BlockInfo, Coin, CosmosMsg, Decimal,
     DepsMut, Env, Reply, ReplyOn, Response, StdError, SubMsg, SubMsgResponse, SubMsgResult,
-    Timestamp, Uint128, WasmMsg,
+    Timestamp, Uint128, Uint256, WasmMsg,
 };
 use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
 use proptest::prelude::*;
@@ -13,7 +13,7 @@ use oroswap::common::LP_SUBDENOM;
 use oroswap::factory::PairType;
 use oroswap::pair::{
     Cw20HookMsg, ExecuteMsg, InstantiateMsg, MigrateMsg, PoolResponse, ReverseSimulationResponse,
-    SimulationResponse, TWAP_PRECISION,
+    SimulationResponse, XYK_TWAP_PRECISION,
 };
 use oroswap::token_factory::{MsgBurn, MsgCreateDenom, MsgCreateDenomResponse, MsgMint};
 use cw2::{get_contract_version, set_contract_version};
@@ -1421,7 +1421,7 @@ fn test_accumulate_prices() {
         is_some: bool,
     }
 
-    let price_precision = 10u128.pow(TWAP_PRECISION.into());
+    let price_precision = 10u128.pow(XYK_TWAP_PRECISION.into());
 
     let test_cases: Vec<(Case, Result)> = vec![
         (
@@ -1497,8 +1497,8 @@ fn test_accumulate_prices() {
                 },
                 factory_addr: Addr::unchecked("factory"),
                 block_time_last: case.block_time_last,
-                price0_cumulative_last: Uint128::new(case.last0),
-                price1_cumulative_last: Uint128::new(case.last1),
+                price0_cumulative_last: Uint256::from(case.last0),
+                price1_cumulative_last: Uint256::from(case.last1),
                 track_asset_balances: false,
                 fee_share: None,
                 tracker_addr: None,
@@ -1514,12 +1514,12 @@ fn test_accumulate_prices() {
         if let Some(config) = config {
             assert_eq!(config.2, result.block_time_last);
             assert_eq!(
-                config.0 / Uint128::from(price_precision),
-                Uint128::new(result.price_x)
+                config.0 / Uint256::from(price_precision),
+                Uint256::from(result.price_x)
             );
             assert_eq!(
-                config.1 / Uint128::from(price_precision),
-                Uint128::new(result.price_y)
+                config.1 / Uint256::from(price_precision),
+                Uint256::from(result.price_y)
             );
         }
     }
@@ -1664,8 +1664,8 @@ fn migrate_test_config(asset0_denom: &str) -> Config {
         },
         factory_addr: Addr::unchecked("factory"),
         block_time_last: 12345,
-        price0_cumulative_last: Uint128::new(999),
-        price1_cumulative_last: Uint128::new(888),
+        price0_cumulative_last: Uint256::from(999u128),
+        price1_cumulative_last: Uint256::from(888u128),
         track_asset_balances: false,
         fee_share: None,
         tracker_addr: None,
@@ -1716,7 +1716,7 @@ fn test_migrate_rewrites_denom_and_resets_twap() {
 }
 
 #[test]
-fn test_migrate_noop_when_denom_absent_preserves_twap() {
+fn test_migrate_resets_twap_even_when_denom_absent() {
     let mut deps = mock_dependencies(&[]);
     set_contract_version(deps.as_mut().storage, "oroswap-pair", "1.1.0").unwrap();
     // Pool has no uzig side.
@@ -1739,16 +1739,19 @@ fn test_migrate_noop_when_denom_absent_preserves_twap() {
         .iter()
         .any(|a| a.key == "rewrote" && a.value == "0"));
     let config = CONFIG.load(deps.as_ref().storage).unwrap();
-    // Untouched assets + preserved TWAP (a non-uzig pool must not be disturbed).
+    // Assets untouched — there was no `denom_from` side to rewrite.
     assert_eq!(
         config.pair_info.asset_infos[0],
         AssetInfo::NativeToken {
             denom: "uusd".to_string()
         }
     );
-    assert_eq!(config.price0_cumulative_last, Uint128::new(999));
-    assert_eq!(config.price1_cumulative_last, Uint128::new(888));
-    assert_eq!(config.block_time_last, 12345);
+    // But the TWAP accumulator IS reset. Its units changed in this release
+    // (Uint128 x 10^6 -> Uint256 x 10^18), so carrying the old value forward
+    // would mix scales — this applies to every pool, not just renamed ones.
+    assert!(config.price0_cumulative_last.is_zero());
+    assert!(config.price1_cumulative_last.is_zero());
+    assert_eq!(config.block_time_last, mock_env().block.time.seconds());
 }
 
 #[test]
@@ -1801,4 +1804,111 @@ fn test_migrate_rejects_invalid_target_denom() {
     )
     .unwrap_err();
     assert!(matches!(err, ContractError::Std(_)));
+}
+
+/// FIND-006: with an 18-decimal base denom against a 6-decimal counter asset the
+/// per-update increment fell below 1 and was floored away, so the accumulator
+/// never moved. Uses Halborn's exact shape.
+#[test]
+fn test_accumulate_prices_nonzero_across_18_and_6_decimals() {
+    let azig = 1_000u128 * 10u128.pow(18);
+    let stzig = 2_000u128 * 10u128.pow(6);
+
+    let mut config = migrate_test_config("azig");
+    config.block_time_last = 0;
+    config.price0_cumulative_last = Uint256::zero();
+    config.price1_cumulative_last = Uint256::zero();
+
+    // One second — the granularity at which contributions used to be discarded.
+    let mut env = mock_env();
+    env.block.time = Timestamp::from_seconds(1);
+    let (pcl0, pcl1, _) =
+        accumulate_prices(env, &config, Uint128::new(azig), Uint128::new(stzig))
+            .unwrap()
+            .unwrap();
+
+    assert!(
+        !pcl0.is_zero(),
+        "an 18-vs-6-decimal pool must accumulate; this floored to 0 at precision 6"
+    );
+    assert_eq!(
+        pcl0,
+        Uint256::from(10u128.pow(XYK_TWAP_PRECISION.into())) * Uint256::from(stzig)
+            / Uint256::from(azig)
+    );
+    assert!(!pcl1.is_zero());
+}
+
+/// The other direction scales UP by the same ratio. On a `Uint128` accumulator
+/// this overflowed and `multiply_ratio` PANICS on overflow — which would revert
+/// without advancing `block_time_last`, so every later swap would panic too and
+/// the pool would be permanently unusable. Uses the worst live mainnet ratio
+/// (a drained pool: ~4.9e19 azig against 5 raw units) over two years idle.
+#[test]
+fn test_accumulate_prices_no_overflow_on_extreme_ratio() {
+    let azig = 48_742_240u128 * 10u128.pow(12); // post-redenom reserve
+    let dust = 5u128;
+
+    let mut config = migrate_test_config("azig");
+    config.block_time_last = 0;
+    config.price0_cumulative_last = Uint256::zero();
+    config.price1_cumulative_last = Uint256::zero();
+
+    let mut env = mock_env();
+    env.block.time = Timestamp::from_seconds(2 * 365 * 24 * 60 * 60);
+
+    // Must not panic.
+    let (pcl0, pcl1, _) =
+        accumulate_prices(env, &config, Uint128::new(azig), Uint128::new(dust))
+            .unwrap()
+            .unwrap();
+
+    assert!(!pcl0.is_zero(), "even a drained pool must accumulate");
+    assert!(!pcl1.is_zero());
+    // And the up-scaled side genuinely exceeds what Uint128 could have held.
+    assert!(
+        pcl1 > Uint256::from(u128::MAX),
+        "this is the value that used to overflow and panic"
+    );
+}
+
+/// The accumulator sits in the swap/provide/withdraw path, so it must never panic
+/// regardless of reserve size or idle time. `multiply_ratio` panics on overflow,
+/// so this pins the absolute worst inputs the type system permits.
+#[test]
+fn test_accumulate_prices_never_panics_on_extreme_inputs() {
+    let mut config = migrate_test_config("azig");
+    config.block_time_last = 0;
+    config.price0_cumulative_last = Uint256::zero();
+    config.price1_cumulative_last = Uint256::zero();
+
+    let cases: Vec<(u128, u128, u64, &str)> = vec![
+        (u128::MAX, u128::MAX, 10_000_000_000, "both reserves at Uint128::MAX"),
+        (1, u128::MAX, 10_000_000_000, "max possible ratio, x = 1"),
+        (u128::MAX, 1, 10_000_000_000, "max possible inverse ratio, y = 1"),
+        (10u128.pow(30), 1, 10u64.pow(10), "huge reserve vs 1 raw unit"),
+        (1, 1, 10_000_000_000, "minimum reserves, ~317 years elapsed"),
+    ];
+
+    for (x, y, secs, label) in cases {
+        let mut env = mock_env();
+        env.block.time = Timestamp::from_seconds(secs);
+        let res = accumulate_prices(env, &config, Uint128::new(x), Uint128::new(y));
+        assert!(res.is_ok(), "{label}: must not error");
+        assert!(res.unwrap().is_some(), "{label}: must accumulate");
+    }
+
+    // Carrying a large existing accumulator must also be safe — wrapping_add is
+    // intended behaviour, but it must not panic on the way there.
+    config.price0_cumulative_last = Uint256::MAX - Uint256::from(1u128);
+    config.price1_cumulative_last = Uint256::MAX - Uint256::from(1u128);
+    let mut env = mock_env();
+    env.block.time = Timestamp::from_seconds(86_400);
+    assert!(accumulate_prices(
+        env,
+        &config,
+        Uint128::new(10u128.pow(21)),
+        Uint128::new(10u128.pow(9))
+    )
+    .is_ok());
 }

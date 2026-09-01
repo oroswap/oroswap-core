@@ -2,7 +2,7 @@
 
 use cosmwasm_std::{
     attr, coin, to_json_binary, Addr, Coin, Decimal, DepsMut, Empty, Env, MessageInfo, Response,
-    StdResult, Uint128, Uint64,
+    StdResult, Uint128, Uint256, Uint64,
 };
 use cw20::{BalanceResponse, Cw20Coin, Cw20ExecuteMsg, Cw20QueryMsg, MinterResponse};
 
@@ -15,7 +15,7 @@ use oroswap::factory::{
 use oroswap::pair::{
     ConfigResponse, CumulativePricesResponse, Cw20HookMsg, ExecuteMsg, FeeShareConfig,
     InstantiateMsg, PoolResponse, QueryMsg, XYKPoolConfig, XYKPoolParams, XYKPoolUpdateParams,
-    MAX_FEE_SHARE_BPS, TWAP_PRECISION,
+    MAX_FEE_SHARE_BPS, XYK_TWAP_PRECISION,
 };
 use oroswap::token::InstantiateMsg as TokenInstantiateMsg;
 use oroswap::tokenfactory_tracker::{
@@ -906,9 +906,9 @@ fn test_if_twap_is_calculated_correctly_when_pool_idles() {
 
     // Prices weren't changed for the last day, uusd amount in pool = 3000000_000000, uluna = 2000000_000000
     // In accumulators we don't have any precision so we rely on elapsed time so we don't need to consider it
-    let price_precision = Uint128::from(10u128.pow(TWAP_PRECISION.into()));
-    assert_eq!(twap0 / price_precision, Uint128::new(57600)); // 0.666666 * ELAPSED_SECONDS (86400)
-    assert_eq!(twap1 / price_precision, Uint128::new(129600)); //   1.5 * ELAPSED_SECONDS
+    let price_precision = Uint128::from(10u128.pow(XYK_TWAP_PRECISION.into()));
+    assert_eq!(twap0 / Uint256::from(price_precision), Uint256::from(57600u128)); // 0.666666 * ELAPSED_SECONDS (86400)
+    assert_eq!(twap1 / Uint256::from(price_precision), Uint256::from(129600u128)); //   1.5 * ELAPSED_SECONDS
 }
 
 #[test]
