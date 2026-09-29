@@ -4,17 +4,18 @@ use std::collections::HashSet;
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     attr, ensure, to_json_binary, Addr, Binary, CosmosMsg, Deps, DepsMut, Env, MessageInfo, Order, Reply,
-    ReplyOn, Response, StdError, StdResult, SubMsg, SubMsgResponse, SubMsgResult, WasmMsg,
+    ReplyOn, Response, StdError, StdResult, Storage, SubMsg, SubMsgResponse, SubMsgResult, WasmMsg,
 };
 use cw2::{get_contract_version, set_contract_version};
 use cw_utils::parse_instantiate_response_data;
 use itertools::Itertools;
 
-use oroswap::asset::{addr_opt_validate, AssetInfo, PairInfo};
+use oroswap::asset::{addr_opt_validate, validate_native_denom, AssetInfo, PairInfo};
 use oroswap::common::{claim_ownership, drop_ownership_proposal, propose_new_owner};
 use oroswap::factory::{
-    Config, ConfigResponse, ExecuteMsg, FeeInfoResponse, InstantiateMsg, MigrateMsg, PairConfig,
-    PairType, PairsResponse, QueryMsg, StartAfter, TrackerConfig,
+    default_pool_creation_fee_denom, Config, ConfigResponse, DenomRewrite, ExecuteMsg,
+    FeeInfoResponse, InstantiateMsg, MigrateMsg, PairConfig, PairType, PairsResponse, QueryMsg,
+    StartAfter, TrackerConfig,
 };
 use oroswap::incentives::ExecuteMsg::DeactivatePool;
 use oroswap::pair::InstantiateMsg as PairInstantiateMsg;
@@ -22,8 +23,9 @@ use oroswap::pair::InstantiateMsg as PairInstantiateMsg;
 use crate::error::ContractError;
 use crate::querier::query_pair_info;
 use crate::state::{
-    check_asset_infos, pair_key, read_pairs, TmpPairInfo, CONFIG, OWNERSHIP_PROPOSAL, PAIRS,
-    PAIR_CONFIGS, TMP_PAIR_INFO, TRACKER_CONFIG, PAUSED_PAIRS, PAUSE_AUTHORITIES,
+    check_asset_infos, load_pool_creation_fee_denom, pair_key, read_pairs, swap_denom_in_pair_key,
+    TmpPairInfo, CONFIG, OWNERSHIP_PROPOSAL, PAIRS, PAIR_CONFIGS, POOL_CREATION_FEE_DENOM,
+    TMP_PAIR_INFO, TRACKER_CONFIG, PAUSED_PAIRS, PAUSE_AUTHORITIES,
 };
 
 /// Contract name that is used for migration.
@@ -76,6 +78,12 @@ pub fn instantiate(
         PAIR_CONFIGS.save(deps.storage, pc.pair_type.to_string(), pc)?;
     }
     CONFIG.save(deps.storage, &config)?;
+
+    // Pool-creation fee denom (stored outside Config). Defaults to the chain's
+    // post-redenomination base denom; override it via
+    // `ExecuteMsg::UpdatePoolCreationFeeDenom` when deploying to a chain that
+    // still uses the pre-redenomination denom.
+    POOL_CREATION_FEE_DENOM.save(deps.storage, &default_pool_creation_fee_denom())?;
 
     if let Some(tracker_config) = msg.tracker_config {
         TRACKER_CONFIG.save(
@@ -163,6 +171,9 @@ pub fn execute(
             },
         ),
         ExecuteMsg::UpdatePairConfig { config } => execute_update_pair_config(deps, info, config),
+        ExecuteMsg::UpdatePoolCreationFeeDenom { denom } => {
+            execute_update_pool_creation_fee_denom(deps, info, denom)
+        }
         ExecuteMsg::CreatePair {
             pair_type,
             asset_infos,
@@ -290,6 +301,33 @@ pub fn execute_update_pair_config(
     Ok(Response::new().add_attribute("action", "update_pair_config"))
 }
 
+/// Updates the native denom accepted (and forwarded to the maker) as the
+/// pool-creation fee.
+///
+/// ## Executor
+/// Only the owner can execute this.
+pub fn execute_update_pool_creation_fee_denom(
+    deps: DepsMut,
+    info: MessageInfo,
+    denom: String,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+
+    // Permission check
+    if info.sender != config.owner {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    // Reject a malformed denom before it can silently break pool creation.
+    validate_native_denom(&denom)?;
+
+    POOL_CREATION_FEE_DENOM.save(deps.storage, &denom)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "update_pool_creation_fee_denom")
+        .add_attribute("pool_creation_fee_denom", denom))
+}
+
 /// Creates a new pair of `pair_type` with the assets specified in `asset_infos`.
 ///
 /// * **pair_type** is the pair type of the newly created pair.
@@ -330,9 +368,11 @@ pub fn execute_create_pair(
     // Check if pool creation fee is included
     let pool_creation_fee = pair_config.pool_creation_fee;
     let funds = info.funds.clone();
-    
-    // Find the fee coin in the funds
-    let fee_coin = funds.iter().find(|coin| coin.denom == "uzig");
+
+    // Find the fee coin in the funds. The denom is a configurable factory setting
+    // (stored outside Config) so a base-denom rename needs no code change.
+    let fee_denom = load_pool_creation_fee_denom(deps.storage)?;
+    let fee_coin = funds.iter().find(|coin| coin.denom == fee_denom);
     match fee_coin {
         Some(coin) => {
             if coin.amount < pool_creation_fee {
@@ -944,7 +984,7 @@ pub fn query_paused_pairs_count(deps: Deps) -> StdResult<u32> {
 
 /// Manages the contract migration.
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
+pub fn migrate(deps: DepsMut, _env: Env, msg: MigrateMsg) -> Result<Response, ContractError> {
     let contract_version = get_contract_version(deps.storage)?;
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
@@ -954,32 +994,117 @@ pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, C
         .add_attribute("new_contract_name", CONTRACT_NAME)
         .add_attribute("new_contract_version", CONTRACT_VERSION);
 
-    // Get all pairs from storage
-    let pairs: Vec<(Vec<u8>, Addr)> = PAIRS
-        .range(deps.storage, None, None, Order::Ascending)
-        .collect::<StdResult<Vec<_>>>()?;
+    match msg.redenom {
+        // Redenomination re-key: swap the native denom `from`->`to` in every
+        // stored pair key for BOTH PAIRS and PAUSED_PAIRS. Done purely on the
+        // key bytes (no per-pair cross-contract queries — safe for hundreds of
+        // pairs) and independent of whether the pair contracts themselves have
+        // migrated yet. Idempotent: a second run finds no `from` segments.
+        Some(DenomRewrite { from, to }) => {
+            // Reject fat-fingered denoms before mutating any keys.
+            validate_native_denom(&from)?;
+            validate_native_denom(&to)?;
 
-    // For each pair, check if it needs migration
-    for (raw_key, pair_addr) in pairs {
-        // Get actual pair info from contract
-        let pair_info = query_pair_info(&deps.querier, &pair_addr)?;
-        
-        // Compute what the key should be
-        let expected_key = pair_key(&pair_info.asset_infos, &pair_info.pair_type);
+            let rekeyed_pairs = rekey_pairs_denom(deps.storage, &from, &to)?;
+            let rekeyed_paused = rekey_paused_pairs_denom(deps.storage, &from, &to)?;
 
-        // If key is already correct, skip
-        if raw_key == expected_key {
-            continue;
+            // Keep the pool-creation fee denom consistent with the rename.
+            //
+            // Read the raw key rather than `load_pool_creation_fee_denom`: an
+            // ABSENT key means a factory predating this field, which charged the
+            // pre-rename base denom and so must be rewritten. Resolving it
+            // through the default instead would make this branch depend on
+            // whatever `default_pool_creation_fee_denom()` happens to return —
+            // and once that default moves to the post-rename denom, the key on
+            // exactly those old factories would silently never be written.
+            //
+            // A factory charging some unrelated denom (e.g. `uusd`) is left
+            // alone, which is why this stays conditional.
+            let current = POOL_CREATION_FEE_DENOM.may_load(deps.storage)?;
+            if current.as_deref().unwrap_or(from.as_str()) == from {
+                POOL_CREATION_FEE_DENOM.save(deps.storage, &to)?;
+            }
+
+            response = response
+                .add_attribute("action", "migrate_redenom")
+                .add_attribute("redenom_from", from)
+                .add_attribute("redenom_to", to)
+                .add_attribute("rekeyed_pairs", rekeyed_pairs.to_string())
+                .add_attribute("rekeyed_paused_pairs", rekeyed_paused.to_string());
         }
+        // Legacy behavior: normalize any pair keys that no longer match the
+        // current pair_key() format, re-deriving the expected key from each
+        // pair's own reported asset_infos.
+        None => {
+            let pairs: Vec<(Vec<u8>, Addr)> = PAIRS
+                .range(deps.storage, None, None, Order::Ascending)
+                .collect::<StdResult<Vec<_>>>()?;
 
-        // Otherwise migrate to new key
-        PAIRS.save(deps.storage, &expected_key, &pair_addr)?;
-        PAIRS.remove(deps.storage, &raw_key);
-
-        response = response.add_attribute("migrated_pair", pair_addr.to_string());
+            for (raw_key, pair_addr) in pairs {
+                let pair_info = query_pair_info(&deps.querier, &pair_addr)?;
+                let expected_key = pair_key(&pair_info.asset_infos, &pair_info.pair_type);
+                if raw_key == expected_key {
+                    continue;
+                }
+                PAIRS.save(deps.storage, &expected_key, &pair_addr)?;
+                PAIRS.remove(deps.storage, &raw_key);
+                response = response.add_attribute("migrated_pair", pair_addr.to_string());
+            }
+        }
     }
 
     Ok(response)
+}
+
+/// Re-keys [`PAIRS`], swapping native denom `from`->`to` in each stored key.
+/// Pure key-byte transform (no cross-contract queries). Returns the number of
+/// re-keyed entries. Errors on a collision with a pre-existing target key.
+fn rekey_pairs_denom(
+    storage: &mut dyn Storage,
+    from: &str,
+    to: &str,
+) -> Result<u32, ContractError> {
+    let entries: Vec<(Vec<u8>, Addr)> = PAIRS
+        .range(storage, None, None, Order::Ascending)
+        .collect::<StdResult<Vec<_>>>()?;
+
+    let mut rekeyed = 0u32;
+    for (old_key, addr) in entries {
+        if let Some(new_key) = swap_denom_in_pair_key(&old_key, from.as_bytes(), to.as_bytes()) {
+            if PAIRS.has(storage, &new_key) {
+                return Err(ContractError::RedenomKeyCollision {});
+            }
+            PAIRS.save(storage, &new_key, &addr)?;
+            PAIRS.remove(storage, &old_key);
+            rekeyed += 1;
+        }
+    }
+    Ok(rekeyed)
+}
+
+/// Same as [`rekey_pairs_denom`] but for [`PAUSED_PAIRS`] so paused uzig pairs
+/// keep their paused state after the rename.
+fn rekey_paused_pairs_denom(
+    storage: &mut dyn Storage,
+    from: &str,
+    to: &str,
+) -> Result<u32, ContractError> {
+    let entries: Vec<(Vec<u8>, ())> = PAUSED_PAIRS
+        .range(storage, None, None, Order::Ascending)
+        .collect::<StdResult<Vec<_>>>()?;
+
+    let mut rekeyed = 0u32;
+    for (old_key, _) in entries {
+        if let Some(new_key) = swap_denom_in_pair_key(&old_key, from.as_bytes(), to.as_bytes()) {
+            if PAUSED_PAIRS.has(storage, &new_key) {
+                return Err(ContractError::RedenomKeyCollision {});
+            }
+            PAUSED_PAIRS.save(storage, &new_key, &())?;
+            PAUSED_PAIRS.remove(storage, &old_key);
+            rekeyed += 1;
+        }
+    }
+    Ok(rekeyed)
 }
 
 /// Returns a vector of pairs that contain items of type [`PairInfo`].
@@ -1115,7 +1240,7 @@ mod tests {
         ]);
 
         // Run migration
-        let res = migrate(deps.as_mut(), mock_env(), MigrateMsg { tracker_config: None }).unwrap();
+        let res = migrate(deps.as_mut(), mock_env(), MigrateMsg { tracker_config: None, redenom: None }).unwrap();
 
         // Verify migration attributes
         assert!(res.attributes.iter().any(|attr| 
@@ -1152,7 +1277,7 @@ mod tests {
         assert_eq!(PAIRS.load(deps.as_ref().storage, &xyk_30_key).unwrap(), pair5_addr);
 
         // Test double migration
-        let res2 = migrate(deps.as_mut(), mock_env(), MigrateMsg { tracker_config: None }).unwrap();
+        let res2 = migrate(deps.as_mut(), mock_env(), MigrateMsg { tracker_config: None, redenom: None }).unwrap();
         
         // Verify no pairs were migrated in second run
         assert!(!res2.attributes.iter().any(|attr| attr.key == "migrated_pair"));
@@ -1163,5 +1288,180 @@ mod tests {
         assert_eq!(PAIRS.load(deps.as_ref().storage, &new_key).unwrap(), pair3_addr);
         assert_eq!(PAIRS.load(deps.as_ref().storage, &custom_key).unwrap(), pair4_addr);
         assert_eq!(PAIRS.load(deps.as_ref().storage, &xyk_30_key).unwrap(), pair5_addr);
+    }
+
+    /// Seeds a minimal factory `Config` so the redenom migrate branch (which
+    /// loads CONFIG to fix the fee denom) can run.
+    fn seed_config(storage: &mut dyn cosmwasm_std::Storage, fee_denom: &str) {
+        CONFIG
+            .save(
+                storage,
+                &Config {
+                    owner: Addr::unchecked("owner"),
+                    token_code_id: 1,
+                    generator_address: None,
+                    fee_address: None,
+                    whitelist_code_id: 1,
+                    coin_registry_address: Addr::unchecked("coin_registry"),
+                },
+            )
+            .unwrap();
+        POOL_CREATION_FEE_DENOM.save(storage, &fee_denom.to_string()).unwrap();
+    }
+
+    #[test]
+    fn test_migration_redenom_rekeys_pairs_and_paused() {
+        let mut deps = mock_deps(&[]);
+        set_contract_version(deps.as_mut().storage, CONTRACT_NAME, "1.1.0").unwrap();
+        seed_config(deps.as_mut().storage, "uzig");
+
+        let token = token_asset_info(Addr::unchecked("token_addr"));
+        let uzig_assets = vec![native_asset_info("uzig".to_string()), token.clone()];
+        let azig_assets = vec![native_asset_info("azig".to_string()), token.clone()];
+        let control_assets = vec![native_asset_info("uusd".to_string()), token.clone()];
+
+        let uzig_key = pair_key(&uzig_assets, &PairType::Xyk {});
+        let azig_key = pair_key(&azig_assets, &PairType::Xyk {});
+        let control_key = pair_key(&control_assets, &PairType::Xyk {});
+
+        let uzig_pair = Addr::unchecked("uzig_pair");
+        let control_pair = Addr::unchecked("control_pair");
+        PAIRS.save(deps.as_mut().storage, &uzig_key, &uzig_pair).unwrap();
+        PAIRS.save(deps.as_mut().storage, &control_key, &control_pair).unwrap();
+        // The uzig pool is paused — its PAUSED_PAIRS entry must move too.
+        PAUSED_PAIRS.save(deps.as_mut().storage, &uzig_key, &()).unwrap();
+
+        let redenom = MigrateMsg {
+            tracker_config: None,
+            redenom: Some(DenomRewrite { from: "uzig".to_string(), to: "azig".to_string() }),
+        };
+        let res = migrate(deps.as_mut(), mock_env(), redenom.clone()).unwrap();
+
+        assert!(res.attributes.iter().any(|a| a.key == "rekeyed_pairs" && a.value == "1"));
+        assert!(res.attributes.iter().any(|a| a.key == "rekeyed_paused_pairs" && a.value == "1"));
+
+        // PAIRS: old uzig key gone, new azig key holds the same address.
+        assert!(!PAIRS.has(deps.as_ref().storage, &uzig_key));
+        assert_eq!(PAIRS.load(deps.as_ref().storage, &azig_key).unwrap(), uzig_pair);
+        // PAUSED_PAIRS re-keyed.
+        assert!(!PAUSED_PAIRS.has(deps.as_ref().storage, &uzig_key));
+        assert!(PAUSED_PAIRS.has(deps.as_ref().storage, &azig_key));
+        // Control pool (no uzig) untouched.
+        assert_eq!(PAIRS.load(deps.as_ref().storage, &control_key).unwrap(), control_pair);
+        // Fee denom follows the rename.
+        assert_eq!(
+            load_pool_creation_fee_denom(deps.as_ref().storage).unwrap(),
+            "azig"
+        );
+
+        // Idempotent: a second run finds nothing to re-key.
+        let res2 = migrate(deps.as_mut(), mock_env(), redenom).unwrap();
+        assert!(res2.attributes.iter().any(|a| a.key == "rekeyed_pairs" && a.value == "0"));
+        assert!(res2.attributes.iter().any(|a| a.key == "rekeyed_paused_pairs" && a.value == "0"));
+        assert_eq!(PAIRS.load(deps.as_ref().storage, &azig_key).unwrap(), uzig_pair);
+    }
+
+    #[test]
+    fn test_migration_redenom_collision_errors() {
+        let mut deps = mock_deps(&[]);
+        set_contract_version(deps.as_mut().storage, CONTRACT_NAME, "1.1.0").unwrap();
+        seed_config(deps.as_mut().storage, "uzig");
+
+        let token = token_asset_info(Addr::unchecked("token_addr"));
+        let uzig_key = pair_key(&vec![native_asset_info("uzig".to_string()), token.clone()], &PairType::Xyk {});
+        let azig_key = pair_key(&vec![native_asset_info("azig".to_string()), token.clone()], &PairType::Xyk {});
+
+        // A uzig pool AND a pre-existing azig pool for the same other asset →
+        // re-keying uzig would clobber the azig entry, so it must error.
+        PAIRS.save(deps.as_mut().storage, &uzig_key, &Addr::unchecked("uzig_pair")).unwrap();
+        PAIRS.save(deps.as_mut().storage, &azig_key, &Addr::unchecked("azig_pair")).unwrap();
+
+        let err = migrate(
+            deps.as_mut(),
+            mock_env(),
+            MigrateMsg {
+                tracker_config: None,
+                redenom: Some(DenomRewrite { from: "uzig".to_string(), to: "azig".to_string() }),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::RedenomKeyCollision {});
+    }
+
+    /// Live mainnet's 1.1.0 factory has NO `pool_creation_fee_denom` key at all.
+    /// The redenom migrate must still write it, and must do so independently of
+    /// whatever `default_pool_creation_fee_denom()` currently returns.
+    #[test]
+    fn test_migration_redenom_writes_fee_denom_when_key_absent() {
+        let mut deps = mock_deps(&[]);
+        set_contract_version(deps.as_mut().storage, CONTRACT_NAME, "1.1.0").unwrap();
+        CONFIG
+            .save(
+                deps.as_mut().storage,
+                &Config {
+                    owner: Addr::unchecked("owner"),
+                    token_code_id: 1,
+                    generator_address: None,
+                    fee_address: None,
+                    whitelist_code_id: 1,
+                    coin_registry_address: Addr::unchecked("coin_registry"),
+                },
+            )
+            .unwrap();
+        assert!(
+            POOL_CREATION_FEE_DENOM
+                .may_load(deps.as_ref().storage)
+                .unwrap()
+                .is_none(),
+            "precondition: the key must start absent, as on the live 1.1.0 factory"
+        );
+
+        migrate(
+            deps.as_mut(),
+            mock_env(),
+            MigrateMsg {
+                tracker_config: None,
+                redenom: Some(DenomRewrite {
+                    from: "uzig".to_string(),
+                    to: "azig".to_string(),
+                }),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            POOL_CREATION_FEE_DENOM
+                .may_load(deps.as_ref().storage)
+                .unwrap()
+                .as_deref(),
+            Some("azig"),
+            "migrate must write the key explicitly, not leave it to the default"
+        );
+    }
+
+    /// A factory charging an unrelated denom must not be clobbered by the rename.
+    #[test]
+    fn test_migration_redenom_leaves_unrelated_fee_denom_alone() {
+        let mut deps = mock_deps(&[]);
+        set_contract_version(deps.as_mut().storage, CONTRACT_NAME, "1.1.0").unwrap();
+        seed_config(deps.as_mut().storage, "uusd");
+
+        migrate(
+            deps.as_mut(),
+            mock_env(),
+            MigrateMsg {
+                tracker_config: None,
+                redenom: Some(DenomRewrite {
+                    from: "uzig".to_string(),
+                    to: "azig".to_string(),
+                }),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            load_pool_creation_fee_denom(deps.as_ref().storage).unwrap(),
+            "uusd"
+        );
     }
 }

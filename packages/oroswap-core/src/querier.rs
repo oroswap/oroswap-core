@@ -1,7 +1,7 @@
 use crate::asset::{Asset, AssetInfo, PairInfo};
 use crate::factory::{
-    Config as FactoryConfig, FeeInfoResponse, PairType, PairsResponse, QueryMsg as FactoryQueryMsg,
-    TrackerConfig, StartAfter,
+    default_pool_creation_fee_denom, Config as FactoryConfig, FeeInfoResponse, PairType,
+    PairsResponse, QueryMsg as FactoryQueryMsg, TrackerConfig, StartAfter,
 };
 use crate::pair::{QueryMsg as PairQueryMsg, ReverseSimulationResponse, SimulationResponse};
 
@@ -162,6 +162,26 @@ where
         Ok(res)
     } else {
         Err(StdError::generic_err("The factory config not found!"))
+    }
+}
+
+/// Returns the factory's configured pool-creation fee denom.
+///
+/// Read directly from the factory's raw storage key `pool_creation_fee_denom`
+/// (kept out of [`FactoryConfig`] so the shared config struct other contracts
+/// deserialize is not bloated by a factory-only setting). Falls back to the
+/// value from [`default_pool_creation_fee_denom`] when the key is unset — e.g. a factory deployed
+/// before this field existed and not yet migrated.
+pub fn query_factory_pool_creation_fee_denom<C>(
+    querier: &QuerierWrapper<C>,
+    factory_contract: impl Into<String>,
+) -> StdResult<String>
+where
+    C: CustomQuery,
+{
+    match querier.query_wasm_raw(factory_contract, b"pool_creation_fee_denom".as_slice())? {
+        Some(res) => Ok(from_json(res)?),
+        None => Ok(default_pool_creation_fee_denom()),
     }
 }
 

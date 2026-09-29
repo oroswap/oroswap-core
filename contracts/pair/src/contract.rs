@@ -6,32 +6,33 @@ use std::vec;
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     attr, coin, ensure_eq, from_json, to_json_binary, wasm_execute, Addr, Binary, BankMsg, Coin, CosmosMsg,
-    CustomMsg, CustomQuery, Decimal, Decimal256, Deps, DepsMut, Empty, Env, Fraction, MessageInfo,
+    CustomMsg, CustomQuery, Decimal, Decimal256, Deps, DepsMut, Env, Fraction, MessageInfo,
     QuerierWrapper, Reply, Response, StdError, StdResult, SubMsg, SubMsgResponse, SubMsgResult,
     Uint128, Uint256, Uint64, WasmMsg,
 };
-use cw2::set_contract_version;
+use cw2::{get_contract_version, set_contract_version};
 use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
 use cw_utils::{
     one_coin, parse_reply_instantiate_data, MsgInstantiateContractResponse, PaymentError,
 };
 
 use oroswap::asset::{
-    addr_opt_validate, check_swap_parameters, Asset, AssetInfo, PairInfo,
+    addr_opt_validate, check_swap_parameters, validate_native_denom, Asset, AssetInfo, PairInfo,
     MINIMUM_LIQUIDITY_AMOUNT, CoinsExt,
 };
 use oroswap::common::LP_SUBDENOM;
 use oroswap::incentives::ExecuteMsg as IncentiveExecuteMsg;
 use oroswap::pair::{
-    ConfigResponse, FeeShareConfig, ReplyIds, XYKPoolConfig, XYKPoolParams, XYKPoolUpdateParams,
-    DEFAULT_SLIPPAGE, MAX_ALLOWED_SLIPPAGE, MAX_FEE_SHARE_BPS,
+    ConfigResponse, FeeShareConfig, MigrateMsg, ReplyIds, XYKPoolConfig, XYKPoolParams,
+    XYKPoolUpdateParams, DEFAULT_SLIPPAGE, MAX_ALLOWED_SLIPPAGE, MAX_FEE_SHARE_BPS,
 };
 use oroswap::pair::{
     CumulativePricesResponse, Cw20HookMsg, ExecuteMsg, InstantiateMsg, PoolResponse, QueryMsg,
-    ReverseSimulationResponse, SimulationResponse, TWAP_PRECISION,
+    ReverseSimulationResponse, SimulationResponse, XYK_TWAP_PRECISION,
 };
 use oroswap::querier::{
-    query_factory_config, query_fee_info, query_native_supply, query_tracker_config,
+    query_factory_config, query_factory_pool_creation_fee_denom, query_fee_info,
+    query_native_supply, query_tracker_config,
 };
 use oroswap::token_factory::{
     tf_before_send_hook_msg, tf_burn_msg, tf_create_denom_msg, tf_mint_msg, MsgCreateDenomResponse,
@@ -90,8 +91,8 @@ pub fn instantiate(
         },
         factory_addr: deps.api.addr_validate(msg.factory_addr.as_str())?,
         block_time_last: 0,
-        price0_cumulative_last: Uint128::zero(),
-        price1_cumulative_last: Uint128::zero(),
+        price0_cumulative_last: Uint256::zero(),
+        price1_cumulative_last: Uint256::zero(),
         track_asset_balances,
         fee_share: None,
         tracker_addr: None,
@@ -116,10 +117,13 @@ pub fn instantiate(
         ),
     ];
 
-    // Forward pool creation fee to maker fee address
+    // Forward pool creation fee to maker fee address. The denom is a factory
+    // setting read from the factory (not hardcoded), so a base-denom rename
+    // (e.g. `uzig`->`azig`) needs no pair-code change.
+    let fee_denom = query_factory_pool_creation_fee_denom(&deps.querier, &msg.factory_addr)?;
     messages.push(SubMsg::new(CosmosMsg::Bank(BankMsg::Send {
         to_address: fee_address.to_string(),
-        amount: vec![coin(pair_config.pool_creation_fee.u128(), "uzig")],
+        amount: vec![coin(pair_config.pool_creation_fee.u128(), fee_denom.as_str())],
     })));
 
     Ok(Response::new()
@@ -893,20 +897,27 @@ pub fn accumulate_prices(
     config: &Config,
     x: Uint128,
     y: Uint128,
-) -> StdResult<Option<(Uint128, Uint128, u64)>> {
+) -> StdResult<Option<(Uint256, Uint256, u64)>> {
     let block_time = env.block.time.seconds();
     if block_time <= config.block_time_last {
         return Ok(None);
     }
 
     // We have to shift block_time when any price is zero in order to not fill an accumulator with a null price for that period
-    let time_elapsed = Uint128::from(block_time - config.block_time_last);
+    let time_elapsed = Uint256::from(block_time - config.block_time_last);
 
     let mut pcl0 = config.price0_cumulative_last;
     let mut pcl1 = config.price1_cumulative_last;
 
+    // `Uint256` throughout. This integrates the RAW reserve ratio, so at
+    // XYK_TWAP_PRECISION=18 the up-scaled direction leaves `Uint128` within
+    // seconds on a pool whose sides differ widely in decimals — and
+    // `multiply_ratio` PANICS on overflow. That panic reverts without advancing
+    // `block_time_last`, so every later swap panics too and the pool is
+    // permanently unusable. See `test_accumulate_prices_no_overflow_on_extreme_ratio`.
     if !x.is_zero() && !y.is_zero() {
-        let price_precision = Uint128::from(10u128.pow(TWAP_PRECISION.into()));
+        let price_precision = Uint256::from(10u128.pow(XYK_TWAP_PRECISION.into()));
+        let (x, y) = (Uint256::from(x), Uint256::from(y));
         pcl0 = config.price0_cumulative_last.wrapping_add(
             time_elapsed
                 .checked_mul(price_precision)?
@@ -1466,10 +1477,67 @@ pub fn assert_slippage_tolerance(
     Ok(())
 }
 
-/// Manages the contract migration.
+/// Manages the contract migration for the ZIGchain `uzig`->`azig`
+/// redenomination. Rewrites any `AssetInfo::NativeToken` in
+/// `Config.pair_info.asset_infos` whose denom == `denom_from` to `denom_to`,
+/// and — only if a denom was actually rewritten — resets the TWAP accumulator.
+///
+/// Note: the *previously deployed* code's `unimplemented!()` migrate does NOT
+/// block this — CosmWasm runs the NEW code's migrate entry point.
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(_deps: DepsMut, _env: Env, _msg: Empty) -> Result<Response, ContractError> {
-    unimplemented!("No safe path available for migration")
+pub fn migrate(deps: DepsMut, env: Env, msg: MigrateMsg) -> Result<Response, ContractError> {
+    // cw2 guard: refuse to run against a contract that isn't this one.
+    let stored = get_contract_version(deps.storage)?;
+    if stored.contract != CONTRACT_NAME {
+        return Err(StdError::generic_err(format!(
+            "Cannot migrate: stored contract is `{}`, expected `{CONTRACT_NAME}`",
+            stored.contract
+        ))
+        .into());
+    }
+
+    // Reject a fat-fingered target denom before mutating state.
+    validate_native_denom(&msg.denom_to)?;
+
+    let mut config = CONFIG.load(deps.storage)?;
+    let mut rewrote: u32 = 0;
+    for ai in config.pair_info.asset_infos.iter_mut() {
+        if let AssetInfo::NativeToken { denom } = ai {
+            if *denom == msg.denom_from {
+                *denom = msg.denom_to.clone();
+                rewrote += 1;
+            }
+        }
+    }
+
+    // Reset the TWAP accumulator UNCONDITIONALLY.
+    //
+    // Two independent reasons, either of which alone would require it:
+    //
+    //  1. Denom rename. The accumulator integrates the raw reserve ratio; a
+    //     decimals change (6->18) rescales that ratio by up to 10^12, so any
+    //     window spanning the migration would be meaningless.
+    //  2. Precision change. This release moves the XYK accumulator from
+    //     `Uint128` scaled 10^6 to `Uint256` scaled 10^18. Every stored value
+    //     is in the OLD units, so continuing to add to it would mix scales and
+    //     silently corrupt any difference taken across the boundary.
+    //
+    // Reason 2 applies to EVERY pool, including those with no `denom_from` side
+    // (`rewrote == 0`) — which is why this is no longer conditional.
+    //
+    // `block_time_last` is stamped to the current block (NOT 0) so the first
+    // post-migration interval is small rather than ~the whole Unix epoch.
+    config.price0_cumulative_last = Uint256::zero();
+    config.price1_cumulative_last = Uint256::zero();
+    config.block_time_last = env.block.time.seconds();
+
+    CONFIG.save(deps.storage, &config)?;
+    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+    Ok(Response::new()
+        .add_attribute("action", "migrate_denom_rewrite")
+        .add_attribute("denom_from", msg.denom_from)
+        .add_attribute("denom_to", msg.denom_to)
+        .add_attribute("rewrote", rewrote.to_string()))
 }
 
 /// Returns the total amount of assets in the pool as well as the total amount of LP tokens currently minted.

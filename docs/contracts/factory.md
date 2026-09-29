@@ -35,9 +35,9 @@ pub fn create_pair(
 - `asset_infos`: Array of two assets to pair
 - `pair_type`: Type of pair (XYK, Concentrated, Stable)
 
-**Pool Creation Fee**: 1,000,000 uzig (1 ZIG) must be sent with the transaction
+**Pool Creation Fee**: 100,000,000,000,000,000,000 azig (100 ZIG) must be sent with the transaction
 
-**LP Token Creation Fee**: 100,000,000 uzig (100 ZIG) must be sent with the transaction as well. (This is a requirement to create a token on ZIGChain)
+**LP Token Creation Fee**: 40,000,000,000,000,000,000 azig (40 ZIG) must be sent with the transaction as well. (This is a requirement to create a token on ZIGChain)
 
 **Example**:
 
@@ -45,15 +45,15 @@ pub fn create_pair(
 zigchaind tx wasm execute <factory_address> '{
   "create_pair": {
     "asset_infos": [
-      {"native_token": {"denom": "uzig"}},
+      {"native_token": {"denom": "azig"}},
       {"native_token": {"denom": "usdc"}}
     ],
     "pair_type": {"xyk": {}}
   }
-}' --from user --gas auto --fees 1000uzig --amount 101000000uzig
+}' --from user --gas auto --fees 1000000000000000azig --amount 140000000000000000000azig
 ```
 
-**Note**: The `--amount 101000000uzig` flag sends the required pool creation fee + token creation fee to the factory contract.
+**Note**: The `--amount 140000000000000000000azig` flag sends the required pool creation fee + token creation fee to the factory contract.
 
 ### Update Config
 
@@ -113,6 +113,20 @@ zigchaind tx wasm execute <factory_address> '{
 }' --from owner --gas auto
 ```
 
+### Update Pool Creation Fee Denom
+
+Updates the native denom accepted as the pool creation fee (owner only). Defaults to `azig`.
+
+**Example**:
+
+```bash
+zigchaind tx wasm execute <factory_address> '{
+  "update_pool_creation_fee_denom": {
+    "denom": "azig"
+  }
+}' --from owner --gas auto
+```
+
 ## 📊 Query Functions
 
 ### Get Factory Configuration
@@ -133,7 +147,7 @@ zigchaind query wasm contract-state smart <factory_address> '{"pairs": {"limit":
 zigchaind query wasm contract-state smart <factory_address> '{
   "pair": {
     "asset_infos": [
-      {"native_token": {"denom": "uzig"}},
+      {"native_token": {"denom": "azig"}},
       {"native_token": {"denom": "usdc"}}
     ],
     "pair_type": {"xyk": {}}
@@ -171,8 +185,8 @@ zigchaind query wasm contract-state smart <factory_address> '{
 
 ## 🚨 Important Notes
 
-1. **Pool Creation Fee**: 1 ZIG (1,000,000 uzig) required when creating pairs
-2. LP Token Creation Fee : 100 ZIG required by ZIGChain to create a token
+1. **Pool Creation Fee**: 100 ZIG (100,000,000,000,000,000,000 azig) required when creating pairs
+2. LP Token Creation Fee : 40 ZIG required by ZIGChain to create a token
 3. **Admin Only**: Configuration updates require owner privileges
 4. **Pair Types**: Support for XYK, Stable, and Concentrated pairs
 5. **Fee Structure**: Configurable fees per pair type

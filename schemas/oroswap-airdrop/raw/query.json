@@ -1,0 +1,106 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "QueryMsg",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "config"
+      ],
+      "properties": {
+        "config": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "airdrop"
+      ],
+      "properties": {
+        "airdrop": {
+          "type": "object",
+          "required": [
+            "id"
+          ],
+          "properties": {
+            "id": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0.0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "latest_airdrop_id"
+      ],
+      "properties": {
+        "latest_airdrop_id": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "user_airdrop_status"
+      ],
+      "properties": {
+        "user_airdrop_status": {
+          "type": "object",
+          "required": [
+            "address",
+            "id"
+          ],
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "id": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0.0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Solvency snapshot for the given airdrop: - Σ eligibility committed to users - Σ already claimed - the current contract balance of the airdrop's token - whether the contract holds enough to cover the worst-case payout (all unclaimed users claim after vesting end and receive the APY bonus)",
+      "type": "object",
+      "required": [
+        "solvency"
+      ],
+      "properties": {
+        "solvency": {
+          "type": "object",
+          "required": [
+            "id"
+          ],
+          "properties": {
+            "id": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0.0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

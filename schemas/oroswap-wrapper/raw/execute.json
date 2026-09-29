@@ -1,0 +1,259 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ExecuteMsg",
+  "description": "Execute messages for the wrapper contract.",
+  "oneOf": [
+    {
+      "description": "Lock `lock_denom` tokens and receive an equal amount of `mint_denom` tokens. Send native funds with this call. If `receiver` is None the minted tokens go to the sender.",
+      "type": "object",
+      "required": [
+        "lock"
+      ],
+      "properties": {
+        "lock": {
+          "type": "object",
+          "properties": {
+            "receiver": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Burn `mint_denom` tokens and receive an equal amount of `lock_denom` tokens back. Send mint tokens as native funds with this call. If `receiver` is None the unlocked tokens go to the sender.",
+      "type": "object",
+      "required": [
+        "unlock"
+      ],
+      "properties": {
+        "unlock": {
+          "type": "object",
+          "properties": {
+            "receiver": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Pause all lock/unlock operations. Callable by the owner or any address in the pause-authority set.",
+      "type": "object",
+      "required": [
+        "pause"
+      ],
+      "properties": {
+        "pause": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Resume lock/unlock operations. Owner only — a compromised pause authority cannot toggle the pause state on its own.",
+      "type": "object",
+      "required": [
+        "unpause"
+      ],
+      "properties": {
+        "unpause": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Proposes a new owner. The proposed owner must call ClaimOwnership within expires_in seconds. Only callable by the current owner.",
+      "type": "object",
+      "required": [
+        "propose_new_owner"
+      ],
+      "properties": {
+        "propose_new_owner": {
+          "type": "object",
+          "required": [
+            "expires_in",
+            "owner"
+          ],
+          "properties": {
+            "expires_in": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0.0
+            },
+            "owner": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Removes the pending ownership proposal. Only callable by the current owner.",
+      "type": "object",
+      "required": [
+        "drop_ownership_proposal"
+      ],
+      "properties": {
+        "drop_ownership_proposal": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Claims a pending ownership proposal. Only callable by the proposed new owner.",
+      "type": "object",
+      "required": [
+        "claim_ownership"
+      ],
+      "properties": {
+        "claim_ownership": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Recovers any `lock_denom` tokens that were sent directly to the contract without minting, restoring the 1:1 invariant between locked tokens and minted supply. Owner only.",
+      "type": "object",
+      "required": [
+        "recover_excess"
+      ],
+      "properties": {
+        "recover_excess": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Update the on-chain Metadata of the minted denom. Owner only. True patch semantics: any field left as `None` keeps the value currently stored on-chain; only `Some(_)` fields are overwritten. (The tokenfactory module rewrites Metadata as a whole, so the contract keeps an authoritative copy in storage and re-encodes the full Metadata on every call — never silently regenerating defaults.)\n\nOnly `description`, `uri` and `uri_hash` are accepted. The identity fields `name`, `symbol`, `display` and `denom_units` are permanently frozen by the ZIGchain v5 tokenfactory upgrade once `total_minted > 0` (which is always true after the first Lock), so this variant deliberately does not expose them. They are set once at instantiate from the InstantiateMsg fields and never mutated afterwards.",
+      "type": "object",
+      "required": [
+        "update_denom_metadata"
+      ],
+      "properties": {
+        "update_denom_metadata": {
+          "type": "object",
+          "properties": {
+            "description": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "uri": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "uri_hash": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Begin the two-step transfer of the minted denom's bank- and metadata-admin roles to new addresses. The new admins must follow up with a `MsgClaimDenomAdmin` on the chain themselves. Owner only.\n\nUsed when retiring this wrapper: the bank_admin gates mint/burn, so the successor contract / multisig must claim before users can keep locking/unlocking.",
+      "type": "object",
+      "required": [
+        "propose_denom_admin"
+      ],
+      "properties": {
+        "propose_denom_admin": {
+          "type": "object",
+          "required": [
+            "bank_admin",
+            "metadata_admin"
+          ],
+          "properties": {
+            "bank_admin": {
+              "type": "string"
+            },
+            "metadata_admin": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Add addresses with pause authority. Owner only.",
+      "type": "object",
+      "required": [
+        "add_pause_authorities"
+      ],
+      "properties": {
+        "add_pause_authorities": {
+          "type": "object",
+          "required": [
+            "authorities"
+          ],
+          "properties": {
+            "authorities": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Remove addresses from the pause-authority set. Owner only.",
+      "type": "object",
+      "required": [
+        "remove_pause_authorities"
+      ],
+      "properties": {
+        "remove_pause_authorities": {
+          "type": "object",
+          "required": [
+            "authorities"
+          ],
+          "properties": {
+            "authorities": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

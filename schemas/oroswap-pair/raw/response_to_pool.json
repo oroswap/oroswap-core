@@ -31,7 +31,7 @@
       "type": "string"
     },
     "Asset": {
-      "description": "This enum describes a Terra asset (native or CW20).",
+      "description": "This enum describes a Terra asset (native or CW20). # Example ``` # use cosmwasm_std::Addr; # use oroswap_core::asset::AssetInfo::{NativeToken, Token}; NativeToken { denom: \"uusd\".to_string() }; Token { contract_addr: Addr::unchecked(\"contract\") }; ```",
       "type": "object",
       "required": [
         "amount",

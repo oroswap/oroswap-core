@@ -1,5 +1,5 @@
 pub use cosmos_sdk_proto::cosmos::base::v1beta1::Coin as ProtoCoin;
-use cosmwasm_std::{Binary, Coin, CosmosMsg, CustomMsg, StdError};
+use cosmwasm_std::{Binary, Coin, CosmosMsg, CustomMsg, StdError, Uint128};
 
 #[cfg(any(feature = "zigchain"))]
 use cosmwasm_std::BankMsg;
@@ -110,6 +110,63 @@ pub struct MsgCreateDenom {
     /// can_change_minting_cap is the mintable status of the token. set it to be true by default.
     #[prost(bool, tag = "4")]
     pub can_change_minting_cap: bool,
+}
+
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MsgSetDenomMetadata {
+    #[prost(string, tag = "1")]
+    pub signer: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub metadata: ::core::option::Option<Metadata>,
+}
+
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Metadata {
+    #[prost(string, tag = "1")]
+    pub description: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "2")]
+    pub denom_units: ::prost::alloc::vec::Vec<DenomUnit>,
+    #[prost(string, tag = "3")]
+    pub base: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub display: ::prost::alloc::string::String,
+    #[prost(string, tag = "5")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(string, tag = "6")]
+    pub symbol: ::prost::alloc::string::String,
+    #[prost(string, tag = "7")]
+    pub uri: ::prost::alloc::string::String,
+    #[prost(string, tag = "8")]
+    pub uri_hash: ::prost::alloc::string::String,
+}
+
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DenomUnit {
+    #[prost(string, tag = "1")]
+    pub denom: ::prost::alloc::string::String,
+    #[prost(uint32, tag = "2")]
+    pub exponent: u32,
+    #[prost(string, repeated, tag = "3")]
+    pub aliases: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+
+impl MsgSetDenomMetadata {
+    #[cfg(feature = "zigchain")]
+    pub const TYPE_URL: &'static str = "/zigchain.factory.MsgSetDenomMetadata";
+}
+
+impl TryFrom<Binary> for MsgSetDenomMetadata {
+    type Error = StdError;
+    fn try_from(binary: Binary) -> Result<Self, Self::Error> {
+        Self::decode(binary.as_slice()).map_err(|e| {
+            StdError::generic_err(format!(
+                "MsgSetDenomMetadata Unable to decode binary: \n  - base64: {}\n  - bytes array: {:?}\n\n{:?}",
+                binary,
+                binary.to_vec(),
+                e
+            ))
+        })
+    }
 }
 
 impl MsgCreateDenom {
@@ -237,6 +294,7 @@ impl TryFrom<Binary> for MsgMint {
     }
 }
 
+#[cfg(not(any(feature = "zigchain")))]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgSetBeforeSendHook {
     #[prost(string, tag = "1")]
@@ -247,8 +305,22 @@ pub struct MsgSetBeforeSendHook {
     pub cosmwasm_address: ::prost::alloc::string::String,
 }
 
+#[cfg(feature = "zigchain")]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MsgSetBeforeSendHook {
+    #[prost(string, tag = "1")]
+    pub signer: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub denom: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub cosmwasm_address: ::prost::alloc::string::String,
+}
+
 impl MsgSetBeforeSendHook {
+    #[cfg(not(any(feature = "zigchain")))]
     pub const TYPE_URL: &'static str = "/osmosis.tokenfactory.v1beta1.MsgSetBeforeSendHook";
+    #[cfg(feature = "zigchain")]
+    pub const TYPE_URL: &'static str = "/zigchain.factory.MsgSetBeforeSendHook";
 }
 
 impl TryFrom<Binary> for MsgSetBeforeSendHook {
@@ -280,6 +352,52 @@ where
         sub_denom: denom.into(),
         creator: sender.into(),
         minting_cap: LP_MAX_SUPPLY.to_string(),
+        can_change_minting_cap: false,
+    };
+
+    CosmosMsg::Stargate {
+        type_url: MsgCreateDenom::TYPE_URL.to_string(),
+        value: Binary::from(create_denom_msg.encode_to_vec()),
+    }
+}
+
+/// Same as `tf_create_denom_msg` but with an explicit, caller-supplied
+/// `minting_cap` instead of the generic `LP_MAX_SUPPLY` constant.
+///
+/// FIND-005 (audit follow-up): contracts that wrap a known finite source
+/// asset (e.g. the wrapper contract wrapping a bridged ERC-20) should
+/// configure the tokenfactory cap to match that asset's actual maximum
+/// supply rather than `u64::MAX`. This pins the wrapped denom's supply
+/// assumption on-chain and removes reliance on a shared constant that
+/// was correct for pair-LP tokens but loose for bridged asset wrappers.
+///
+/// `can_change_minting_cap` is intentionally `false` — the cap is meant
+/// to be a load-bearing invariant set once at instantiate.
+///
+/// The non-zigchain `MsgCreateDenom` variant has no cap field, so the
+/// supplied value is silently ignored on chains that don't support it.
+pub fn tf_create_denom_msg_with_cap<T>(
+    sender: impl Into<String>,
+    denom: impl Into<String>,
+    minting_cap: Uint128,
+) -> CosmosMsg<T>
+where
+    T: CustomMsg,
+{
+    #[cfg(not(any(feature = "zigchain")))]
+    let create_denom_msg = {
+        let _ = minting_cap; // not part of the non-zigchain proto shape
+        MsgCreateDenom {
+            sender: sender.into(),
+            subdenom: denom.into(),
+        }
+    };
+
+    #[cfg(feature = "zigchain")]
+    let create_denom_msg = MsgCreateDenom {
+        sub_denom: denom.into(),
+        creator: sender.into(),
+        minting_cap: minting_cap.to_string(),
         can_change_minting_cap: false,
     };
 
@@ -400,14 +518,186 @@ pub fn tf_before_send_hook_msg<T>(
 where
     T: CustomMsg,
 {
+    #[cfg(not(any(feature = "zigchain")))]
     let msg = MsgSetBeforeSendHook {
         sender: sender.into(),
         denom: denom.into(),
         cosmwasm_address: cosmwasm_address.into(),
     };
 
+    #[cfg(feature = "zigchain")]
+    let msg = MsgSetBeforeSendHook {
+        signer: sender.into(),
+        denom: denom.into(),
+        cosmwasm_address: cosmwasm_address.into(),
+    };
+
     CosmosMsg::Stargate {
         type_url: MsgSetBeforeSendHook::TYPE_URL.to_string(),
+        value: Binary::from(msg.encode_to_vec()),
+    }
+}
+
+#[cfg(feature = "zigchain")]
+pub fn tf_set_denom_metadata_msg<T>(
+    sender: impl Into<String>,
+    denom: String,
+    symbol: String,
+    decimals: u32,
+    uri: Option<String>,
+) -> CosmosMsg<T>
+where
+    T: CustomMsg,
+{
+    let metadata_uri = uri.unwrap_or_default();
+    let msg = MsgSetDenomMetadata {
+        signer: sender.into(),
+        metadata: Some(Metadata {
+            description: format!("Oroswap {} Token", symbol),
+            denom_units: vec![
+                DenomUnit {
+                    denom: denom.clone(),
+                    exponent: 0,
+                    aliases: vec![],
+                },
+                DenomUnit {
+                    denom: symbol.clone().to_lowercase(),
+                    exponent: decimals,
+                    aliases: vec![],
+                },
+            ],
+            base: denom.clone(),
+            display: symbol.to_lowercase(),
+            name: format!("Oroswap {}", symbol),
+            symbol: symbol,
+            uri: metadata_uri,
+            uri_hash: "".to_string(), // Optional or handled by chain if uri provided
+        }),
+    };
+
+    CosmosMsg::Stargate {
+        type_url: MsgSetDenomMetadata::TYPE_URL.to_string(),
+        value: Binary::from(msg.encode_to_vec()),
+    }
+}
+
+/// Build a ZigChain factory `MsgSetDenomMetadata` with explicit `name`, `symbol`,
+/// `description` and `display`. Falls back to the legacy "Oroswap {symbol}" naming
+/// when a caller doesn't supply overrides.
+#[cfg(feature = "zigchain")]
+#[allow(clippy::too_many_arguments)]
+pub fn tf_set_denom_metadata_full_msg<T>(
+    sender: impl Into<String>,
+    denom: String,
+    name: String,
+    symbol: String,
+    description: String,
+    display: String,
+    decimals: u32,
+    uri: Option<String>,
+    uri_hash: Option<String>,
+) -> CosmosMsg<T>
+where
+    T: CustomMsg,
+{
+    let metadata_uri = uri.unwrap_or_default();
+    let metadata_uri_hash = uri_hash.unwrap_or_default();
+    let base_alias = format!("u{}", display);
+    let msg = MsgSetDenomMetadata {
+        signer: sender.into(),
+        metadata: Some(Metadata {
+            description,
+            denom_units: vec![
+                DenomUnit {
+                    denom: denom.clone(),
+                    exponent: 0,
+                    aliases: vec![base_alias],
+                },
+                DenomUnit {
+                    denom: display.clone(),
+                    exponent: decimals,
+                    aliases: vec![],
+                },
+            ],
+            base: denom,
+            display,
+            name,
+            symbol,
+            uri: metadata_uri,
+            uri_hash: metadata_uri_hash,
+        }),
+    };
+
+    CosmosMsg::Stargate {
+        type_url: MsgSetDenomMetadata::TYPE_URL.to_string(),
+        value: Binary::from(msg.encode_to_vec()),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ZigChain factory: denom-admin handover
+//
+// Admin transfer is a two-step propose / claim flow. We only need the propose
+// side here — the new admin signs `MsgClaimDenomAdmin` directly from their
+// own address, never through this contract.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "zigchain")]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MsgProposeDenomAdmin {
+    #[prost(string, tag = "1")]
+    pub signer: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub denom: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub bank_admin: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub metadata_admin: ::prost::alloc::string::String,
+}
+
+#[cfg(feature = "zigchain")]
+impl MsgProposeDenomAdmin {
+    pub const TYPE_URL: &'static str = "/zigchain.factory.MsgProposeDenomAdmin";
+}
+
+#[cfg(feature = "zigchain")]
+impl TryFrom<Binary> for MsgProposeDenomAdmin {
+    type Error = StdError;
+    fn try_from(binary: Binary) -> Result<Self, Self::Error> {
+        Self::decode(binary.as_slice()).map_err(|e| {
+            StdError::generic_err(format!(
+                "MsgProposeDenomAdmin Unable to decode binary: \n  - base64: {}\n  - bytes array: {:?}\n\n{:?}",
+                binary,
+                binary.to_vec(),
+                e
+            ))
+        })
+    }
+}
+
+/// Propose new bank- and metadata-admin addresses for a denom we currently
+/// administer. The new admins must subsequently call `MsgClaimDenomAdmin`
+/// themselves from their own addresses — that step is intentionally outside
+/// this contract.
+#[cfg(feature = "zigchain")]
+pub fn tf_propose_denom_admin_msg<T>(
+    sender: impl Into<String>,
+    denom: impl Into<String>,
+    bank_admin: impl Into<String>,
+    metadata_admin: impl Into<String>,
+) -> CosmosMsg<T>
+where
+    T: CustomMsg,
+{
+    let msg = MsgProposeDenomAdmin {
+        signer: sender.into(),
+        denom: denom.into(),
+        bank_admin: bank_admin.into(),
+        metadata_admin: metadata_admin.into(),
+    };
+
+    CosmosMsg::Stargate {
+        type_url: MsgProposeDenomAdmin::TYPE_URL.to_string(),
         value: Binary::from(msg.encode_to_vec()),
     }
 }

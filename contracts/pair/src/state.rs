@@ -3,7 +3,7 @@ use oroswap::{
     pair::FeeShareConfig,
 };
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Uint128};
+use cosmwasm_std::{Addr, Uint128, Uint256};
 use cw_storage_plus::{Item, SnapshotMap};
 
 /// This structure stores the main config parameters for a constant product pair contract.
@@ -16,9 +16,9 @@ pub struct Config {
     /// The last timestamp when the pair contract update the asset cumulative prices
     pub block_time_last: u64,
     /// The last cumulative price for asset 0
-    pub price0_cumulative_last: Uint128,
+    pub price0_cumulative_last: Uint256,
     /// The last cumulative price for asset 1
-    pub price1_cumulative_last: Uint128,
+    pub price1_cumulative_last: Uint256,
     /// Whether asset balances are tracked over blocks or not.
     pub track_asset_balances: bool,
     // The config for swap fee sharing

@@ -22,16 +22,16 @@ Emitted when a new trading pair is created.
   "contract_address": "<factory_address>",
   "action": "create_pair",
   "pair_address": "zig1...",
-  "asset_infos": "[{\"native_token\":{\"denom\":\"uzig\"}},{\"native_token\":{\"denom\":\"usdc\"}}]",
+  "asset_infos": "[{\"native_token\":{\"denom\":\"azig\"}},{\"native_token\":{\"denom\":\"usdc\"}}]",
   "pair_type": "{\"xyk\":{}}",
   "total_fee_bps": "10",
   "maker_fee_bps": "2000",
-  "pool_creation_fee": "1000000",
+  "pool_creation_fee": "100000000000000000000",
   "creator": "zig1..."
 }
 ```
 
-**Pool Creation Fee**: The event includes the pool creation fee (1,000,000 uzig) and LP token creation fee (100,000,000 uzig) that were paid to create the pair.
+**Pool Creation Fee**: The event includes the pool creation fee (100,000,000,000,000,000,000 azig) and LP token creation fee (40,000,000,000,000,000,000 azig) that were paid to create the pair.
 
 **Example Query**:
 ```bash
@@ -67,7 +67,7 @@ Emitted when pair configuration is updated.
   "pair_type": "{\"xyk\":{}}",
   "total_fee_bps": "30",
   "maker_fee_bps": "2000",
-  "pool_creation_fee": "1000000"
+  "pool_creation_fee": "100000000000000000000"
 }
 ```
 
@@ -83,7 +83,7 @@ Emitted when a pair is paused.
 {
   "contract_address": "<factory_address>",
   "action": "pause_pair",
-  "asset_infos": "[{\"native_token\":{\"denom\":\"uzig\"}},{\"native_token\":{\"denom\":\"usdc\"}}]",
+  "asset_infos": "[{\"native_token\":{\"denom\":\"azig\"}},{\"native_token\":{\"denom\":\"usdc\"}}]",
   "pair_type": "{\"xyk\":{}}",
   "paused_by": "zig1..."
 }
@@ -99,7 +99,7 @@ Emitted when a pair is unpaused.
 {
   "contract_address": "<factory_address>",
   "action": "unpause_pair",
-  "asset_infos": "[{\"native_token\":{\"denom\":\"uzig\"}},{\"native_token\":{\"denom\":\"usdc\"}}]",
+  "asset_infos": "[{\"native_token\":{\"denom\":\"azig\"}},{\"native_token\":{\"denom\":\"usdc\"}}]",
   "pair_type": "{\"xyk\":{}}",
   "unpaused_by": "zig1..."
 }

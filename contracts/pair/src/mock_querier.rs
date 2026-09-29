@@ -168,6 +168,8 @@ impl WasmMockQuerier {
                             })
                             .into(),
                         )
+                    } else if key == b"pool_creation_fee_denom" {
+                        SystemResult::Ok(to_json_binary(&"uzig".to_string()).into())
                     } else {
                         SystemResult::Ok(to_json_binary(&Vec::<Addr>::new()).into())
                     }

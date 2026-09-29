@@ -1,7 +1,7 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_json_binary, Binary, Decimal, Decimal256, Deps, Env, StdError, StdResult, Uint128, Uint64,
+    to_json_binary, Binary, Decimal, Decimal256, Deps, Env, StdError, StdResult, Uint128, Uint256, Uint64,
 };
 use itertools::Itertools;
 
@@ -248,7 +248,11 @@ fn query_cumulative_prices(
     Ok(CumulativePricesResponse {
         assets,
         total_share,
-        cumulative_prices: config.cumulative_prices,
+        cumulative_prices: config
+            .cumulative_prices
+            .into_iter()
+            .map(|(a, b, v)| (a, b, Uint256::from(v)))
+            .collect(),
     })
 }
 

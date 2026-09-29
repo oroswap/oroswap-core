@@ -38,7 +38,7 @@ pub fn init_native_coins(test_coins: &[TestCoin]) -> Vec<Coin> {
         .collect();
     
     // Add uzig tokens for pool creation fee
-    coins.push(coin(1000, "uzig"));
+    coins.push(coin(1000, "azig"));
     
     coins
 }
@@ -192,7 +192,7 @@ impl Helper {
             init_params: Some(to_json_binary(&StablePoolParams { amp, owner: None }).unwrap()),
         };
 
-        app.execute_contract(owner.clone(), factory.clone(), &init_pair_msg, &[coin(1000, "uzig")])?;
+        app.execute_contract(owner.clone(), factory.clone(), &init_pair_msg, &[coin(1000, "azig")])?;
 
         let resp: PairInfo = app.wrap().query_wasm_smart(
             &factory,
