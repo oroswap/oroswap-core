@@ -26,7 +26,7 @@ zigchaind tx wasm execute <router_address> '{
     "operations": [
       {
         "oro_swap": {
-          "offer_asset_info": {"native_token": {"denom": "uzig"}},
+          "offer_asset_info": {"native_token": {"denom": "azig"}},
           "ask_asset_info": {"native_token": {"denom": "usdc"}},
           "pair_type": {"xyk": {}}
         }
@@ -43,7 +43,7 @@ zigchaind tx wasm execute <router_address> '{
     "to": "zig1...",
     "max_spread": "0.01"
   }
-}' --from user --gas auto --fees 1000uzig --amount 1000000uzig
+}' --from user --gas auto --fees 1000000000000000azig --amount 1000000000000000000azig
 ```
 
 **Parameters**:
@@ -59,7 +59,7 @@ zigchaind tx wasm execute <router_address> '{
     "operations": [
       {
         "oro_swap": {
-          "offer_asset_info": {"native_token": {"denom": "uzig"}},
+          "offer_asset_info": {"native_token": {"denom": "azig"}},
           "ask_asset_info": {"native_token": {"denom": "usdc"}},
           "pair_type": {"xyk": {}}
         }
@@ -82,7 +82,7 @@ zigchaind tx wasm execute <router_address> '{
     "minimum_receive": "500000",
     "max_spread": "0.02"
   }
-}' --from user --gas auto --fees 1000uzig --amount 1000000uzig
+}' --from user --gas auto --fees 1000000000000000azig --amount 1000000000000000000azig
 ```
 
 ## 🎯 CW20 Token Swaps
@@ -95,7 +95,7 @@ zigchaind tx wasm execute <token_address> '{
     "amount": "1000000",
     "msg": "eyJleGVjdXRlX3N3YXBfb3BlcmF0aW9ucyI6eyJvcGVyYXRpb25zIjpbeyJvcm9fc3dhcCI6eyJvZmZlcl9hc3NldF9pbmZvIjp7InRva2VuIjp7ImNvbnRyYWN0X2FkZHIiOiJ6aWcxLi4uIn19LCJhc2tfYXNzZXRfaW5mbyI6eyJuYXRpdmVfdG9rZW4iOnsiZGVub20iOiJ1c2RjIn19LCJwYWlyX3R5cGUiOnsieHlrIjp7fX19XSwibWluaW11bV9yZWNlaXZlIjoiMTAwMDAwMCJ9fQ=="
   }
-}' --from user --gas auto --fees 1000uzig
+}' --from user --gas auto --fees 1000000000000000azig
 ```
 
 **Decoded msg:**
@@ -124,11 +124,11 @@ Before executing a swap, you can simulate it to see the expected output:
 ```bash
 zigchaind query wasm contract-store <router_address> '{
   "simulate_swap_operations": {
-    "offer_amount": "1000000",
+    "offer_amount": "1000000000000000000",
     "operations": [
       {
         "oro_swap": {
-          "offer_asset_info": {"native_token": {"denom": "uzig"}},
+          "offer_asset_info": {"native_token": {"denom": "azig"}},
           "ask_asset_info": {"native_token": {"denom": "usdc"}},
           "pair_type": {"xyk": {}}
         }
@@ -148,7 +148,7 @@ zigchaind query wasm contract-store <router_address> '{
     "operations": [
       {
         "oro_swap": {
-          "offer_asset_info": {"native_token": {"denom": "uzig"}},
+          "offer_asset_info": {"native_token": {"denom": "azig"}},
           "ask_asset_info": {"native_token": {"denom": "usdc"}},
           "pair_type": {"xyk": {}}
         }
@@ -166,7 +166,7 @@ zigchaind query wasm contract-store <router_address> '{
    ```json
    {
      "oro_swap": {
-       "offer_asset_info": {"native_token": {"denom": "uzig"}},
+       "offer_asset_info": {"native_token": {"denom": "azig"}},
        "ask_asset_info": {"token": {"contract_addr": "zig1..."}},
        "pair_type": {"xyk": {}}
      }
@@ -177,7 +177,7 @@ zigchaind query wasm contract-store <router_address> '{
    ```json
    {
      "native_swap": {
-       "offer_denom": "uzig",
+       "offer_denom": "azig",
        "ask_denom": "usdc"
      }
    }

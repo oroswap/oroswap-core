@@ -6,8 +6,8 @@ This guide shows how to create different types of pairs on Oroswap, including XY
 
 ## 📋 Overview
 
-**Pool Creation Fee**: 1 ZIG (1,000,000 uzig) required for all pair types
-**LP Token Creation Fee**: 100 ZIG (100,000,000 uzig) required by ZIGChain to create a token
+**Pool Creation Fee**: 100 ZIG (100,000,000,000,000,000,000 azig) required for all pair types
+**LP Token Creation Fee**: 40 ZIG (40,000,000,000,000,000,000 azig) required by ZIGChain to create a token
 
 ## 🏭 Creating XYK Pairs
 
@@ -20,12 +20,12 @@ zigchaind tx wasm execute <factory_address> '{
   "create_pair": {
     "pair_type": {"xyk": {}},
     "asset_infos": [
-      {"native_token": {"denom": "uzig"}},
+      {"native_token": {"denom": "azig"}},
       {"native_token": {"denom": "usdc"}}
     ],
     "init_params": null
   }
-}' --from user --gas auto --fees 1000uzig --amount 101000000uzig \
+}' --from user --gas auto --fees 1000000000000000azig --amount 140000000000000000000azig \
   --node <rpc_url> --chain-id <chain_id>
 ```
 
@@ -36,12 +36,12 @@ zigchaind tx wasm execute <factory_address> '{
   "create_pair": {
     "pair_type": {"xyk": {}},
     "asset_infos": [
-      {"native_token": {"denom": "uzig"}},
+      {"native_token": {"denom": "azig"}},
       {"token": {"contract_addr": "<token_address>"}}
     ],
     "init_params": null
   }
-}' --from user --gas auto --fees 1000uzig --amount 101000000uzig \
+}' --from user --gas auto --fees 1000000000000000azig --amount 140000000000000000000azig \
   --node <rpc_url> --chain-id <chain_id>
 ```
 
@@ -69,7 +69,7 @@ zigchaind tx wasm execute <factory_address> '{
     ],
     "init_params": "eyJhbXAiOjEwMH0="
   }
-}' --from user --gas auto --fees 1000uzig --amount 101000000uzig \
+}' --from user --gas auto --fees 1000000000000000azig --amount 140000000000000000000azig \
   --node <rpc_url> --chain-id <chain_id>
 ```
 
@@ -89,7 +89,7 @@ zigchaind tx wasm execute <factory_address> '{
     ],
     "init_params": "eyJhbXAiOjE1MH0="
   }
-}' --from user --gas auto --fees 1000uzig --amount 101000000uzig \
+}' --from user --gas auto --fees 1000000000000000azig --amount 140000000000000000000azig \
   --node <rpc_url> --chain-id <chain_id>
 ```
 
@@ -123,12 +123,12 @@ zigchaind tx wasm execute <factory_address> '{
   "create_pair": {
     "pair_type": {"concentrated": {}},
     "asset_infos": [
-      {"native_token": {"denom": "uzig"}},
+      {"native_token": {"denom": "azig"}},
       {"native_token": {"denom": "usdc"}}
     ],
     "init_params": "eyJhbXAiOiI0MC4wIiwiZ2FtbWEiOiIwLjAwMDEiLCJtaWRfZmVlIjoiMC4wMDUiLCJvdXRfZmVlIjoiMC4wMSIsImZlZV9nYW1tYSI6IjAuMDAxIiwicmVwZWdfcHJvZml0X3RocmVzaG9sZCI6IjAuMDAwMSIsIm1pbl9wcmljZV9zY2FsZV9kZWx0YSI6IjAuMDAwMDAxIiwicHJpY2Vfc2NhbGUiOiIxLjUiLCJtYV9oYWxmX3RpbWUiOjYwMCwidHJhY2tfYXNzZXRfYmFsYW5jZXMiOmZhbHNlfQ=="
   }
-}' --from user --gas auto --fees 1000uzig --amount 101000000uzig \
+}' --from user --gas auto --fees 1000000000000000azig --amount 140000000000000000000azig \
   --node <rpc_url> --chain-id <chain_id>
 ```
 
@@ -154,12 +154,12 @@ zigchaind tx wasm execute <factory_address> '{
   "create_pair": {
     "pair_type": {"concentrated": {}},
     "asset_infos": [
-      {"native_token": {"denom": "uzig"}},
+      {"native_token": {"denom": "azig"}},
       {"token": {"contract_addr": "zig1..."}}
     ],
     "init_params": "eyJhbXAiOiI1MC4wIiwiZ2FtbWEiOiIwLjAwMDIiLCJtaWRfZmVlIjoiMC4wMDMiLCJvdXRfZmVlIjoiMC4wMDgiLCJmZWVfZ2FtbWEiOiIwLjAwMDUiLCJyZXBlZ19wcm9maXRfdGhyZXNob2xkIjoiMC4wMDAwNSIsIm1pbl9wcmljZV9zY2FsZV9kZWx0YSI6IjAuMDAwMDAwNSIsInByaWNlX3NjYWxlIjoiMi4wIiwibWFfaGFsZl90aW1lIjozMDAsInRyYWNrX2Fzc2V0X2JhbGFuY2VzIjp0cnVlfQ=="
   }
-}' --from user --gas auto --fees 1000uzig --amount 101000000uzig \
+}' --from user --gas auto --fees 1000000000000000azig --amount 140000000000000000000azig \
   --node <rpc_url> --chain-id <chain_id>
 ```
 
@@ -224,7 +224,7 @@ zigchaind query wasm contract-state smart <factory_address> '{
 zigchaind query wasm contract-state smart <factory_address> '{
   "pair": {
     "asset_infos": [
-      {"native_token": {"denom": "uzig"}},
+      {"native_token": {"denom": "azig"}},
       {"native_token": {"denom": "usdc"}}
     ]
   }
@@ -233,8 +233,8 @@ zigchaind query wasm contract-state smart <factory_address> '{
 
 ## 🚨 Important Notes
 
-1. **Pool Creation Fee**: 1 ZIG (1,000,000 uzig) required for creating pairs
-2. **LP Token Creation Fee**: 100 ZIG (100,000,000 uzig) required by ZIGChain to create a token
+1. **Pool Creation Fee**: 100 ZIG (100,000,000,000,000,000,000 azig) required for creating pairs
+2. **LP Token Creation Fee**: 40 ZIG (40,000,000,000,000,000,000 azig) required by ZIGChain to create a token
 3. **Base64 Encoding**: Init params for stable and concentrated pairs must be base64-encoded
 4. **Asset Order**: The order of assets in `asset_infos` matters for some operations
 5. **Gas Costs**: Complex pair types (stable, concentrated) require more gas

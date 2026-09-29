@@ -33,12 +33,12 @@ zigchaind tx wasm execute <factory_address> '{
   "create_pair": {
     "pair_type": {"xyk": {}},
     "asset_infos": [
-      {"native_token": {"denom": "uzig"}},
+      {"native_token": {"denom": "azig"}},
       {"native_token": {"denom": "usdc"}}
     ],
     "init_params": null
   }
-}' --from user --gas auto --fees 1000uzig --amount 101000000uzig
+}' --from user --gas auto --fees 1000000000000000azig --amount 140000000000000000000azig
 ```
 
 #### Custom XYK Pair Types
@@ -56,12 +56,12 @@ zigchaind tx wasm execute <factory_address> '{
   "create_pair": {
     "pair_type": {"custom": "xyk_100"},
     "asset_infos": [
-      {"native_token": {"denom": "uzig"}},
+      {"native_token": {"denom": "azig"}},
       {"native_token": {"denom": "usdc"}}
     ],
     "init_params": null
   }
-}' --from user --gas auto --fees 1000uzig --amount 101000000uzig
+}' --from user --gas auto --fees 1000000000000000azig --amount 140000000000000000000azig
 ```
 
 ```bash
@@ -70,12 +70,12 @@ zigchaind tx wasm execute <factory_address> '{
   "create_pair": {
     "pair_type": {"custom": "xyk_25"},
     "asset_infos": [
-      {"native_token": {"denom": "uzig"}},
+      {"native_token": {"denom": "azig"}},
       {"native_token": {"denom": "usdc"}}
     ],
     "init_params": null
   }
-}' --from user --gas auto --fees 1000uzig --amount 101000000uzig
+}' --from user --gas auto --fees 1000000000000000azig --amount 140000000000000000000azig
 ```
 
 ### Add Liquidity to XYK Pair
@@ -84,12 +84,12 @@ zigchaind tx wasm execute <factory_address> '{
 zigchaind tx wasm execute <pair_address> '{
   "provide_liquidity": {
     "assets": [
-      {"info": {"native_token": {"denom": "uzig"}}, "amount": "1000000"},
+      {"info": {"native_token": {"denom": "azig"}}, "amount": "1000000000000000000"},
       {"info": {"token": {"contract_addr": "zig1..."}}, "amount": "1000000"}
     ],
     "slippage_tolerance": "0.01"
   }
-}' --from user --gas auto --fees 1000uzig --amount 2000000uzig
+}' --from user --gas auto --fees 1000000000000000azig --amount 2000000000000000000azig
 ```
 
 ### Swap on XYK Pair
@@ -98,13 +98,13 @@ zigchaind tx wasm execute <pair_address> '{
 zigchaind tx wasm execute <pair_address> '{
   "swap": {
     "offer_asset": {
-      "info": {"native_token": {"denom": "uzig"}},
-      "amount": "1000000"
+      "info": {"native_token": {"denom": "azig"}},
+      "amount": "1000000000000000000"
     },
-    "belief_price": "1.0",
+    "belief_price": "1000000000000",
     "max_spread": "0.1"
   }
-}' --from user --gas auto --fees 1000uzig --amount 1000000uzig
+}' --from user --gas auto --fees 1000000000000000azig --amount 1000000000000000000azig
 ```
 
 ## 🎯 Stable Pairs
@@ -135,13 +135,13 @@ zigchaind tx wasm execute <factory_address> '{
       "code_id": 79,
       "total_fee_bps": 100,
       "maker_fee_bps": 2000,
-      "pool_creation_fee": "1000000",
+      "pool_creation_fee": "100000000000000000000",
       "is_disabled": false,
       "is_generator_disabled": false,
       "permissioned": false
     }
   }
-}' --from owner --gas 200000 --fees 1000uzig
+}' --from owner --gas 200000 --fees 1000000000000000azig
 ```
 
 #### Step 2: Create Stable Pair
@@ -164,7 +164,7 @@ zigchaind tx wasm execute <factory_address> '{
     ],
     "init_params": "eyJhbXAiOjEwMH0="
   }
-}' --from user --gas auto --fees 1000uzig --amount 101000000uzig
+}' --from user --gas auto --fees 1000000000000000azig --amount 140000000000000000000azig
 ```
 
 **Init Params (Base64 encoded):**
@@ -186,7 +186,7 @@ zigchaind tx wasm execute <pair_address> '{
     ],
     "slippage_tolerance": "0.005"
   }
-}' --from user --gas auto --fees 1000uzig --amount 2000000usdc
+}' --from user --gas auto --fees 1000000000000000azig --amount 2000000usdc
 ```
 
 ## 🎯 Concentrated Pairs
@@ -229,12 +229,12 @@ zigchaind tx wasm execute <factory_address> '{
   "create_pair": {
     "pair_type": {"concentrated": {}},
     "asset_infos": [
-      {"native_token": {"denom": "uzig"}},
+      {"native_token": {"denom": "azig"}},
       {"token": {"contract_addr": "zig1..."}}
     ],
     "init_params": "eyJhbXAiOiI0MC4wIiwiZ2FtbWEiOiIwLjAwMDEiLCJtaWRfZmVlIjoiMC4wMDUiLCJvdXRfZmVlIjoiMC4wMSIsImZlZV9nYW1tYSI6IjAuMDAxIiwicmVwZWdfcHJvZml0X3RocmVzaG9sZCI6IjAuMDAwMSIsIm1pbl9wcmljZV9zY2FsZV9kZWx0YSI6IjAuMDAwMDAxIiwicHJpY2Vfc2NhbGUiOiIxLjUiLCJtYV9oYWxmX3RpbWUiOjYwMCwidHJhY2tfYXNzZXRfYmFsYW5jZXMiOmZhbHNlfQ=="
   }
-}' --from user --gas auto --fees 1000uzig --amount 101000000uzig
+}' --from user --gas auto --fees 1000000000000000azig --amount 140000000000000000000azig
 ```
 
 **Init Params (Base64 encoded):**
@@ -260,12 +260,12 @@ zigchaind tx wasm execute <factory_address> '{
 zigchaind tx wasm execute <pair_address> '{
   "provide_liquidity": {
     "amounts": [
-      {"info": {"native_token": {"denom": "uzig"}}, "amount": "1000000"},
+      {"info": {"native_token": {"denom": "azig"}}, "amount": "1000000000000000000"},
       {"info": {"token": {"contract_addr": "zig1..."}}, "amount": "1000000"}
     ],
     "max_spread": "0.1"
   }
-}' --from user --gas auto --fees 1000uzig --amount 2000000uzig
+}' --from user --gas auto --fees 1000000000000000azig --amount 2000000000000000000azig
 ```
 
 ## 📊 Common Operations
@@ -312,7 +312,7 @@ zigchaind tx wasm execute <pair_address> '{
   "withdraw_liquidity": {
     "amount": "1000000"
   }
-}' --from user --gas auto --fees 1000uzig
+}' --from user --gas auto --fees 1000000000000000azig
 ```
 
 ## 🔧 Configuration
@@ -381,7 +381,7 @@ You can also use online base64 encoders:
 ### Pair Creation
 
 - **[Factory Contract](./factory.md#create-pair)** - Create pairs through factory
-- **[Pool Creation Fee](./factory.md#create-pair)** - 1 ZIG fee for creating pairs
+- **[Pool Creation Fee](./factory.md#create-pair)** - 100 ZIG fee for creating pairs
 
 ### Advanced Trading
 
@@ -401,8 +401,8 @@ You can also use online base64 encoders:
 
 ## 🚨 Important Notes
 
-1. **Pool Creation Fee**: 1 ZIG (1,000,000 uzig) required when creating pairs
-2. **LP Token Creation Fee**: 100 ZIG (100,000,000 uzig) required by ZIGChain to create a token
+1. **Pool Creation Fee**: 100 ZIG (100,000,000,000,000,000,000 azig) required when creating pairs
+2. **LP Token Creation Fee**: 40 ZIG (40,000,000,000,000,000,000 azig) required by ZIGChain to create a token
 3. **Liquidity Provision**: Must provide both assets in correct ratios
 4. **Slippage Protection**: Always use appropriate slippage limits
 5. **Base64 Encoding**: Init params for stable and concentrated pairs must be base64-encoded

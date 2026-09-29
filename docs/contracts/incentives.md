@@ -34,7 +34,7 @@ zigchaind tx wasm execute <incentives_address> '{
   "deposit": {
     "recipient": "zig1..."
   }
-}' --from user --gas auto --fees 1000uzig --amount 1000000coin.zig1..lptoken
+}' --from user --gas auto --fees 1000000000000000azig --amount 1000000coin.zig1..lptoken
 ```
 
 **For CW20 LP tokens:**
@@ -46,7 +46,7 @@ zigchaind tx wasm execute <lp_token_address> '{
     "amount": "1000000",
     "msg": "eyJkZXBvc2l0Ijp7InJlY2lwaWVudCI6InppZzEuLi4ifX0="
   }
-}' --from user --gas auto --fees 1000uzig
+}' --from user --gas auto --fees 1000000000000000azig
 ```
 
 ### Withdraw LP Tokens
@@ -57,7 +57,7 @@ zigchaind tx wasm execute <incentives_address> '{
     "lp_token": "coin.zig1..lptoken",
     "amount": "500000"
   }
-}' --from user --gas auto --fees 1000uzig
+}' --from user --gas auto --fees 1000000000000000azig
 ```
 
 ### Claim Rewards
@@ -67,7 +67,7 @@ zigchaind tx wasm execute <incentives_address> '{
   "claim_rewards": {
     "lp_tokens": ["coin.zig1..lptoken"]
   }
-}' --from user --gas auto --fees 1000uzig
+}' --from user --gas auto --fees 1000000000000000azig
 ```
 
 ## 🎯 Pool Management (Admin Only)
@@ -82,7 +82,7 @@ zigchaind tx wasm execute <incentives_address> '{
       ["coin.zig1..lptoken", "200"]
     ]
   }
-}' --from admin --gas auto --fees 1000uzig
+}' --from admin --gas auto --fees 1000000000000000azig
 ```
 
 ### Incentivize Pool
@@ -93,13 +93,13 @@ zigchaind tx wasm execute <incentives_address> '{
     "lp_token": "coin.zig1..lptoken",
     "schedule": {
       "reward": {
-        "info": {"native_token": {"denom": "uzig"}},
-        "amount": "1000000"
+        "info": {"native_token": {"denom": "azig"}},
+        "amount": "1000000000000000000"
       },
       "duration_periods": 1
     }
   }
-}' --from user --gas auto --fees 1000uzig --amount 1000000uzig
+}' --from user --gas auto --fees 1000000000000000azig --amount 1000000000000000000azig
 ```
 
 ## �� Query Operations

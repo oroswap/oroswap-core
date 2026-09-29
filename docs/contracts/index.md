@@ -67,7 +67,10 @@ The Oroswap ecosystem consists of several interconnected contracts:
 
 - **Coin Registry** - Manages token metadata and precision
 - **Token Factory Tracker** - Tracks token factory operations
-- **Staking** - Additional staking mechanisms
+- **Staking** - ORO staking with multi-denom rewards and an unbonding period
+- **Airdrop** - Token airdrops with claim, linear vesting and APY bonus
+- **Wrapper** - 1:1 lock-and-mint wrapper for factory tokens
+- **Revenue Router** - Bridges USDC from ZIG Chain to Ethereum via Noble CCTP
 
 ## 🚀 Getting Started
 

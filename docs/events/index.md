@@ -92,7 +92,7 @@ def parse_swap_event(event):
 
 1. **Event Order**: Events are emitted in the order of execution
 2. **JSON Parsing**: Asset information is stored as JSON strings
-3. **Amount Precision**: All amounts are in the smallest unit (e.g., uzig)
+3. **Amount Precision**: All amounts are in the smallest unit (e.g., azig)
 4. **Address Format**: All addresses are in bech32 format
 5. **Event Types**: All events have the "wasm-" prefix
 6. **Reserves Information**: Swap events include current pool reserves

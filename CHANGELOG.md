@@ -2,7 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [2.0.0] – 2026-09-30
+
+### Added
+
+- Airdrop contract with claim, linear vesting with APY bonus and mandatory expiry
+- Wrapper contract for 1:1 lock-and-mint of factory tokens
+- Revenue router contract for bridging USDC from ZIG Chain to Ethereum via Noble CCTP
+- ZIG Chain v5 denom (`uzig` → `azig`) migration for factory and XYK pairs
+- `UpdatePoolCreationFeeDenom` message in factory
+- Testing scripts for airdrop, staking, wrapper and revenue router
+
+### Changed
+
+- Staking contract updates: xORO removed, 1:1 stake registry with multi-denom rewards and an unbonding queue
+- Pool creation fee denom now defaults to `azig` and pairs read it from the factory instead of default `uzig`
+- XYK pair `MigrateMsg` Added `denom_from` and `denom_to`
+- XYK TWAP accumulator widened to `Uint256` with 18-decimal precision (reset on migrate)
+- LP token minting cap raised from `u64::MAX` to `Uint128::MAX`
+- Factory, pair, pair-stable and pair-concentrated bumped to 1.2.0; staking to 2.2.0
+- Removed unused `[profile.release]` block from `.cargo/config.toml`
+
+### Fixed
+
+- **Pairs**:
+  - Fixed XYK TWAP not updating on pools with 18-decimal and 6-decimal assets
+  - Fixed stable pool LP overflow with 18-decimal assets
+  - Fixed stable and concentrated pool creation failing after the `azig` redenomination
+- **Staking**:
+  - Reward denom limit now counts only active streams
+  - Pending rewards keep rounding remainders instead of dropping them
+  - Added unbonding period bounds check on instantiate
+- **Airdrop, Wrapper, Staking**:
+  - Added forward-only migrations
+
+## [1.1.0] – 2025-09-24
 
 ### Added
 
@@ -23,7 +57,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- Convert token factory message fields from camelCase to snake_case for ZIGChain compatibility
+- Convert token factory message fields from camelCase to snake_case for ZIG Chain compatibility
 
 ### Fixed
 

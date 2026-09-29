@@ -49,6 +49,10 @@ The optimized contracts are generated in the artifacts/ directory.
 | [Incentives](contracts/tokenomics/incentives/)                    | Liquidity mining and reward distribution system                   |
 | [Native Coin Registry](contracts/periphery/native_coin_registry/) | Registry for native token metadata and configurations             |
 | [Pool Initializer](contracts/periphery/pool_initializer/)         | Helper contract for initializing new trading pools                |
+| [Airdrop](contracts/tokenomics/airdrop/)                          | Token airdrop with claim, linear vesting and APY bonus            |
+| [Revenue Router](contracts/tokenomics/revenue_router/)            | Bridges USDC from ZIG Chain to Ethereum via Noble CCTP            |
+| [Staking](contracts/tokenomics/staking/)                          | ORO staking with multi-denom rewards and an unbonding period      |
+| [Wrapper](contracts/tokenomics/wrapper/)                          | 1:1 lock-and-mint wrapper for factory tokens                      |
 
 ## Deployment
 

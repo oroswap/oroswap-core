@@ -26,7 +26,7 @@ Emitted when a swap is executed.
     },
     {
       "key": "offer_asset",
-      "value": "{\"info\":{\"native_token\":{\"denom\":\"uzig\"}},\"amount\":\"1000000\"}"
+      "value": "{\"info\":{\"native_token\":{\"denom\":\"azig\"}},\"amount\":\"1000000000000000000\"}"
     },
     {
       "key": "ask_asset",
@@ -50,7 +50,7 @@ Emitted when a swap is executed.
     },
     {
       "key": "reserves",
-      "value": "{\"native_token\":{\"denom\":\"uzig\"}}:1000000,{\"native_token\":{\"denom\":\"usdc\"}}:950000"
+      "value": "{\"native_token\":{\"denom\":\"azig\"}}:1000000000000000000,{\"native_token\":{\"denom\":\"usdc\"}}:950000"
     }
   ]
 }
@@ -82,7 +82,7 @@ Emitted when liquidity is added to a pool.
     },
     {
       "key": "assets",
-      "value": "[{\"info\":{\"native_token\":{\"denom\":\"uzig\"}},\"amount\":\"1000000\"},{\"info\":{\"native_token\":{\"denom\":\"usdc\"}},\"amount\":\"1000000\"}]"
+      "value": "[{\"info\":{\"native_token\":{\"denom\":\"azig\"}},\"amount\":\"1000000000000000000\"},{\"info\":{\"native_token\":{\"denom\":\"usdc\"}},\"amount\":\"1000000\"}]"
     },
     {
       "key": "share",
@@ -125,7 +125,7 @@ Emitted when liquidity is removed from a pool.
     },
     {
       "key": "refund_assets",
-      "value": "[{\"info\":{\"native_token\":{\"denom\":\"uzig\"}},\"amount\":\"1000000\"},{\"info\":{\"native_token\":{\"denom\":\"usdc\"}},\"amount\":\"1000000\"}]"
+      "value": "[{\"info\":{\"native_token\":{\"denom\":\"azig\"}},\"amount\":\"1000000000000000000\"},{\"info\":{\"native_token\":{\"denom\":\"usdc\"}},\"amount\":\"1000000\"}]"
     },
     {
       "key": "sender",
@@ -167,7 +167,7 @@ Emitted when concentrated liquidity is added.
     },
     {
       "key": "amounts",
-      "value": "[{\"info\":{\"native_token\":{\"denom\":\"uzig\"}},\"amount\":\"1000000\"},{\"info\":{\"native_token\":{\"denom\":\"usdc\"}},\"amount\":\"1000000\"}]"
+      "value": "[{\"info\":{\"native_token\":{\"denom\":\"azig\"}},\"amount\":\"1000000000000000000\"},{\"info\":{\"native_token\":{\"denom\":\"usdc\"}},\"amount\":\"1000000\"}]"
     },
     {
       "key": "liquidity",
@@ -203,7 +203,7 @@ Emitted when fees are collected from concentrated liquidity.
     },
     {
       "key": "collected_fees",
-      "value": "[{\"info\":{\"native_token\":{\"denom\":\"uzig\"}},\"amount\":\"1000\"},{\"info\":{\"native_token\":{\"denom\":\"usdc\"}},\"amount\":\"1000\"}]"
+      "value": "[{\"info\":{\"native_token\":{\"denom\":\"azig\"}},\"amount\":\"1000000000000000\"},{\"info\":{\"native_token\":{\"denom\":\"usdc\"}},\"amount\":\"1000\"}]"
     },
     {
       "key": "sender",
@@ -336,7 +336,7 @@ def parse_liquidity_event(event):
 
 1. **Event Order**: Events are emitted in the order of execution
 2. **JSON Parsing**: Asset information is stored as JSON strings
-3. **Amount Precision**: All amounts are in the smallest unit (e.g., uzig)
+3. **Amount Precision**: All amounts are in the smallest unit (e.g., azig)
 4. **Address Format**: All addresses are in bech32 format
 5. **Event Types**: All pair events have the "wasm-" prefix
 6. **Asset Balance Tracking**: Pairs with `track_asset_balances` enabled can be queried for historical balances using the `asset_balance_at` query
