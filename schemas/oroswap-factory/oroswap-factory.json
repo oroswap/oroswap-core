@@ -1,6 +1,6 @@
 {
   "contract_name": "oroswap-factory",
-  "contract_version": "1.9.0",
+  "contract_version": "1.2.0",
   "idl_version": "1.0.0",
   "instantiate": {
     "$schema": "http://json-schema.org/draft-07/schema#",
@@ -21,11 +21,17 @@
       },
       "fee_address": {
         "description": "Contract address to send governance fees to (the Maker)",
-        "type": ["string", "null"]
+        "type": [
+          "string",
+          "null"
+        ]
       },
       "generator_address": {
         "description": "Address of contract that is used to auto_stake LP tokens once someone provides liquidity in a pool",
-        "type": ["string", "null"]
+        "type": [
+          "string",
+          "null"
+        ]
       },
       "owner": {
         "description": "Address of owner that is allowed to change factory contract parameters",
@@ -67,7 +73,12 @@
       "PairConfig": {
         "description": "This structure stores a pair type's configuration.",
         "type": "object",
-        "required": ["code_id", "maker_fee_bps", "pair_type", "total_fee_bps"],
+        "required": [
+          "code_id",
+          "maker_fee_bps",
+          "pair_type",
+          "total_fee_bps"
+        ],
         "properties": {
           "code_id": {
             "description": "ID of contract which is allowed to create pairs of this type",
@@ -80,7 +91,7 @@
             "default": false,
             "type": "boolean"
           },
-          "is_oro_generator_disabled": {
+          "is_generator_disabled": {
             "description": "Setting this to true means that pairs of this type will not be able to get an ORO generator Default is false.",
             "default": false,
             "type": "boolean"
@@ -104,6 +115,14 @@
             "default": false,
             "type": "boolean"
           },
+          "pool_creation_fee": {
+            "default": "1000",
+            "allOf": [
+              {
+                "$ref": "#/definitions/Uint128"
+              }
+            ]
+          },
           "total_fee_bps": {
             "description": "The total fees (in bps) charged by a pair of this type",
             "type": "integer",
@@ -119,7 +138,9 @@
           {
             "description": "XYK pair type",
             "type": "object",
-            "required": ["xyk"],
+            "required": [
+              "xyk"
+            ],
             "properties": {
               "xyk": {
                 "type": "object",
@@ -131,7 +152,9 @@
           {
             "description": "Stable pair type",
             "type": "object",
-            "required": ["stable"],
+            "required": [
+              "stable"
+            ],
             "properties": {
               "stable": {
                 "type": "object",
@@ -143,7 +166,9 @@
           {
             "description": "Custom pair type",
             "type": "object",
-            "required": ["custom"],
+            "required": [
+              "custom"
+            ],
             "properties": {
               "custom": {
                 "type": "string"
@@ -155,7 +180,10 @@
       },
       "TrackerConfig": {
         "type": "object",
-        "required": ["code_id", "token_factory_addr"],
+        "required": [
+          "code_id",
+          "token_factory_addr"
+        ],
         "properties": {
           "code_id": {
             "description": "Tracking contract code id",
@@ -169,6 +197,10 @@
           }
         },
         "additionalProperties": false
+      },
+      "Uint128": {
+        "description": "A thin wrapper around u128 that is using strings for JSON encoding/decoding, such that the full u128 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.\n\n# Examples\n\nUse `from` to create instances of this and `u128` to get the value out:\n\n``` # use cosmwasm_std::Uint128; let a = Uint128::from(123u128); assert_eq!(a.u128(), 123);\n\nlet b = Uint128::from(42u64); assert_eq!(b.u128(), 42);\n\nlet c = Uint128::from(70u32); assert_eq!(c.u128(), 70); ```",
+        "type": "string"
       }
     }
   },
@@ -180,32 +212,49 @@
       {
         "description": "UpdateConfig updates relevant code IDs",
         "type": "object",
-        "required": ["update_config"],
+        "required": [
+          "update_config"
+        ],
         "properties": {
           "update_config": {
             "type": "object",
             "properties": {
               "coin_registry_address": {
                 "description": "The address of the contract that contains the coins and their accuracy",
-                "type": ["string", "null"]
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "fee_address": {
                 "description": "Contract address to send governance fees to (the Maker)",
-                "type": ["string", "null"]
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "generator_address": {
                 "description": "Contract address where Lp tokens can be auto_staked after someone provides liquidity in an incentivized Oroswap pool",
-                "type": ["string", "null"]
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "token_code_id": {
                 "description": "CW20 token contract code identifier",
-                "type": ["integer", "null"],
+                "type": [
+                  "integer",
+                  "null"
+                ],
                 "format": "uint64",
                 "minimum": 0.0
               },
               "whitelist_code_id": {
                 "description": "CW1 whitelist contract code id used to store 3rd party rewards for staking Oroswap LP tokens",
-                "type": ["integer", "null"],
+                "type": [
+                  "integer",
+                  "null"
+                ],
                 "format": "uint64",
                 "minimum": 0.0
               }
@@ -217,15 +266,22 @@
       },
       {
         "type": "object",
-        "required": ["update_tracker_config"],
+        "required": [
+          "update_tracker_config"
+        ],
         "properties": {
           "update_tracker_config": {
             "type": "object",
-            "required": ["tracker_code_id"],
+            "required": [
+              "tracker_code_id"
+            ],
             "properties": {
               "token_factory_addr": {
                 "description": "Token factory module address",
-                "type": ["string", "null"]
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "tracker_code_id": {
                 "description": "Tracking contract code id",
@@ -242,11 +298,15 @@
       {
         "description": "UpdatePairConfig updates the config for a pair type.",
         "type": "object",
-        "required": ["update_pair_config"],
+        "required": [
+          "update_pair_config"
+        ],
         "properties": {
           "update_pair_config": {
             "type": "object",
-            "required": ["config"],
+            "required": [
+              "config"
+            ],
             "properties": {
               "config": {
                 "description": "New [`PairConfig`] settings for a pair type",
@@ -263,13 +323,41 @@
         "additionalProperties": false
       },
       {
+        "description": "Updates the native denom accepted (and forwarded to the maker) as the pool-creation fee. Owner only. Kept as a focused message so a base-denom rename (e.g. `uzig`->`azig`) needs no code change.",
+        "type": "object",
+        "required": [
+          "update_pool_creation_fee_denom"
+        ],
+        "properties": {
+          "update_pool_creation_fee_denom": {
+            "type": "object",
+            "required": [
+              "denom"
+            ],
+            "properties": {
+              "denom": {
+                "description": "The new pool-creation fee denom (validated as a native denom)",
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
         "description": "CreatePair instantiates a new pair contract.",
         "type": "object",
-        "required": ["create_pair"],
+        "required": [
+          "create_pair"
+        ],
         "properties": {
           "create_pair": {
             "type": "object",
-            "required": ["asset_infos", "pair_type"],
+            "required": [
+              "asset_infos",
+              "pair_type"
+            ],
             "properties": {
               "asset_infos": {
                 "description": "The assets to create the pool for",
@@ -306,11 +394,16 @@
       {
         "description": "Deregister removes a previously created pair.",
         "type": "object",
-        "required": ["deregister"],
+        "required": [
+          "deregister"
+        ],
         "properties": {
           "deregister": {
             "type": "object",
-            "required": ["asset_infos"],
+            "required": [
+              "asset_infos",
+              "pair_type"
+            ],
             "properties": {
               "asset_infos": {
                 "description": "The assets for which we deregister a pool",
@@ -318,6 +411,14 @@
                 "items": {
                   "$ref": "#/definitions/AssetInfo"
                 }
+              },
+              "pair_type": {
+                "description": "The pair type to deregister",
+                "allOf": [
+                  {
+                    "$ref": "#/definitions/PairType"
+                  }
+                ]
               }
             },
             "additionalProperties": false
@@ -328,11 +429,16 @@
       {
         "description": "ProposeNewOwner creates a proposal to change contract ownership. The validity period for the proposal is set in the `expires_in` variable.",
         "type": "object",
-        "required": ["propose_new_owner"],
+        "required": [
+          "propose_new_owner"
+        ],
         "properties": {
           "propose_new_owner": {
             "type": "object",
-            "required": ["expires_in", "owner"],
+            "required": [
+              "expires_in",
+              "owner"
+            ],
             "properties": {
               "expires_in": {
                 "description": "The date after which this proposal expires",
@@ -353,7 +459,9 @@
       {
         "description": "DropOwnershipProposal removes the existing offer to change contract ownership.",
         "type": "object",
-        "required": ["drop_ownership_proposal"],
+        "required": [
+          "drop_ownership_proposal"
+        ],
         "properties": {
           "drop_ownership_proposal": {
             "type": "object",
@@ -365,10 +473,184 @@
       {
         "description": "Used to claim contract ownership.",
         "type": "object",
-        "required": ["claim_ownership"],
+        "required": [
+          "claim_ownership"
+        ],
         "properties": {
           "claim_ownership": {
             "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Pause a specific pair by its asset infos",
+        "type": "object",
+        "required": [
+          "pause_pair"
+        ],
+        "properties": {
+          "pause_pair": {
+            "type": "object",
+            "required": [
+              "asset_infos",
+              "pair_type"
+            ],
+            "properties": {
+              "asset_infos": {
+                "description": "The assets for which we pause the pair",
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/AssetInfo"
+                }
+              },
+              "pair_type": {
+                "description": "The pair type to pause",
+                "allOf": [
+                  {
+                    "$ref": "#/definitions/PairType"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Unpause a specific pair by its asset infos",
+        "type": "object",
+        "required": [
+          "unpause_pair"
+        ],
+        "properties": {
+          "unpause_pair": {
+            "type": "object",
+            "required": [
+              "asset_infos",
+              "pair_type"
+            ],
+            "properties": {
+              "asset_infos": {
+                "description": "The assets for which we unpause the pair",
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/AssetInfo"
+                }
+              },
+              "pair_type": {
+                "description": "The pair type to unpause",
+                "allOf": [
+                  {
+                    "$ref": "#/definitions/PairType"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Pause pairs in batches (for large numbers of pairs)",
+        "type": "object",
+        "required": [
+          "pause_pairs_batch"
+        ],
+        "properties": {
+          "pause_pairs_batch": {
+            "type": "object",
+            "properties": {
+              "batch_size": {
+                "description": "Number of pairs to process per batch (default: 50, max: 100)",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "uint32",
+                "minimum": 0.0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Unpause pairs in batches (for large numbers of pairs)",
+        "type": "object",
+        "required": [
+          "unpause_pairs_batch"
+        ],
+        "properties": {
+          "unpause_pairs_batch": {
+            "type": "object",
+            "properties": {
+              "batch_size": {
+                "description": "Number of pairs to process per batch (default: 50, max: 100)",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "uint32",
+                "minimum": 0.0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Add addresses with pause authority",
+        "type": "object",
+        "required": [
+          "add_pause_authorities"
+        ],
+        "properties": {
+          "add_pause_authorities": {
+            "type": "object",
+            "required": [
+              "authorities"
+            ],
+            "properties": {
+              "authorities": {
+                "description": "Addresses to add as pause authorities",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Remove addresses with pause authority",
+        "type": "object",
+        "required": [
+          "remove_pause_authorities"
+        ],
+        "properties": {
+          "remove_pause_authorities": {
+            "type": "object",
+            "required": [
+              "authorities"
+            ],
+            "properties": {
+              "authorities": {
+                "description": "Addresses to remove from pause authorities",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
             "additionalProperties": false
           }
         },
@@ -386,11 +668,15 @@
           {
             "description": "Non-native Token",
             "type": "object",
-            "required": ["token"],
+            "required": [
+              "token"
+            ],
             "properties": {
               "token": {
                 "type": "object",
-                "required": ["contract_addr"],
+                "required": [
+                  "contract_addr"
+                ],
                 "properties": {
                   "contract_addr": {
                     "$ref": "#/definitions/Addr"
@@ -404,11 +690,15 @@
           {
             "description": "Native token",
             "type": "object",
-            "required": ["native_token"],
+            "required": [
+              "native_token"
+            ],
             "properties": {
               "native_token": {
                 "type": "object",
-                "required": ["denom"],
+                "required": [
+                  "denom"
+                ],
                 "properties": {
                   "denom": {
                     "type": "string"
@@ -428,7 +718,12 @@
       "PairConfig": {
         "description": "This structure stores a pair type's configuration.",
         "type": "object",
-        "required": ["code_id", "maker_fee_bps", "pair_type", "total_fee_bps"],
+        "required": [
+          "code_id",
+          "maker_fee_bps",
+          "pair_type",
+          "total_fee_bps"
+        ],
         "properties": {
           "code_id": {
             "description": "ID of contract which is allowed to create pairs of this type",
@@ -441,7 +736,7 @@
             "default": false,
             "type": "boolean"
           },
-          "is_oro_generator_disabled": {
+          "is_generator_disabled": {
             "description": "Setting this to true means that pairs of this type will not be able to get an ORO generator Default is false.",
             "default": false,
             "type": "boolean"
@@ -465,6 +760,14 @@
             "default": false,
             "type": "boolean"
           },
+          "pool_creation_fee": {
+            "default": "1000",
+            "allOf": [
+              {
+                "$ref": "#/definitions/Uint128"
+              }
+            ]
+          },
           "total_fee_bps": {
             "description": "The total fees (in bps) charged by a pair of this type",
             "type": "integer",
@@ -480,7 +783,9 @@
           {
             "description": "XYK pair type",
             "type": "object",
-            "required": ["xyk"],
+            "required": [
+              "xyk"
+            ],
             "properties": {
               "xyk": {
                 "type": "object",
@@ -492,7 +797,9 @@
           {
             "description": "Stable pair type",
             "type": "object",
-            "required": ["stable"],
+            "required": [
+              "stable"
+            ],
             "properties": {
               "stable": {
                 "type": "object",
@@ -504,7 +811,9 @@
           {
             "description": "Custom pair type",
             "type": "object",
-            "required": ["custom"],
+            "required": [
+              "custom"
+            ],
             "properties": {
               "custom": {
                 "type": "string"
@@ -513,6 +822,10 @@
             "additionalProperties": false
           }
         ]
+      },
+      "Uint128": {
+        "description": "A thin wrapper around u128 that is using strings for JSON encoding/decoding, such that the full u128 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.\n\n# Examples\n\nUse `from` to create instances of this and `u128` to get the value out:\n\n``` # use cosmwasm_std::Uint128; let a = Uint128::from(123u128); assert_eq!(a.u128(), 123);\n\nlet b = Uint128::from(42u64); assert_eq!(b.u128(), 42);\n\nlet c = Uint128::from(70u32); assert_eq!(c.u128(), 70); ```",
+        "type": "string"
       }
     }
   },
@@ -524,7 +837,9 @@
       {
         "description": "Config returns contract settings specified in the custom [`ConfigResponse`] structure.",
         "type": "object",
-        "required": ["config"],
+        "required": [
+          "config"
+        ],
         "properties": {
           "config": {
             "type": "object",
@@ -536,11 +851,16 @@
       {
         "description": "Pair returns information about a specific pair according to the specified assets.",
         "type": "object",
-        "required": ["pair"],
+        "required": [
+          "pair"
+        ],
         "properties": {
           "pair": {
             "type": "object",
-            "required": ["asset_infos"],
+            "required": [
+              "asset_infos",
+              "pair_type"
+            ],
             "properties": {
               "asset_infos": {
                 "description": "The assets for which we return a pair",
@@ -548,6 +868,14 @@
                 "items": {
                   "$ref": "#/definitions/AssetInfo"
                 }
+              },
+              "pair_type": {
+                "description": "The pair type for which we return pair information",
+                "allOf": [
+                  {
+                    "$ref": "#/definitions/PairType"
+                  }
+                ]
               }
             },
             "additionalProperties": false
@@ -558,23 +886,32 @@
       {
         "description": "Pairs returns an array of pairs and their information according to the specified parameters in `start_after` and `limit` variables.",
         "type": "object",
-        "required": ["pairs"],
+        "required": [
+          "pairs"
+        ],
         "properties": {
           "pairs": {
             "type": "object",
             "properties": {
               "limit": {
                 "description": "The number of pairs to read and return. It is an [`Option`] type.",
-                "type": ["integer", "null"],
+                "type": [
+                  "integer",
+                  "null"
+                ],
                 "format": "uint32",
                 "minimum": 0.0
               },
               "start_after": {
-                "description": "The pair item to start reading from. It is an [`Option`] type that accepts [`AssetInfo`] elements.",
-                "type": ["array", "null"],
-                "items": {
-                  "$ref": "#/definitions/AssetInfo"
-                }
+                "description": "The pair item to start reading from. It is an [`Option`] type that contains both asset infos and pair type.",
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/StartAfter"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "additionalProperties": false
@@ -585,11 +922,15 @@
       {
         "description": "FeeInfo returns fee parameters for a specific pair. The response is returned using a [`FeeInfoResponse`] structure",
         "type": "object",
-        "required": ["fee_info"],
+        "required": [
+          "fee_info"
+        ],
         "properties": {
           "fee_info": {
             "type": "object",
-            "required": ["pair_type"],
+            "required": [
+              "pair_type"
+            ],
             "properties": {
               "pair_type": {
                 "description": "The pair type for which we return fee information. Pair type is a [`PairType`] struct",
@@ -608,7 +949,9 @@
       {
         "description": "Returns a vector that contains blacklisted pair types",
         "type": "object",
-        "required": ["blacklisted_pair_types"],
+        "required": [
+          "blacklisted_pair_types"
+        ],
         "properties": {
           "blacklisted_pair_types": {
             "type": "object",
@@ -619,9 +962,98 @@
       },
       {
         "type": "object",
-        "required": ["tracker_config"],
+        "required": [
+          "tracker_config"
+        ],
         "properties": {
           "tracker_config": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "required": [
+          "pairs_by_assets"
+        ],
+        "properties": {
+          "pairs_by_assets": {
+            "type": "object",
+            "required": [
+              "asset_infos"
+            ],
+            "properties": {
+              "asset_infos": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/AssetInfo"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Returns whether a specific pair is paused",
+        "type": "object",
+        "required": [
+          "is_pair_paused"
+        ],
+        "properties": {
+          "is_pair_paused": {
+            "type": "object",
+            "required": [
+              "asset_infos",
+              "pair_type"
+            ],
+            "properties": {
+              "asset_infos": {
+                "description": "The assets for which we check if the pair is paused",
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/AssetInfo"
+                }
+              },
+              "pair_type": {
+                "description": "The pair type to check",
+                "allOf": [
+                  {
+                    "$ref": "#/definitions/PairType"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Returns all pause authorities",
+        "type": "object",
+        "required": [
+          "pause_authorities"
+        ],
+        "properties": {
+          "pause_authorities": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "description": "Returns the total number of paused pairs",
+        "type": "object",
+        "required": [
+          "paused_pairs_count"
+        ],
+        "properties": {
+          "paused_pairs_count": {
             "type": "object",
             "additionalProperties": false
           }
@@ -640,11 +1072,15 @@
           {
             "description": "Non-native Token",
             "type": "object",
-            "required": ["token"],
+            "required": [
+              "token"
+            ],
             "properties": {
               "token": {
                 "type": "object",
-                "required": ["contract_addr"],
+                "required": [
+                  "contract_addr"
+                ],
                 "properties": {
                   "contract_addr": {
                     "$ref": "#/definitions/Addr"
@@ -658,11 +1094,15 @@
           {
             "description": "Native token",
             "type": "object",
-            "required": ["native_token"],
+            "required": [
+              "native_token"
+            ],
             "properties": {
               "native_token": {
                 "type": "object",
-                "required": ["denom"],
+                "required": [
+                  "denom"
+                ],
                 "properties": {
                   "denom": {
                     "type": "string"
@@ -681,7 +1121,9 @@
           {
             "description": "XYK pair type",
             "type": "object",
-            "required": ["xyk"],
+            "required": [
+              "xyk"
+            ],
             "properties": {
               "xyk": {
                 "type": "object",
@@ -693,7 +1135,9 @@
           {
             "description": "Stable pair type",
             "type": "object",
-            "required": ["stable"],
+            "required": [
+              "stable"
+            ],
             "properties": {
               "stable": {
                 "type": "object",
@@ -705,7 +1149,9 @@
           {
             "description": "Custom pair type",
             "type": "object",
-            "required": ["custom"],
+            "required": [
+              "custom"
+            ],
             "properties": {
               "custom": {
                 "type": "string"
@@ -714,10 +1160,99 @@
             "additionalProperties": false
           }
         ]
+      },
+      "StartAfter": {
+        "type": "object",
+        "required": [
+          "asset_infos",
+          "pair_type"
+        ],
+        "properties": {
+          "asset_infos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/AssetInfo"
+            }
+          },
+          "pair_type": {
+            "$ref": "#/definitions/PairType"
+          }
+        },
+        "additionalProperties": false
       }
     }
   },
-  "migrate": null,
+  "migrate": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "MigrateMsg",
+    "type": "object",
+    "properties": {
+      "redenom": {
+        "description": "When set, the migrate re-keys `PAIRS` and `PAUSED_PAIRS`, swapping the native denom `from`->`to` in every stored pair key (the ZIGchain `uzig`->`azig` redenomination), and updates `pool_creation_fee_denom` if it currently equals `from`. When `None`, the migrate keeps its legacy pair-key-normalization behavior (re-derive keys from each pair's own reported `asset_infos`). `#[serde(default)]` keeps old `{tracker_config}` payloads valid.",
+        "default": null,
+        "anyOf": [
+          {
+            "$ref": "#/definitions/DenomRewrite"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "tracker_config": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/TrackerConfig"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "additionalProperties": false,
+    "definitions": {
+      "DenomRewrite": {
+        "description": "A native-denom rewrite instruction for the redenomination migrate: rewrite `from` -> `to` across the factory's stored pair keys.",
+        "type": "object",
+        "required": [
+          "from",
+          "to"
+        ],
+        "properties": {
+          "from": {
+            "description": "The denom to rewrite from (e.g. `uzig`)",
+            "type": "string"
+          },
+          "to": {
+            "description": "The denom to rewrite to (e.g. `azig`)",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "TrackerConfig": {
+        "type": "object",
+        "required": [
+          "code_id",
+          "token_factory_addr"
+        ],
+        "properties": {
+          "code_id": {
+            "description": "Tracking contract code id",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0.0
+          },
+          "token_factory_addr": {
+            "description": "Token factory module address",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
   "sudo": null,
   "responses": {
     "blacklisted_pair_types": {
@@ -734,7 +1269,9 @@
             {
               "description": "XYK pair type",
               "type": "object",
-              "required": ["xyk"],
+              "required": [
+                "xyk"
+              ],
               "properties": {
                 "xyk": {
                   "type": "object",
@@ -746,7 +1283,9 @@
             {
               "description": "Stable pair type",
               "type": "object",
-              "required": ["stable"],
+              "required": [
+                "stable"
+              ],
               "properties": {
                 "stable": {
                   "type": "object",
@@ -758,7 +1297,9 @@
             {
               "description": "Custom pair type",
               "type": "object",
-              "required": ["custom"],
+              "required": [
+                "custom"
+              ],
               "properties": {
                 "custom": {
                   "type": "string"
@@ -868,7 +1409,7 @@
               "default": false,
               "type": "boolean"
             },
-            "is_oro_generator_disabled": {
+            "is_generator_disabled": {
               "description": "Setting this to true means that pairs of this type will not be able to get an ORO generator Default is false.",
               "default": false,
               "type": "boolean"
@@ -892,6 +1433,14 @@
               "default": false,
               "type": "boolean"
             },
+            "pool_creation_fee": {
+              "default": "1000",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/Uint128"
+                }
+              ]
+            },
             "total_fee_bps": {
               "description": "The total fees (in bps) charged by a pair of this type",
               "type": "integer",
@@ -907,7 +1456,9 @@
             {
               "description": "XYK pair type",
               "type": "object",
-              "required": ["xyk"],
+              "required": [
+                "xyk"
+              ],
               "properties": {
                 "xyk": {
                   "type": "object",
@@ -919,7 +1470,9 @@
             {
               "description": "Stable pair type",
               "type": "object",
-              "required": ["stable"],
+              "required": [
+                "stable"
+              ],
               "properties": {
                 "stable": {
                   "type": "object",
@@ -931,7 +1484,9 @@
             {
               "description": "Custom pair type",
               "type": "object",
-              "required": ["custom"],
+              "required": [
+                "custom"
+              ],
               "properties": {
                 "custom": {
                   "type": "string"
@@ -940,6 +1495,10 @@
               "additionalProperties": false
             }
           ]
+        },
+        "Uint128": {
+          "description": "A thin wrapper around u128 that is using strings for JSON encoding/decoding, such that the full u128 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.\n\n# Examples\n\nUse `from` to create instances of this and `u128` to get the value out:\n\n``` # use cosmwasm_std::Uint128; let a = Uint128::from(123u128); assert_eq!(a.u128(), 123);\n\nlet b = Uint128::from(42u64); assert_eq!(b.u128(), 42);\n\nlet c = Uint128::from(70u32); assert_eq!(c.u128(), 70); ```",
+          "type": "string"
         }
       }
     },
@@ -948,7 +1507,11 @@
       "title": "FeeInfoResponse",
       "description": "A custom struct for each query response that returns an object of type [`FeeInfoResponse`].",
       "type": "object",
-      "required": ["maker_fee_bps", "total_fee_bps"],
+      "required": [
+        "maker_fee_bps",
+        "pool_creation_fee",
+        "total_fee_bps"
+      ],
       "properties": {
         "fee_address": {
           "description": "Contract address to send governance fees to",
@@ -967,6 +1530,14 @@
           "format": "uint16",
           "minimum": 0.0
         },
+        "pool_creation_fee": {
+          "description": "Pool creation fee",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Uint128"
+            }
+          ]
+        },
         "total_fee_bps": {
           "description": "Total amount of fees (in bps) charged on a swap",
           "type": "integer",
@@ -979,8 +1550,17 @@
         "Addr": {
           "description": "A human readable address.\n\nIn Cosmos, this is typically bech32 encoded. But for multi-chain smart contracts no assumptions should be made other than being UTF-8 encoded and of reasonable length.\n\nThis type represents a validated address. It can be created in the following ways 1. Use `Addr::unchecked(input)` 2. Use `let checked: Addr = deps.api.addr_validate(input)?` 3. Use `let checked: Addr = deps.api.addr_humanize(canonical_addr)?` 4. Deserialize from JSON. This must only be done from JSON that was validated before such as a contract's state. `Addr` must not be used in messages sent by the user because this would result in unvalidated instances.\n\nThis type is immutable. If you really need to mutate it (Really? Are you sure?), create a mutable copy using `let mut mutable = Addr::to_string()` and operate on that `String` instance.",
           "type": "string"
+        },
+        "Uint128": {
+          "description": "A thin wrapper around u128 that is using strings for JSON encoding/decoding, such that the full u128 range can be used for clients that convert JSON numbers to floats, like JavaScript and jq.\n\n# Examples\n\nUse `from` to create instances of this and `u128` to get the value out:\n\n``` # use cosmwasm_std::Uint128; let a = Uint128::from(123u128); assert_eq!(a.u128(), 123);\n\nlet b = Uint128::from(42u64); assert_eq!(b.u128(), 42);\n\nlet c = Uint128::from(70u32); assert_eq!(c.u128(), 70); ```",
+          "type": "string"
         }
       }
+    },
+    "is_pair_paused": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Boolean",
+      "type": "boolean"
     },
     "pair": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -1034,11 +1614,15 @@
             {
               "description": "Non-native Token",
               "type": "object",
-              "required": ["token"],
+              "required": [
+                "token"
+              ],
               "properties": {
                 "token": {
                   "type": "object",
-                  "required": ["contract_addr"],
+                  "required": [
+                    "contract_addr"
+                  ],
                   "properties": {
                     "contract_addr": {
                       "$ref": "#/definitions/Addr"
@@ -1052,11 +1636,15 @@
             {
               "description": "Native token",
               "type": "object",
-              "required": ["native_token"],
+              "required": [
+                "native_token"
+              ],
               "properties": {
                 "native_token": {
                   "type": "object",
-                  "required": ["denom"],
+                  "required": [
+                    "denom"
+                  ],
                   "properties": {
                     "denom": {
                       "type": "string"
@@ -1075,7 +1663,9 @@
             {
               "description": "XYK pair type",
               "type": "object",
-              "required": ["xyk"],
+              "required": [
+                "xyk"
+              ],
               "properties": {
                 "xyk": {
                   "type": "object",
@@ -1087,7 +1677,9 @@
             {
               "description": "Stable pair type",
               "type": "object",
-              "required": ["stable"],
+              "required": [
+                "stable"
+              ],
               "properties": {
                 "stable": {
                   "type": "object",
@@ -1099,7 +1691,9 @@
             {
               "description": "Custom pair type",
               "type": "object",
-              "required": ["custom"],
+              "required": [
+                "custom"
+              ],
               "properties": {
                 "custom": {
                   "type": "string"
@@ -1116,7 +1710,9 @@
       "title": "PairsResponse",
       "description": "A custom struct for each query response that returns an array of objects of type [`PairInfo`].",
       "type": "object",
-      "required": ["pairs"],
+      "required": [
+        "pairs"
+      ],
       "properties": {
         "pairs": {
           "description": "Arrays of structs containing information about multiple pairs",
@@ -1138,11 +1734,15 @@
             {
               "description": "Non-native Token",
               "type": "object",
-              "required": ["token"],
+              "required": [
+                "token"
+              ],
               "properties": {
                 "token": {
                   "type": "object",
-                  "required": ["contract_addr"],
+                  "required": [
+                    "contract_addr"
+                  ],
                   "properties": {
                     "contract_addr": {
                       "$ref": "#/definitions/Addr"
@@ -1156,11 +1756,15 @@
             {
               "description": "Native token",
               "type": "object",
-              "required": ["native_token"],
+              "required": [
+                "native_token"
+              ],
               "properties": {
                 "native_token": {
                   "type": "object",
-                  "required": ["denom"],
+                  "required": [
+                    "denom"
+                  ],
                   "properties": {
                     "denom": {
                       "type": "string"
@@ -1219,7 +1823,9 @@
             {
               "description": "XYK pair type",
               "type": "object",
-              "required": ["xyk"],
+              "required": [
+                "xyk"
+              ],
               "properties": {
                 "xyk": {
                   "type": "object",
@@ -1231,7 +1837,9 @@
             {
               "description": "Stable pair type",
               "type": "object",
-              "required": ["stable"],
+              "required": [
+                "stable"
+              ],
               "properties": {
                 "stable": {
                   "type": "object",
@@ -1243,7 +1851,9 @@
             {
               "description": "Custom pair type",
               "type": "object",
-              "required": ["custom"],
+              "required": [
+                "custom"
+              ],
               "properties": {
                 "custom": {
                   "type": "string"
@@ -1255,11 +1865,189 @@
         }
       }
     },
+    "pairs_by_assets": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "PairsResponse",
+      "description": "A custom struct for each query response that returns an array of objects of type [`PairInfo`].",
+      "type": "object",
+      "required": [
+        "pairs"
+      ],
+      "properties": {
+        "pairs": {
+          "description": "Arrays of structs containing information about multiple pairs",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/PairInfo"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "definitions": {
+        "Addr": {
+          "description": "A human readable address.\n\nIn Cosmos, this is typically bech32 encoded. But for multi-chain smart contracts no assumptions should be made other than being UTF-8 encoded and of reasonable length.\n\nThis type represents a validated address. It can be created in the following ways 1. Use `Addr::unchecked(input)` 2. Use `let checked: Addr = deps.api.addr_validate(input)?` 3. Use `let checked: Addr = deps.api.addr_humanize(canonical_addr)?` 4. Deserialize from JSON. This must only be done from JSON that was validated before such as a contract's state. `Addr` must not be used in messages sent by the user because this would result in unvalidated instances.\n\nThis type is immutable. If you really need to mutate it (Really? Are you sure?), create a mutable copy using `let mut mutable = Addr::to_string()` and operate on that `String` instance.",
+          "type": "string"
+        },
+        "AssetInfo": {
+          "description": "This enum describes available Token types. ## Examples ``` # use cosmwasm_std::Addr; # use oroswap_core::asset::AssetInfo::{NativeToken, Token}; Token { contract_addr: Addr::unchecked(\"stake...\") }; NativeToken { denom: String::from(\"uluna\") }; ```",
+          "oneOf": [
+            {
+              "description": "Non-native Token",
+              "type": "object",
+              "required": [
+                "token"
+              ],
+              "properties": {
+                "token": {
+                  "type": "object",
+                  "required": [
+                    "contract_addr"
+                  ],
+                  "properties": {
+                    "contract_addr": {
+                      "$ref": "#/definitions/Addr"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "description": "Native token",
+              "type": "object",
+              "required": [
+                "native_token"
+              ],
+              "properties": {
+                "native_token": {
+                  "type": "object",
+                  "required": [
+                    "denom"
+                  ],
+                  "properties": {
+                    "denom": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "PairInfo": {
+          "description": "This structure stores the main parameters for an Oroswap pair",
+          "type": "object",
+          "required": [
+            "asset_infos",
+            "contract_addr",
+            "liquidity_token",
+            "pair_type"
+          ],
+          "properties": {
+            "asset_infos": {
+              "description": "Asset information for the assets in the pool",
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/AssetInfo"
+              }
+            },
+            "contract_addr": {
+              "description": "Pair contract address",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/Addr"
+                }
+              ]
+            },
+            "liquidity_token": {
+              "description": "Pair LP token denom",
+              "type": "string"
+            },
+            "pair_type": {
+              "description": "The pool type (xyk, stableswap etc) available in [`PairType`]",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/PairType"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "PairType": {
+          "description": "This enum describes available pair types. ## Available pool types ``` # use oroswap_core::factory::PairType::{Custom, Stable, Xyk}; Xyk {}; Stable {}; Custom(String::from(\"Custom\")); ```",
+          "oneOf": [
+            {
+              "description": "XYK pair type",
+              "type": "object",
+              "required": [
+                "xyk"
+              ],
+              "properties": {
+                "xyk": {
+                  "type": "object",
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "description": "Stable pair type",
+              "type": "object",
+              "required": [
+                "stable"
+              ],
+              "properties": {
+                "stable": {
+                  "type": "object",
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "description": "Custom pair type",
+              "type": "object",
+              "required": [
+                "custom"
+              ],
+              "properties": {
+                "custom": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      }
+    },
+    "pause_authorities": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Array_of_String",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "paused_pairs_count": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "uint32",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0.0
+    },
     "tracker_config": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "TrackerConfig",
       "type": "object",
-      "required": ["code_id", "token_factory_addr"],
+      "required": [
+        "code_id",
+        "token_factory_addr"
+      ],
       "properties": {
         "code_id": {
           "description": "Tracking contract code id",

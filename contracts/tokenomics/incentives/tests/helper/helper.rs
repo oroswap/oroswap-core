@@ -1000,7 +1000,7 @@ impl Helper {
     pub fn create_pair(&mut self, asset_infos: &[AssetInfo]) -> AnyResult<PairInfo> {
         let asset_infos = asset_infos.to_vec();
         let permissionless = Addr::unchecked("permissionless");
-        self.mint_coin(&permissionless, &coin(1000, "uzig"));
+        self.mint_coin(&permissionless, &coin(1000, "azig"));
         
         self.app
             .execute_contract(
@@ -1011,7 +1011,7 @@ impl Helper {
                     asset_infos: asset_infos.clone(),
                     init_params: None,
                 },
-                &[coin(1000, "uzig")],
+                &[coin(1000, "azig")],
             )
             .map(|_| self.query_pair_info(&asset_infos))
     }

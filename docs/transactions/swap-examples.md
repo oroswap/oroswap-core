@@ -7,7 +7,7 @@ This guide shows how to perform token swaps on Oroswap DEX using either the Rout
 > **Note**: For contract addresses, see the [oroswap-deployments repository](https://github.com/oroswap/oroswap-deployments).
 
 **Supported Assets**:
-- Native tokens (uzig, uoro, usdc, etc.)
+- Native tokens (azig, uoro, usdc, etc.)
 - CW20 tokens (custom tokens)
 
 ## 🔄 Basic Swap
@@ -21,7 +21,7 @@ zigchaind tx wasm execute <router_address> '{
     "operations": [
       {
         "oro_swap": {
-          "offer_asset_info": {"native_token": {"denom": "uzig"}},
+          "offer_asset_info": {"native_token": {"denom": "azig"}},
           "ask_asset_info": {"native_token": {"denom": "usdc"}},
           "pair_type": {"xyk": {}}
         }
@@ -31,7 +31,7 @@ zigchaind tx wasm execute <router_address> '{
     "to": "zig1...",
     "max_spread": "0.01"
   }
-}' --from user --gas auto --fees 1000uzig --amount 1000000uzig
+}' --from user --gas auto --fees 1000000000000000azig --amount 1000000000000000000azig
 ```
 
 ### Direct Pair Swap
@@ -41,13 +41,13 @@ Swap directly on a specific pair contract. You need to know the exact pair addre
 zigchaind tx wasm execute <pair_address> '{
   "swap": {
     "offer_asset": {
-      "info": {"native_token": {"denom": "uzig"}},
-      "amount": "1000000"
+      "info": {"native_token": {"denom": "azig"}},
+      "amount": "1000000000000000000"
     },
-    "belief_price": "1.0",
+    "belief_price": "1000000000000",
     "max_spread": "0.01"
   }
-}' --from user --gas auto --fees 1000uzig --amount 1000000uzig
+}' --from user --gas auto --fees 1000000000000000azig --amount 1000000000000000000azig
 ```
 
 **Router vs Direct Pair**:
@@ -63,7 +63,7 @@ zigchaind tx wasm execute <router_address> '{
     "operations": [
       {
         "oro_swap": {
-          "offer_asset_info": {"native_token": {"denom": "uzig"}},
+          "offer_asset_info": {"native_token": {"denom": "azig"}},
           "ask_asset_info": {"native_token": {"denom": "usdc"}},
           "pair_type": {"xyk": {}}
         }
@@ -80,7 +80,7 @@ zigchaind tx wasm execute <router_address> '{
     "to": "zig1...",
     "max_spread": "0.02"
   }
-}' --from user --gas auto --fees 2000uzig --amount 1000000uzig
+}' --from user --gas auto --fees 2000000000000000azig --amount 1000000000000000000azig
 ```
 
 **Parameters**:
@@ -98,8 +98,8 @@ zigchaind tx wasm execute <router_address> '{
 
 ### Example Fee Breakdown
 ```bash
-# Swap 1000 uzig for USDC
-# Amount: 1,000,000 uzig (6 decimals)
+# Swap 1 ZIG for USDC
+# Amount: 1,000,000,000,000,000,000 azig (18 decimals)
 # Fee: 10 bps = 0.1%
 # Slippage: 1%
 # Total cost: ~1.1% + gas
@@ -117,12 +117,12 @@ zigchaind tx wasm execute <router_address> '{
       {
         "oro_swap": {
           "offer_asset_info": {"token": {"contract_addr": "zig1..."}},
-          "ask_asset_info": {"native_token": {"denom": "uzig"}},
+          "ask_asset_info": {"native_token": {"denom": "azig"}},
           "pair_type": {"xyk": {}}
         }
       }
     ],
-    "minimum_receive": "950000",
+    "minimum_receive": "950000000000000000",
     "max_spread": "0.05"
   }
 }' --from user --gas auto
@@ -137,7 +137,7 @@ zigchaind tx wasm execute <router_address> '{
     "operations": [
       {
         "oro_swap": {
-          "offer_asset_info": {"native_token": {"denom": "uzig"}},
+          "offer_asset_info": {"native_token": {"denom": "azig"}},
           "ask_asset_info": {"native_token": {"denom": "usdc"}},
           "pair_type": {"concentrated": {}}
         }
@@ -146,7 +146,7 @@ zigchaind tx wasm execute <router_address> '{
     "minimum_receive": "950000",
     "max_spread": "0.01"
   }
-}' --from user --gas auto --amount 1000000uzig
+}' --from user --gas auto --amount 1000000000000000000azig
 ```
 
 ## 📊 Query Swap Simulation
@@ -157,11 +157,11 @@ Get expected output before executing.
 ```bash
 zigchaind query wasm contract-state smart <router_address> '{
   "simulate_swap_operations": {
-    "offer_amount": "1000000",
+    "offer_amount": "1000000000000000000",
     "operations": [
       {
         "oro_swap": {
-          "offer_asset_info": {"native_token": {"denom": "uzig"}},
+          "offer_asset_info": {"native_token": {"denom": "azig"}},
           "ask_asset_info": {"native_token": {"denom": "usdc"}},
           "pair_type": {"xyk": {}}
         }
@@ -179,7 +179,7 @@ zigchaind query wasm contract-state smart <router_address> '{
     {
       "stage": 0,
       "pair_address": "zig1...",
-      "offer_asset": {"native_token": {"denom": "uzig"}},
+      "offer_asset": {"native_token": {"denom": "azig"}},
       "ask_asset": {"native_token": {"denom": "usdc"}},
       "return_amount": "950000",
       "commission_amount": "10000",
@@ -199,7 +199,7 @@ zigchaind query wasm contract-state smart <router_address> '{
     "operations": [
       {
         "oro_swap": {
-          "offer_asset_info": {"native_token": {"denom": "uzig"}},
+          "offer_asset_info": {"native_token": {"denom": "azig"}},
           "ask_asset_info": {"native_token": {"denom": "uoro"}},
           "pair_type": {"xyk": {}}
         }
@@ -211,7 +211,7 @@ zigchaind query wasm contract-state smart <router_address> '{
 
 ## 🚨 Important Notes
 
-1. **Amount Format**: Always use the full denomination (e.g., `1000000uzig` not just `1000000`) in the `--amount` flag
+1. **Amount Format**: Always use the full denomination (e.g., `1000000000000000000azig` not just `1000000000000000000`) in the `--amount` flag
 2. **Amount in JSON**: Use the raw number (e.g., `"1000000"`) in the JSON message body
 3. **Slippage Protection**: Use `minimum_receive` or `max_spread` to prevent front-running
 4. **Gas Costs**: Multi-hop swaps require more gas

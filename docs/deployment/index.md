@@ -94,9 +94,9 @@ export INC_CONTRACT="incentive_address"
 export COIN_REGISTRY_ADDR="<coin_registry_address>"
 
 # Transaction settings
-export GAS_PRICES="0.25uzig"
+export GAS_PRICES="250000000000azig"
 export GAS_ADJUSTMENT="1.3"
-export FEES="1000uzig"
+export FEES="1000000000000000azig"
 ```
 
 ## 🧪 Testing

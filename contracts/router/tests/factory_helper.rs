@@ -151,7 +151,7 @@ impl FactoryHelper {
         app.init_modules(|router, _, storage| {
             router
                 .bank
-                .init_balance(storage, &permissionless, vec![coin(1000, "uzig")])
+                .init_balance(storage, &permissionless, vec![coin(1000, "uzig"), coin(1000, "azig")])
         })?;
 
         // Register native tokens with coin registry
@@ -176,7 +176,7 @@ impl FactoryHelper {
                 asset_infos: asset_infos.to_vec(),
                 init_params,
             },
-            &[coin(1000, "uzig")],
+            &[coin(1000, "azig")],
         )?;
 
         let pair_info = app
@@ -270,7 +270,7 @@ pub fn mock_app() -> App {
     app.init_modules(|router, _, storage| {
         router
             .bank
-            .init_balance(storage, &Addr::unchecked("owner"), coins(10000, "uzig"))
+            .init_balance(storage, &Addr::unchecked("owner"), [coins(10000, "uzig"), coins(10000, "azig")].concat())
     })
     .unwrap();
 

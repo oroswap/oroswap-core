@@ -21,7 +21,7 @@ Complete guide for creating different types of pairs:
 
 **Key Features:**
 - Base64 encoding for init parameters
-- Pool creation fee (1 ZIG) and LP token creation fee (100 ZIG)
+- Pool creation fee (100 ZIG) and LP token creation fee (40 ZIG)
 - Step-by-step instructions for each pair type
 
 ### [Swap Examples](./swap-examples.md)
@@ -54,7 +54,7 @@ Liquidity provision and removal examples:
 ### Common Transaction Types
 ```bash
 # Create pair
-zigchaind tx wasm execute <factory_address> '{"create_pair": {...}}' --amount 101000000uzig
+zigchaind tx wasm execute <factory_address> '{"create_pair": {...}}' --amount 140000000000000000000azig
 
 # Add liquidity
 zigchaind tx wasm execute <pair_address> '{"provide_liquidity": {...}}' --amount <tokens>
@@ -67,8 +67,8 @@ zigchaind tx wasm execute <incentives_address> '{"deposit": {...}}' --amount <lp
 ```
 
 ### Fee Structure
-- **Pool Creation**: 1,000,000 uzig (1 ZIG)
-- **LP Token Creation**: 100,000,000 uzig (100 ZIG)
+- **Pool Creation**: 100,000,000,000,000,000,000 azig (100 ZIG)
+- **LP Token Creation**: 40,000,000,000,000,000,000 azig (40 ZIG)
 - **Swap Fee**: 0.1% for XYK pairs, configurable for others
 - **Gas Fee**: Variable based on transaction complexity
 
@@ -88,13 +88,13 @@ export ROUTER_CONTRACT="<router_address>"
 
 ### Common Parameters
 - **Gas**: `--gas auto` for automatic estimation
-- **Fees**: `--fees 1000uzig` for transaction fees
+- **Fees**: `--fees 1000000000000000azig` for transaction fees
 - **Node**: `--node <rpc_url>`
 - **Chain ID**: `--chain-id <chain_id>`
 
 ## 🚨 Important Notes
 
-1. **Amount Format**: Use full denominations in `--amount` flag (e.g., `1000000uzig`)
+1. **Amount Format**: Use full denominations in `--amount` flag (e.g., `1000000000000000000azig`)
 2. **JSON Format**: Use raw numbers in JSON messages (e.g., `"1000000"`)
 3. **Slippage Protection**: Always use `minimum_receive` or `max_spread`
 4. **Gas Costs**: Complex operations require more gas

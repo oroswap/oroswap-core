@@ -18,9 +18,9 @@ export RPC_URL="<rpc_url>"
 export KEYRING_BACKEND="test"
 
 # Transaction settings
-export GAS_PRICES="0.25uzig"
+export GAS_PRICES="250000000000azig"
 export GAS_ADJUSTMENT="1.3"
-export FEES="1000uzig"
+export FEES="1000000000000000azig"
 ```
 
 ### CLI Configuration
@@ -53,7 +53,7 @@ zigchaind query wasm contract-state smart <contract_address> '{"query": {}}' \
 
 # Execute transaction
 zigchaind tx wasm execute <contract_address> '{"execute": {}}' \
-  --from <key_name> --gas auto --fees 1000uzig \
+  --from <key_name> --gas auto --fees 1000000000000000azig \
   --node <rpc_url> --chain-id <chain_id>
 ```
 
@@ -61,14 +61,14 @@ zigchaind tx wasm execute <contract_address> '{"execute": {}}' \
 
 ### Supported Tokens
 
-- **ZIG**: `uzig` (native token)
+- **ZIG**: `azig` (native token)
 - **ORO**: `uoro` (native token)
 
 ### Token Examples
 
 ```bash
 # Native token examples
-{"native_token": {"denom": "uzig"}}
+{"native_token": {"denom": "azig"}}
 {"native_token": {"denom": "uoro"}}
 {"native_token": {"denom": "usdc"}}
 
@@ -104,9 +104,9 @@ export INC_CONTRACT="<incentives_address>"
 export COIN_REGISTRY_ADDR="<coin_registry_address>"
 
 # Transaction settings
-export GAS_PRICES="0.25uzig"
+export GAS_PRICES="250000000000azig"
 export GAS_ADJUSTMENT="1.3"
-export FEES="1000uzig"
+export FEES="1000000000000000azig"
 ```
 
 ### Usage

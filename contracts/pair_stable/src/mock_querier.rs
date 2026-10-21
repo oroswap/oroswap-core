@@ -172,6 +172,8 @@ impl WasmMockQuerier {
                         )
                     } else if key.as_slice() == b"pairs_to_migrate".as_slice() {
                         SystemResult::Ok(to_json_binary(&Vec::<Addr>::new()).into())
+                    } else if key.as_slice() == b"pool_creation_fee_denom".as_slice() {
+                        SystemResult::Ok(to_json_binary(&"uzig".to_string()).into())
                     } else {
                         panic!("DO NOT ENTER HERE");
                     }

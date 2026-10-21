@@ -19,13 +19,13 @@ This guide shows how to add and remove liquidity from Oroswap pairs.
 zigchaind tx wasm execute <pair_address> '{
   "provide_liquidity": {
     "assets": [
-      {"info": {"native_token": {"denom": "uzig"}}, "amount": "1000000"},
+      {"info": {"native_token": {"denom": "azig"}}, "amount": "1000000000000000000"},
       {"info": {"native_token": {"denom": "usdc"}}, "amount": "1000000"}
     ],
     "slippage_tolerance": "0.01",
     "auto_stake": false
   }
-}' --from user --gas auto --fees 1000uzig --amount 2000000uzig
+}' --from user --gas auto --fees 1000000000000000azig --amount 2000000000000000000azig
 ```
 
 **Parameters**:
@@ -44,7 +44,7 @@ zigchaind tx wasm execute <pair_address> '{
     ],
     "slippage_tolerance": "0.005"
   }
-}' --from user --gas auto --fees 1000uzig --amount 2000000usdc
+}' --from user --gas auto --fees 1000000000000000azig --amount 2000000usdc
 ```
 
 ### Concentrated Pairs
@@ -53,12 +53,12 @@ zigchaind tx wasm execute <pair_address> '{
 zigchaind tx wasm execute <pair_address> '{
   "provide_liquidity": {
     "amounts": [
-      {"info": {"native_token": {"denom": "uzig"}}, "amount": "1000000"},
+      {"info": {"native_token": {"denom": "azig"}}, "amount": "1000000000000000000"},
       {"info": {"native_token": {"denom": "usdc"}}, "amount": "1000000"}
     ],
     "max_spread": "0.01"
   }
-}' --from user --gas auto --fees 1000uzig --amount 2000000uzig
+}' --from user --gas auto --fees 1000000000000000azig --amount 2000000000000000000azig
 ```
 
 **Parameters**:
@@ -74,7 +74,7 @@ zigchaind tx wasm execute <pair_address> '{
   "withdraw_liquidity": {
     "amount": "1000000"
   }
-}' --from user --gas auto --fees 1000uzig
+}' --from user --gas auto --fees 1000000000000000azig
 ```
 
 ### Concentrated Pairs
@@ -84,7 +84,7 @@ zigchaind tx wasm execute <pair_address> '{
   "withdraw_liquidity": {
     "amount": "1000000"
   }
-}' --from user --gas auto --fees 1000uzig
+}' --from user --gas auto --fees 1000000000000000azig
 ```
 
 ## 📊 Querying Liquidity
@@ -127,12 +127,12 @@ Automatically stake LP tokens when providing liquidity:
 zigchaind tx wasm execute <pair_address> '{
   "provide_liquidity": {
     "assets": [
-      {"info": {"native_token": {"denom": "uzig"}}, "amount": "1000000"},
+      {"info": {"native_token": {"denom": "azig"}}, "amount": "1000000000000000000"},
       {"info": {"native_token": {"denom": "usdc"}}, "amount": "1000000"}
     ],
     "auto_stake": true
   }
-}' --from user --gas auto --fees 1000uzig --amount 2000000uzig
+}' --from user --gas auto --fees 1000000000000000azig --amount 2000000000000000000azig
 ```
 
 ## 💰 Fee Structure

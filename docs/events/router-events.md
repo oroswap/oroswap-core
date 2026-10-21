@@ -27,13 +27,13 @@ For a swap ZIG → USDC → ORO, you would see:
   "type": "wasm-swap",
   "attributes": [
     {"key": "action", "value": "swap"},
-    {"key": "offer_asset", "value": "{\"info\":{\"native_token\":{\"denom\":\"uzig\"}},\"amount\":\"1000000\"}"},
+    {"key": "offer_asset", "value": "{\"info\":{\"native_token\":{\"denom\":\"azig\"}},\"amount\":\"1000000000000000000\"}"},
     {"key": "ask_asset", "value": "{\"info\":{\"native_token\":{\"denom\":\"usdc\"}},\"amount\":\"950000\"}"},
     {"key": "commission_amount", "value": "3000"},
     {"key": "spread_amount", "value": "47000"},
     {"key": "sender", "value": "zig1..."},
     {"key": "receiver", "value": "zig1..."},
-    {"key": "reserves", "value": "{\"native_token\":{\"denom\":\"uzig\"}}:1000000,{\"native_token\":{\"denom\":\"usdc\"}}:950000"}
+    {"key": "reserves", "value": "{\"native_token\":{\"denom\":\"azig\"}}:1000000000000000000,{\"native_token\":{\"denom\":\"usdc\"}}:950000"}
   ]
 }
 
@@ -193,7 +193,7 @@ To identify multi-hop swaps in transaction logs:
               {"key": "action", "value": "swap"},
               {"key": "sender", "value": "zig1..."}, // Router address
               {"key": "receiver", "value": "zig1..."}, // Router address
-              {"key": "offer_asset", "value": "{\"info\":{\"native_token\":{\"denom\":\"uzig\"}},\"amount\":\"1000000\"}"}
+              {"key": "offer_asset", "value": "{\"info\":{\"native_token\":{\"denom\":\"azig\"}},\"amount\":\"1000000000000000000\"}"}
             ]
           },
           {

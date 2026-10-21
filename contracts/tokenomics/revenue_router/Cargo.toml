@@ -1,0 +1,32 @@
+[package]
+name = "oroswap-revenue-router"
+version = "1.0.0"
+authors = ["Oroswap"]
+edition = "2021"
+description = "Oroswap Revenue Router - bridges USDC from Zigchain to an owner-configured destination via PFM-chained IBC"
+license = "GPL-3.0-only"
+repository = "https://github.com/oroswap/oroswap-core"
+homepage = "https://www.oroswap.org"
+
+exclude = ["contract.wasm", "hash.txt"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+backtraces = ["cosmwasm-std/backtraces"]
+library = []
+
+[dependencies]
+cosmwasm-std = { workspace = true, features = ["cosmwasm_1_2", "stargate"] }
+cw-storage-plus.workspace = true
+cw2.workspace = true
+thiserror.workspace = true
+oroswap = { workspace = true }
+cosmwasm-schema.workspace = true
+schemars = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+anyhow = "1"
+cw-multi-test = "1.0.0"

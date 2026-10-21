@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MigrateMsg",
+  "type": "object",
+  "properties": {
+    "redenom": {
+      "description": "When set, the migrate re-keys `PAIRS` and `PAUSED_PAIRS`, swapping the native denom `from`->`to` in every stored pair key (the ZIGchain `uzig`->`azig` redenomination), and updates `pool_creation_fee_denom` if it currently equals `from`. When `None`, the migrate keeps its legacy pair-key-normalization behavior (re-derive keys from each pair's own reported `asset_infos`). `#[serde(default)]` keeps old `{tracker_config}` payloads valid.",
+      "default": null,
+      "anyOf": [
+        {
+          "$ref": "#/definitions/DenomRewrite"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "tracker_config": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/TrackerConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "DenomRewrite": {
+      "description": "A native-denom rewrite instruction for the redenomination migrate: rewrite `from` -> `to` across the factory's stored pair keys.",
+      "type": "object",
+      "required": [
+        "from",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "description": "The denom to rewrite from (e.g. `uzig`)",
+          "type": "string"
+        },
+        "to": {
+          "description": "The denom to rewrite to (e.g. `azig`)",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "TrackerConfig": {
+      "type": "object",
+      "required": [
+        "code_id",
+        "token_factory_addr"
+      ],
+      "properties": {
+        "code_id": {
+          "description": "Tracking contract code id",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "token_factory_addr": {
+          "description": "Token factory module address",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

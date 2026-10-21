@@ -248,6 +248,34 @@
       "additionalProperties": false
     },
     {
+      "description": "Pause the pair (only callable by factory or pair owner)",
+      "type": "object",
+      "required": [
+        "pause"
+      ],
+      "properties": {
+        "pause": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Unpause the pair (only callable by factory or pair owner)",
+      "type": "object",
+      "required": [
+        "unpause"
+      ],
+      "properties": {
+        "unpause": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
       "description": "Custom execute endpoints for extended pool implementations",
       "type": "object",
       "required": [
@@ -267,7 +295,7 @@
       "type": "string"
     },
     "Asset": {
-      "description": "This enum describes a Terra asset (native or CW20).",
+      "description": "This enum describes a Terra asset (native or CW20). # Example ``` # use cosmwasm_std::Addr; # use oroswap_core::asset::AssetInfo::{NativeToken, Token}; NativeToken { denom: \"uusd\".to_string() }; Token { contract_addr: Addr::unchecked(\"contract\") }; ```",
       "type": "object",
       "required": [
         "amount",
@@ -294,7 +322,7 @@
       "additionalProperties": false
     },
     "AssetInfo": {
-      "description": "This enum describes available Token types. ## Examples ``` # use cosmwasm_std::Addr; # use oroswap::asset::AssetInfo::{NativeToken, Token}; Token { contract_addr: Addr::unchecked(\"stake...\") }; NativeToken { denom: String::from(\"uluna\") }; ```",
+      "description": "This enum describes available Token types. ## Examples ``` # use cosmwasm_std::Addr; # use oroswap_core::asset::AssetInfo::{NativeToken, Token}; Token { contract_addr: Addr::unchecked(\"stake...\") }; NativeToken { denom: String::from(\"uluna\") }; ```",
       "oneOf": [
         {
           "description": "Non-native Token",

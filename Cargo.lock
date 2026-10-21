@@ -2037,6 +2037,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d05e27ee213611ffe7d6348b942e8f942b37114c00cc03cec254295a4a17852e"
 
 [[package]]
+name = "oroswap-airdrop"
+version = "1.0.0"
+dependencies = [
+ "cosmwasm-schema 1.5.11",
+ "cosmwasm-std 1.5.11",
+ "cw-multi-test 1.2.0",
+ "cw-storage-plus",
+ "cw-utils",
+ "cw2",
+ "cw20",
+ "cw20-base",
+ "oroswap-core",
+ "schemars",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "oroswap-circular-buffer"
 version = "1.1.0"
 dependencies = [
@@ -2068,7 +2086,7 @@ dependencies = [
 
 [[package]]
 name = "oroswap-factory"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "cosmwasm-schema 1.5.11",
@@ -2159,7 +2177,7 @@ dependencies = [
 
 [[package]]
 name = "oroswap-pair"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "cosmwasm-schema 1.5.11",
  "cosmwasm-std 1.5.11",
@@ -2181,7 +2199,7 @@ dependencies = [
 
 [[package]]
 name = "oroswap-pair-concentrated"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "cosmwasm-schema 1.5.11",
@@ -2207,7 +2225,7 @@ dependencies = [
 
 [[package]]
 name = "oroswap-pair-stable"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "cosmwasm-schema 1.5.11",
@@ -2247,6 +2265,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "oroswap-revenue-router"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "cosmwasm-schema 1.5.11",
+ "cosmwasm-std 1.5.11",
+ "cw-multi-test 1.2.0",
+ "cw-storage-plus",
+ "cw2",
+ "oroswap-core",
+ "schemars",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "oroswap-router"
 version = "1.1.0"
 dependencies = [
@@ -2269,7 +2303,7 @@ dependencies = [
 
 [[package]]
 name = "oroswap-staking"
-version = "1.1.0"
+version = "2.2.0"
 dependencies = [
  "anyhow",
  "cosmwasm-schema 1.5.11",
@@ -2281,7 +2315,6 @@ dependencies = [
  "itertools 0.12.1",
  "oroswap-core",
  "oroswap-tokenfactory-tracker",
- "osmosis-std",
  "thiserror",
 ]
 
@@ -2335,6 +2368,22 @@ dependencies = [
  "cw2",
  "cw20",
  "cw20-base",
+ "oroswap-core",
+ "thiserror",
+]
+
+[[package]]
+name = "oroswap-wrapper"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "cosmwasm-schema 1.5.11",
+ "cosmwasm-std 1.5.11",
+ "cw-multi-test 0.20.0",
+ "cw-storage-plus",
+ "cw-utils",
+ "cw2",
+ "itertools 0.12.1",
  "oroswap-core",
  "thiserror",
 ]

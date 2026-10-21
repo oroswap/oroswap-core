@@ -26,7 +26,7 @@ fn mock_app() -> TestApp {
     app.sudo(
         BankSudo::Mint {
             to_address: "owner".to_string(),
-            amount: coins(10000, "uzig"),
+            amount: coins(10000, "azig"),
         }
         .into(),
     )
@@ -35,7 +35,7 @@ fn mock_app() -> TestApp {
     app.sudo(
         BankSudo::Mint {
             to_address: "random_stranger".to_string(),
-            amount: coins(10000, "uzig"),
+            amount: coins(10000, "azig"),
         }
         .into(),
     )
